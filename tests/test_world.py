@@ -195,8 +195,11 @@ def special_pair_tests():
     print('special cases: ok')
 
 
-def incremental_tests(rng):
-    """Many objects, random edits; results must equal a world built from scratch."""
+def incremental_tests(rng, borrow=False, room=0, edits_wanted=140):
+    """Many objects, random edits; results must equal a world built from scratch.
+
+    ``borrow``: every mesh may borrow a pose when it is turned (normally only
+    large ones do).  ``room``: memory for about that many poses only."""
     parts = {
         'box': meshes.box((1.0, 0.7, 0.5)),
         'gbox': meshes.grid_box((0.9, 0.6, 0.6), 5),
@@ -206,14 +209,20 @@ def incremental_tests(rng):
     }
     names = list(parts)
 
-    def fresh(objs, thr, vol):
+    one = max(World.pose_size(len(v), len(f)) for v, f in parts.values())
+
+    def fresh(objs, thr, vol, plain=True):
         w = World()
         w.set_scale(8.0, 0.01)
         w.set_thresholds(*thr)
         if vol is not None:
             w.set_volume(*vol)
+        if borrow and not plain:
+            w.fit_now = 0
         for k, (v, f) in parts.items():
             w.add_geom(k, v, f)
+        if room and not plain:
+            w.set_cache_limit(w.geom_bytes + room * one)
         for uid, (g, M) in objs.items():
             w.add_object(uid, g, M)
         while w.step(budget=10.0):
@@ -239,10 +248,11 @@ def incremental_tests(rng):
         objs[f'o{i}'] = (names[rng.integers(len(names))], M)
     thr = (0.0, 0.2)
     vol = (np.array([-1.5, -1.5, -1.5]), np.array([1.5, 1.5, 1.5]))
-    w = fresh(objs, thr, vol)
+    w = fresh(objs, thr, vol, plain=False)
     edits = 0
     nviol = 0
-    for it in range(140):
+    borrowed = 0
+    for it in range(edits_wanted):
         kind = rng.integers(8)
         uid = f'o{rng.integers(n_obj)}'
         if kind <= 3 and uid in objs:          # translate
@@ -283,7 +293,12 @@ def incremental_tests(rng):
             w.set_volume(*vol)
         else:
             continue
-        # sometimes run with a tiny budget so work is spread over several steps
+        # sometimes a few frames of a drag first, as in a live edit; sometimes
+        # with a tiny budget so work is spread over several steps
+        if it % 4 == 1:
+            for _ in range(int(rng.integers(1, 4))):
+                w.step(idle=False)
+            borrowed += w.stats()['borrowing']
         if it % 3 == 0:
             steps = 0
             while w.step(budget=0.0005, hot_budget=0.001):
@@ -292,6 +307,8 @@ def incremental_tests(rng):
         else:
             while w.step():
                 pass
+        if room:
+            assert w.pose_bytes + w.geom_bytes <= w.cache_limit, (it, w.pose_bytes)
         ref_w = fresh(objs, thr, vol)
         got, got_oob = snapshot(w)
         want, want_oob = snapshot(ref_w)
@@ -306,8 +323,13 @@ def incremental_tests(rng):
     assert w.BOX.live == 0 and w.TIDX.live == 0 and w.pose_bytes == 0, (
         w.BOX.live, w.TIDX.live, w.pose_bytes)
     assert not w.pairs and not w.viol and not w.oob
+    assert not (w._virt_todo or w._borrowing or w._oob_geom or w._demand), 'state left behind'
+    assert bool(borrowed) == bool(borrow), borrowed
+    assert not room or w.evictions > 0
+    how = ('' if not borrow else ', every mesh borrowing when turned') + (
+        f', memory for {room} poses' if room else '')
     print(f'incremental edits checked against a fresh world: {edits} '
-          f'(violating pairs seen: {nviol})')
+          f'(violating pairs seen: {nviol}){how}')
 
 
 def volume_tests(rng):
@@ -1241,6 +1263,8 @@ def main():
     cache_tests(rng)
     borrow_tests(rng)
     incremental_tests(rng)
+    incremental_tests(rng, borrow=True)
+    incremental_tests(rng, borrow=True, room=3)
     print('OK')
 
 
