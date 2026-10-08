@@ -180,7 +180,9 @@ class BUCKETBUILDER_OT_ignore(Operator):
     def execute(self, context):
         n = 0
         for o in context.selected_objects:
-            if o.type == 'MESH' and o.bucket_builder_ignore != self.ignore:
+            # (any kind of object: what is not a mesh is not checked, but it
+            # is reported as such unless it is ignored)
+            if o.bucket_builder_ignore != self.ignore:
                 o.bucket_builder_ignore = self.ignore
                 n += 1
         monitor.on_settings_changed(context.scene)

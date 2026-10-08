@@ -210,7 +210,7 @@ class BUCKETBUILDER_PT_parts(_Base, Panel):
         st = props.settings(scene)
         mon = monitor.get(scene)
         obj = context.active_object
-        if obj is not None and obj.type == 'MESH':
+        if obj is not None and obj.type in {'MESH', 'CURVE', 'SURFACE', 'FONT', 'META', 'EMPTY'}:
             layout.prop(obj, "bucket_builder_ignore", text=f"Ignore '{obj.name}'")
         row = layout.row(align=True)
         op = row.operator("bucketbuilder.ignore", text="Ignore Selected")
@@ -223,7 +223,12 @@ class BUCKETBUILDER_PT_parts(_Base, Panel):
             col = layout.column(align=True)
             col.label(text=f"{stats['objects']} parts, {stats['triangles'] / 1e6:.2f} M triangles")
             col.label(text=f"{stats['pairs']} neighbouring pairs tracked")
-            col.label(text=f"{stats['bytes'] / 1e6:.0f} MB of cached data")
+            limit = stats['cache_limit']
+            used = f"{stats['bytes'] / 1e6:.0f} MB of cached data"
+            col.label(text=used + (f" (limit {limit / 2 ** 30:.1f} GB)" if limit else ""))
+            if stats['borrowing']:
+                # copies of a part in other rotations using one set of boxes
+                col.label(text=f"{stats['borrowing']} parts share data (slower checks)")
             if mon.live_ms:
                 col.label(text=f"Live update {max(mon.live_ms):.1f} ms at most recently")
             if mon.draw_ms:
@@ -234,6 +239,18 @@ class BUCKETBUILDER_PT_parts(_Base, Panel):
                 box.label(text=f"{len(skipped)} not checked:", icon='INFO')
                 for o in skipped[:6]:
                     box.label(text=f"{o.name}: {o.skipped}")
+            un = mon.unchecked
+            if un:
+                box = layout.box()
+                box.label(text="In the scene but not checked:", icon='ERROR')
+                if un.get('instances'):
+                    box.label(text=f"instances made by {un['instances']} part(s)")
+                    box.label(text="(add Realize Instances to check them)")
+                if un.get('collections'):
+                    box.label(text=f"{un['collections']} collection instance(s)")
+                if un.get('other'):
+                    box.label(text=f"{un['other']} text, curve or metaball object(s)")
+                box.label(text="Convert them to meshes, or ignore them.")
         layout.operator("bucketbuilder.recheck", icon='FILE_REFRESH')
 
 

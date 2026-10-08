@@ -46,6 +46,7 @@ INSIDE, PARTIAL, OUTSIDE = 0, 1, 2
 MAX_BATCH = 96
 OOB_TRI_CAP = 60000
 LIVE_TARGET = 0.012       # seconds a live solve should take
+LIVE_FULL = 0.024         # ... and may take when that gives every pair its full detail
 REGION_BUDGET = 400000    # triangles of hatched regions kept for the whole scene
 VERT_CHUNK = 1 << 16      # vertices posed in one piece
 FIT_BLOCK = 15            # log2 of the triangles whose boxes are fitted in one piece
@@ -195,11 +196,11 @@ class World:
         self._serial = 0
         # Load control, following the measured cost.  A live solve that only
         # sketches its n pairs takes about _lite_c0 + n * _lite_c1 seconds,
-        # and _detail_cost more for every pair that gets the full treatment.
-        # ``live_detail`` is how many pairs get that in the next live solve;
-        # the rest are sketched and completed when idle.  ``_bg_batch`` is
-        # how many pairs a background solve takes at once.
-        self.live_detail = 4
+        # and one that treats them fully _detail_cost each (see
+        # ``_choose_detail``).  ``live_detail`` overrides the choice with a
+        # fixed number of fully treated pairs.  ``_bg_batch`` is how many
+        # pairs a background solve takes at once.
+        self.live_detail = None
         self._lite_c0 = 0.003
         self._lite_c1 = 0.0005
         self._detail_cost = 0.0
@@ -1300,44 +1301,63 @@ class World:
                 self._pend_refine[key] = None
 
     def _choose_detail(self, keys):
-        """Which pairs of a live solve get the full treatment: None for all,
-        else a boolean per pair.  Pairs that already show detail keep it, so
-        the picture does not flicker; then known problems, then the rest."""
+        """Which pairs of a live solve get the full treatment (the complete
+        intersection curve, the hatched region, the proven distance): None
+        for all, else a boolean per pair.
+
+        All of them when that fits ``LIVE_FULL``; otherwise as many as fit
+        ``LIVE_TARGET`` next to a sketch of the others, and one at least if
+        that still fits ``LIVE_FULL``.  Pairs that already show detail keep
+        it, so the picture does not flicker; then known problems, then the
+        smaller ones."""
         n = len(keys)
-        if n <= self.live_detail:
+        cost = self._detail_cost
+        if self.live_detail is not None:
+            nd = self.live_detail                    # set from outside (tests)
+        elif cost <= 0.0:
+            nd = 4                                   # nothing measured yet
+        elif n * cost <= LIVE_FULL:
+            return None
+        else:
+            sketch = self._lite_c0 + self._lite_c1 * n
+            nd = int((LIVE_TARGET - sketch) / cost)
+            if nd < 1 and sketch + cost <= LIVE_FULL:
+                nd = 1
+        if nd >= n:
             return None
         detail = np.zeros(n, dtype=bool)
-        if self.live_detail > 0:
+        if nd > 0:
             rank = np.empty(n, dtype=np.int64)
             size = np.empty(n, dtype=np.int64)
             for i, key in enumerate(keys):
                 pr = self.pairs[key]
                 rank[i] = 2 if pr.state <= OK else (1 if pr.lite else 0)
                 size[i] = self._obj[key[0]][1].nt + self._obj[key[1]][1].nt
-            detail[np.lexsort((size, rank))[:self.live_detail]] = True
+            detail[np.lexsort((size, rank))[:nd]] = True
         return detail
 
     def _learn_cost(self, n, detail, dt):
-        """Update the cost estimates of a live solve, and with them how many
-        pairs the next one can afford to treat fully."""
+        """Update the cost estimates of a live solve from one that was timed."""
         nd = n if detail is None else int(detail.sum())
+        if nd == n:
+            per = dt / n
+        elif nd:
+            per = max(dt - self._lite_c0 - self._lite_c1 * (n - nd), 0.25 * dt) / nd
         if nd:
-            sketched = self._lite_c0 + self._lite_c1 * (n - nd)
-            per = max(dt - sketched, 0.25 * dt) / nd
-            self._detail_cost = per if self._detail_cost <= 0.0 else (
-                0.6 * self._detail_cost + 0.4 * per)
+            # quick to rise, slow to fall: the cost climbs as a part goes
+            # deeper into its neighbours, and an estimate that lags behind
+            # shows as a stutter
+            old = self._detail_cost
+            self._detail_cost = per if per > old else 0.85 * old + 0.15 * per
+        elif n <= 3:
+            # a small solve is mostly its fixed cost
+            c0 = max(dt - self._lite_c1 * n, 0.5 * dt)
+            self._lite_c0 = 0.7 * self._lite_c0 + 0.3 * c0
         else:
-            if n <= 3:
-                # a small solve is mostly its fixed cost
-                c0 = max(dt - self._lite_c1 * n, 0.5 * dt)
-                self._lite_c0 = 0.7 * self._lite_c0 + 0.3 * c0
-            else:
-                c1 = max(dt - self._lite_c0, 0.2 * dt) / n
-                self._lite_c1 = 0.6 * self._lite_c1 + 0.4 * c1
+            c1 = max(dt - self._lite_c0, 0.2 * dt) / n
+            self._lite_c1 = 0.6 * self._lite_c1 + 0.4 * c1
+        if not nd:
             self._detail_cost *= 0.99        # so that detail is tried again now and then
-        if self._detail_cost > 0.0:      # (until one has been measured: the cautious default)
-            spare = LIVE_TARGET - (self._lite_c0 + self._lite_c1 * n)
-            self.live_detail = int(min(64, max(0, spare / self._detail_cost)))
 
     # ----------------------------------------------------------- build volume
     def _update_oob(self):

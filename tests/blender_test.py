@@ -36,18 +36,14 @@ def scene():
     return bpy.context.scene
 
 
-def settle(max_ticks=20000):
+def settle():
     """Run background slices until nothing is pending (timers do not run in
     background mode, so the test drives them)."""
     sc = scene()
     mon = monitor.get(sc, create=True)
     vl = bpy.context.view_layer
     time.sleep(monitor.IDLE_SECONDS + 0.05)
-    for _ in range(max_ticks):
-        mon.tick(sc, vl.depsgraph, vl, live=False)
-        if not mon.busy:
-            break
-    assert not mon.busy, 'monitor never settled'
+    assert mon.settle(sc, vl.depsgraph, vl), 'monitor never settled'
     return mon
 
 

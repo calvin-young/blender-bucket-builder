@@ -31,10 +31,7 @@ def settle():
     mon = monitor.get(sc, create=True)
     vl = bpy.context.view_layer
     time.sleep(monitor.IDLE_SECONDS + 0.05)
-    for _ in range(20000):
-        mon.tick(sc, vl.depsgraph, vl, live=False)
-        if not mon.busy:
-            break
+    mon.settle(sc, vl.depsgraph, vl)
     return mon
 
 
