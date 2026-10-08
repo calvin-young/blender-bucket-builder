@@ -613,6 +613,79 @@ def quick_mode_tests(rng):
           f'{n_missed} borderline warnings only shown after release')
 
 
+def sketch_tests(rng):
+    """With many pairs to answer at once (a part dropped onto a crowd) pairs
+    are only sketched while the part moves.  A sketch must still get every
+    collision right and must never report a violation that is not there; a
+    clearance warning may be missing until the exact pass."""
+    gens = [
+        lambda: meshes.grid_box((1.0, 0.8, 0.6), 8),
+        lambda: meshes.uv_sphere(0.6, 28, 14),
+        lambda: meshes.torus(0.6, 0.2, 28, 12),
+        lambda: meshes.blob(rng, 0.6, 26, 13, 0.3),
+        lambda: meshes.cylinder(0.3, 1.4, 28),
+    ]
+    n = n_coll = n_sketched = n_clear = n_missed = n_enclosed = 0
+    for trial in range(40):
+        w = World()
+        w.set_scale(8.0, 0.01)
+        w.set_thresholds(0.0, 0.25)
+        w.live_detail = 0                         # sketch everything ...
+        w._learn_cost = lambda *a: None           # ... whatever it costs
+        for k in range(len(gens)):
+            w.add_geom(k, *gens[k]())
+        w.add_geom('big', *meshes.blob(rng, 2.2, 40, 20, 0.25))
+        count = 14
+        for i in range(count):
+            t = rng.uniform(-2.4, 2.4, 3)
+            w.add_object(i, int(rng.integers(len(gens))), meshes.matrix(meshes.rot(rng), t))
+        w.add_object('new', 'big', meshes.matrix(meshes.rot(rng), (30.0, 0.0, 0.0)))
+        while w.step():
+            pass
+        base = {k: pr.state for k, pr in w.pairs.items() if not pr.stale}
+        w.set_matrix('new', meshes.matrix(meshes.rot(rng), rng.uniform(-0.8, 0.8, 3)))
+        w.step(idle=False, hot_budget=10.0)       # one frame of a drag, nothing left over
+        slot = w.slot('new')
+        quick = {}
+        for o in w.adj[slot]:
+            key = (slot, o) if slot < o else (o, slot)
+            pr = w.pairs[key]
+            assert not pr.stale and pr.lite and pr.refine, (trial, key, pr.stale, pr.lite)
+            quick[key] = (pr.state, pr.dist, pr.nseg)
+        while w.step():                           # release: exact pass
+            pass
+        for key, (q_state, q_dist, q_nseg) in quick.items():
+            pr = w.pairs.get(key)
+            e_state = OK if pr is None else pr.state
+            assert pr is None or not (pr.lite or pr.refine or pr.stale)
+            n += 1
+            if e_state == COLLIDE or q_state == COLLIDE:
+                assert q_state == e_state, ('collision differs between sketch and exact', trial, key)
+                n_coll += 1
+                n_enclosed += bool(pr.enclosed)
+                if not pr.enclosed and pr.nseg > q_nseg:
+                    n_sketched += 1               # the sketch had only part of the curve
+            elif e_state == CLEAR:
+                n_clear += 1
+                if q_state == CLEAR:
+                    # (the exact search stops once nothing can beat its bound by
+                    # more than 0.1 %, so a lucky sketch may be that much lower)
+                    assert q_dist >= pr.dist * (1.0 - 2e-3) - 1e-9, (
+                        'sketch distance below exact', trial, key, q_dist, pr.dist)
+                else:
+                    n_missed += 1
+            else:
+                assert q_state == OK, ('sketch reported a violation that is not there', trial, key)
+        # pairs not involving the moved part are untouched
+        for key, st in base.items():
+            if slot not in key:
+                assert w.pairs[key].state == st
+    assert n_coll > 100 and n_sketched > 50, (n_coll, n_sketched)
+    print(f'sketched pairs vs exact: {n} pairs, {n_coll} collisions identical '
+          f'({n_sketched} with only part of the curve, {n_enclosed} part-inside-part), '
+          f'{n_clear} clearance cases of which {n_missed} only shown after release')
+
+
 def scale_tests(rng):
     """The same build in millimetres and in metres must give the same answers."""
     parts = [meshes.blob(rng, 20.0, 24, 12, 0.3), meshes.torus(18.0, 6.0, 24, 12),
@@ -698,6 +771,7 @@ def main():
     odd_input_tests()
     scale_tests(rng)
     quick_mode_tests(rng)
+    sketch_tests(rng)
     incremental_tests(rng)
     print('OK')
 

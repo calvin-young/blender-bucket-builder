@@ -78,9 +78,16 @@ To build the zip from this repository:
   neighbouring parts; when a part moves, only its own pairs are looked at.
 * **No Python loops over triangles.** All pairs that need work are traversed
   together, level by level, in NumPy.
-* **While dragging** intersections are found completely on every step; the
-  clearance distance search is capped so a frame never stalls, and a pair
-  whose search was cut short is finished exactly just after release.
+* **A live step has a time budget.** Whether two parts collide is always
+  decided exactly. How much more each pair gets (the complete intersection
+  curve, the hatched region, the proven clearance distance) follows the
+  measured cost: with a few neighbours every pair gets everything; when a part
+  lands on dozens of others, most pairs are only *sketched* (one intersecting
+  triangle pair proves a collision) and the detail fills in for as many as
+  fit. Whatever was left out is completed exactly just after release.
+* **Colliding parts are shaded from a mesh uploaded once** per unique part and
+  redrawn with the object's current matrix, so the cheapest answer (collides
+  or not) costs nothing to draw while a part moves.
 
 ### Why not `mathutils.bvhtree.BVHTree`
 

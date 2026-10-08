@@ -134,9 +134,103 @@ def spin(w, objs, uid, n, label, rng):
     report(label, times)
 
 
+def overlay_load(w):
+    """Triangles and segments the overlay would have to draw for the current problems."""
+    tris = segs = 0
+    for pr in w.viol.values():
+        for t in (pr.tri_a, pr.tri_b):
+            if t is not None:
+                tris += len(t)
+        if pr.segs is not None:
+            segs += len(pr.segs)
+    return tris, segs
+
+
+def storm(rng, n_parts=50, tris_small=100000, tris_big=400000, steps=60):
+    """A new part imported into the middle of a full build: it lands on dozens
+    of parts at once and is then dragged out of the way."""
+    print()
+    w = World()
+    w.set_scale(400.0, 0.5)
+    w.set_thresholds(0.0, 5.0)
+    w.set_volume((0, 0, 0), (380, 284, 380))
+    parts = make_parts(rng, tris_small)
+    for name, (v, f) in parts.items():
+        w.add_geom(name, v, f)
+    names = list(parts)
+    # parts packed around the middle of the volume
+    side = int(np.ceil(n_parts ** (1 / 3)))
+    k = 0
+    for i in range(side ** 3):
+        if k >= n_parts:
+            break
+        x, y, z = i % side, (i // side) % side, i // (side * side)
+        t = np.array([190.0, 142.0, 190.0]) + (np.array([x, y, z]) - 0.5 * (side - 1)) * 48.0
+        w.add_object(k, names[k % len(names)], meshes.matrix(meshes.rot(rng), t))
+        k += 1
+    while w.step(budget=0.05):
+        pass
+    kb = max(8, int(np.sqrt(tris_big / 2.0)))
+    v, f = meshes.blob(rng, 75.0, 2 * kb, kb, 0.3)           # a large part, about 150 mm across
+    w.add_geom('new', v, f)
+    t0 = time.perf_counter()
+    M0 = meshes.matrix(meshes.rot(rng), (190.0, 142.0, 190.0))
+    w.add_object('new', 'new', M0)
+    t_add = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    w.step(idle=False)
+    t_first = time.perf_counter() - t0
+    slot = w.slot('new')
+
+    def touching():
+        n = c = 0
+        for o in w.adj[slot]:
+            pr = w.pairs[(slot, o) if slot < o else (o, slot)]
+            n += 1
+            c += pr.state == COLLIDE and not pr.stale
+        return n, c
+
+    n, c = touching()
+    st = w.stats()
+    print(f'import storm: {n_parts} parts of ~{tris_small // 1000}k triangles, new part '
+          f'{len(f) // 1000}k triangles ({st["triangles"] / 1e6:.1f} M in all, {st["bytes"] / 1e6:.0f} MB)')
+    print(f'  new part lands on {c} parts ({n} neighbours): posed in {t_add * 1000:.0f} ms, '
+          f'first answer after {t_first * 1000:.0f} ms, overlay load {overlay_load(w)}')
+    times, coll, load, late = [], [], [], []
+    for i in range(steps):
+        M = M0.copy()
+        M[:3, 3] += np.array([1.0, 0.25, 0.1]) * (i + 1) * (330.0 / steps)   # out through a wall
+        t0 = time.perf_counter()
+        w.set_matrix('new', M)
+        w.step(idle=False)
+        times.append(time.perf_counter() - t0)
+        coll.append(sum(1 for o in w.adj[slot]
+                        if w.pairs[(slot, o) if slot < o else (o, slot)].state == COLLIDE))
+        load.append(overlay_load(w)[0])
+        late.append(len(w._pend_hot))             # answers that arrive a step later
+    t = np.array(times) * 1000
+    coll = np.array(coll)
+    for lo, hi in ((20, 999), (8, 19), (1, 7), (0, 0)):
+        m = (coll >= lo) & (coll <= hi)
+        if m.any():
+            label = f'{lo}+' if hi == 999 else (f'{lo}-{hi}' if hi != lo else f'{lo}')
+            print(f'  dragging it out, colliding with {label:>5s} parts: {int(m.sum()):3d} steps, '
+                  f'median {np.median(t[m]):7.1f} ms, worst {t[m].max():7.1f} ms, '
+                  f'overlay triangles ~{int(np.median(np.array(load)[m])) // 1000}k, '
+                  f'pairs answered a step late: at most {int(np.array(late)[m].max())}')
+    t0 = time.perf_counter()
+    while w.step():
+        pass
+    print(f'  settled {((time.perf_counter() - t0) * 1000):.0f} ms after release')
+
+
 def main():
     rng = np.random.default_rng(5)
     quick = '--quick' in sys.argv
+    if '--storm' in sys.argv:
+        storm(rng, 50, 20000, 100000)
+        storm(rng, 50, 100000, 400000)
+        return
     configs = [(60, 20000, 46.0), (120, 100000, 46.0)]
     if not quick:
         configs.append((300, 100000, 44.0))

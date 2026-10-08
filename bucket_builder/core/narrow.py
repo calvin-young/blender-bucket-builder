@@ -44,12 +44,16 @@ CAP_SEARCH_QUICK = 2500      # distance-search rows per pair while something is 
 CAP_EXACT_QUICK = 640        # exact distance evaluations per pair while moving
 BEAM = 8
 BEAM_DENSE = 48
+BEAM_SKETCH = 24             # rows followed per pair when only looking for one intersection
 EXACT_CHUNK = 2048
 REGION_RES = 0.3             # coarse resolution as a fraction of the threshold
 VIZ_MIN, VIZ_MAX = 4.0, 10.0 # width of the hatched collision region, in units of viz_pad
 TRI_CAP = 30000              # triangles handed to the overlay per side
+TRI_CAP_LIVE = 6000          # ... while something is moving (rebuilt on every step)
 SEG_CAP = 60000              # intersection segments handed to the overlay
+SEG_CAP_LIVE = 8000
 BOX_CAP = 1200               # proxy boxes handed to the overlay per side
+BOX_CAP_LIVE = 300
 BIG = np.float32(1e30)
 
 
@@ -474,31 +478,51 @@ def box_edges(lo, hi):
     return c[e].reshape(12, 2, 3)
 
 
-def _region_side(w, pose, h, nodes, shift):
-    """Geometry the overlay draws for a set of near nodes, plus their bounds."""
+def _clip_box(tris, shift, lo, hi, slack):
+    """The box (lo, hi) if the patch reaches outside it by more than ``slack``,
+    else None.
+
+    A patch is made of whole triangles.  On a finely tessellated part they all
+    lie next to the other part anyway; a long triangle of a coarse CAD mesh
+    can run far away from it, and the overlay then trims the patch to the box.
+    """
+    if tris is None or len(tris) == 0:
+        return None
+    pts = tris.reshape(-1, 3)
+    plo = pts.min(axis=0)
+    phi = pts.max(axis=0)
+    if shift is not None:
+        plo = plo + shift
+        phi = phi + shift
+    if (plo < lo - slack).any() or (phi > hi + slack).any():
+        return lo, hi
+    return None
+
+
+def _region_side(w, pose, h, nodes, shift, tri_cap=TRI_CAP, box_cap=BOX_CAP):
+    """Geometry the overlay draws for a set of near nodes, plus their bounds.
+
+    The triangles are returned in the pose's own frame (no translation); the
+    bounds have ``shift`` added, i.e. they are in the frame of the pair.
+    """
     nodes = _unique(nodes, (int(w.PNT[pose]) >> h) + 2)
     boxes = np.take(w.BOX.data, int(w.LVL[pose, h]) + nodes, axis=0)
     lo = boxes[:, :3].min(axis=0).astype(np.float64)
     hi = boxes[:, 3:].max(axis=0).astype(np.float64)
     ntri = int(min(nodes.shape[0] << h, w.PNT[pose]))
-    if ntri <= TRI_CAP:
-        tris = _node_tris(w, pose, h, nodes, shift)
+    if ntri <= tri_cap:
+        tris = _node_tris(w, pose, h, nodes)
     else:
-        # Too many triangles to hand over every frame: draw boxes of coarser
-        # ancestors instead (flat patches still look like the surface).
+        # Too many triangles to hand over: draw boxes of coarser ancestors
+        # instead (flat patches still look like the surface).
         up = 0
         anc = nodes
         H = int(w.PH[pose])
-        while anc.shape[0] > BOX_CAP and h + up < H:
+        while anc.shape[0] > box_cap and h + up < H:
             up += 1
             anc = np.unique(anc >> 1)
         b = np.take(w.BOX.data, int(w.LVL[pose, h + up]) + anc, axis=0)
-        blo = b[:, :3]
-        bhi = b[:, 3:]
-        if shift is not None:
-            blo = blo + shift
-            bhi = bhi + shift
-        tris = box_tris(blo, bhi)
+        tris = box_tris(b[:, :3], b[:, 3:])
     if shift is not None:
         lo = lo + shift
         hi = hi + shift
@@ -599,14 +623,23 @@ def points_inside(w, pose, pts):
 # driver
 # ---------------------------------------------------------------------------
 
-def solve(w, keys, exact=True):
+def solve(w, keys, exact=True, detail=None):
     """Evaluate the given object pairs and store their results in ``w.pairs``.
 
-    Intersections are always found completely.  With ``exact=False`` the
-    clearance distance of non-intersecting pairs is the best value found by a
-    quick guided search (an upper bound that is usually within a few percent);
-    such results are flagged ``refine`` so the caller can redo them with
+    Whether two parts intersect is always decided exactly.  ``exact=False``
+    is the mode for live edits: some things may be left for later, and such
+    results are flagged ``refine`` so the caller redoes them with
     ``exact=True`` once the objects stop moving.
+
+    * The clearance distance of pairs that do not intersect is the best value
+      found by a capped search (an upper bound, usually within a few percent).
+    * ``detail`` (a boolean per pair, or None for all) says which pairs get the
+      full treatment.  The others are only *sketched*, which is far cheaper:
+      one intersecting triangle pair proves a collision, without the complete
+      intersection curve or the hatched region, and the clearance is judged
+      from a quick guided search alone.  Sketched results are flagged
+      ``lite``.  This is what keeps a part that lands on dozens of others
+      responsive.
     """
     npid = len(keys)
     if npid == 0:
@@ -644,9 +677,42 @@ def solve(w, keys, exact=True):
     pad = w.viz_pad
     viz = min(max(clear, VIZ_MIN * pad), VIZ_MAX * pad)
 
+    if exact or detail is None:
+        lite = np.zeros(npid, dtype=bool)
+    else:
+        lite = ~np.asarray(detail, dtype=bool)
+    full = ~lite
+    sketch = np.zeros(npid, dtype=bool)     # sketched and found to intersect
+    sk_rows = None
+    live = not exact
+    tri_cap = TRI_CAP_LIVE if live else w.tri_cap
+    box_cap = BOX_CAP_LIVE if live else BOX_CAP
+    seg_cap = SEG_CAP_LIVE if live else SEG_CAP
+
     with np.errstate(invalid='ignore', over='ignore'):
+        # 0. sketched pairs: look for one intersecting triangle pair with a
+        # beam search towards the most deeply overlapping boxes.  Finding one
+        # proves the collision; nothing more is computed for such a pair now.
+        if lite.any():
+            lp = np.flatnonzero(lite)
+            zs = np.zeros(lp.shape[0], dtype=np.int64)
+            d_pid, d_ia, d_ib = _dive(w, (lp, zs, zs, np.zeros(lp.shape[0], dtype=np.float32)),
+                                      w.PH[pose_a], w.PH[pose_b], pose_a, pose_b, relt, BEAM_SKETCH)
+            if d_pid.shape[0]:
+                P, Q = _pair_tris(w, pose_a, pose_b, rel64t, d_pid, d_ia, d_ib)
+                hit, seg = tritri.tri_tri_intersect(P, Q, w.eps_exact)
+                if seg.shape[0]:
+                    sk_rows = (d_pid[hit], d_ia[hit], d_ib[hit], seg.astype(np.float32))
+                    sketch[sk_rows[0]] = True
+
         # 1. every triangle pair whose boxes touch -> intersection segments
-        start = (np.arange(npid), zero, zero, np.zeros(npid, dtype=np.float32))
+        # (all pairs except those just proven to intersect)
+        if sketch.any():
+            pids = np.flatnonzero(~sketch)
+            zs = np.zeros(pids.shape[0], dtype=np.int64)
+            start = (pids, zs, zs, np.zeros(pids.shape[0], dtype=np.float32))
+        else:
+            start = (np.arange(npid), zero, zero, np.zeros(npid, dtype=np.float32))
         leaf, dense_rows, dense, h_ad, h_bd = _fine(
             w, start, w.PH[pose_a], w.PH[pose_b], pose_a, pose_b, relt,
             np.full(npid, -1.0, dtype=np.float32), eps2)
@@ -681,6 +747,11 @@ def solve(w, keys, exact=True):
         else:
             o_pid = o_ia = o_ib = e_i
 
+        if sk_rows is not None and sk_rows[0].shape[0]:
+            hit_rows = sk_rows if hit_rows is None else tuple(
+                np.concatenate((x, y)) for x, y in zip(hit_rows, sk_rows))
+            collided[sk_rows[0]] = True
+
         if dense.any():
             d_pid, d_ia, d_ib = _dive(w, dense_rows, h_ad, h_bd, pose_a, pose_b, relt, BEAM_DENSE)
             if d_pid.shape[0]:
@@ -691,16 +762,17 @@ def solve(w, keys, exact=True):
         # for the clearance) and, for the pairs that do, the surface patches
         # within the display distance of the other part (what gets hatched).
         free = np.flatnonzero(~collided)
-        hit_p = np.flatnonzero(collided)
+        free_full = np.flatnonzero(~collided & full)
+        hit_p = np.flatnonzero(collided & full)
         show = hit_p.shape[0] > 0 and viz > 4.0 * w.eps_touch
-        if floor > 0.0 and (free.shape[0] or show):
+        if floor > 0.0 and (free_full.shape[0] or show):
             thr_p = np.full(npid, dlim2, dtype=np.float32)
             flo_p = np.full(npid, floor, dtype=np.float32)
             if show:
                 thr_p[hit_p] = (viz + eps) ** 2
                 flo_p[hit_p] = REGION_RES * viz
             rows, h_a1, h_b1 = _coarse(w, pose_a, pose_b, relt, thr_p, flo_p, eps2,
-                                       np.arange(npid) if show else free)
+                                       np.flatnonzero(full) if show else free_full)
             if show:
                 m = np.take(collided, rows[0])
                 region_c = tuple(x[m] for x in rows)
@@ -722,6 +794,17 @@ def solve(w, keys, exact=True):
                 sel = _top_k(o_pid, (np.arange(o_pid.shape[0]),), 256)
                 _eval_rows(w, pose_a, pose_b, rel64t, o_pid[sel], o_ia[sel], o_ib[sel],
                            w.eps_exact, best)
+            lf = np.flatnonzero(~collided & lite)
+            if lf.shape[0] and clear > 0.0:
+                # sketched: the closest triangles a guided search comes across.
+                # A value below the clearance is a true violation; anything
+                # else is unproven and is checked properly later.
+                zs = np.zeros(lf.shape[0], dtype=np.int64)
+                d_pid, d_ia, d_ib = _dive(w, (lf, zs, zs, np.zeros(lf.shape[0], dtype=np.float32)),
+                                          w.PH[pose_a], w.PH[pose_b], pose_a, pose_b, relt, BEAM)
+                if d_pid.shape[0]:
+                    _eval_rows(w, pose_a, pose_b, rel64t, d_pid, d_ia, d_ib, w.eps_exact, best)
+            short[lf] = True
             r_pid = region[0]
             if r_pid.shape[0]:
                 near[r_pid] = True
@@ -821,7 +904,8 @@ def solve(w, keys, exact=True):
             continue
         res.stale = False
         res.approx = bool(approx[p])
-        res.refine = False
+        res.lite = bool(lite[p])
+        res.refine = bool(lite[p])
         res.enclosed = 0
         res.segs = None
         res.nseg = 0
@@ -843,20 +927,24 @@ def solve(w, keys, exact=True):
             csel = _rows_of(c_order, c_bounds, p) if region_c is not None else None
             if csel is not None and region_c[1][csel].shape[0]:
                 # surface patches of both parts near the other part
-                res.tri_a, lo_a, hi_a = _region_side(w, pa_i, int(h_a2[p]), region_c[1][csel], None)
-                res.tri_b, lo_b, hi_b = _region_side(w, pb_i, int(h_b2[p]), region_c[2][csel], shift)
-                res.clip_a = (lo_b - viz, hi_b + viz)
-                res.clip_b = (lo_a - viz, hi_a + viz)
+                res.tri_a, lo_a, hi_a = _region_side(w, pa_i, int(h_a2[p]), region_c[1][csel],
+                                                     None, tri_cap, box_cap)
+                res.tri_b, lo_b, hi_b = _region_side(w, pb_i, int(h_b2[p]), region_c[2][csel],
+                                                     shift, tri_cap, box_cap)
+                res.clip_a = _clip_box(res.tri_a, None, lo_b - viz, hi_b + viz, viz)
+                res.clip_b = _clip_box(res.tri_b, shift, lo_a - viz, hi_a + viz, viz)
             else:
-                # no display distance to speak of: the triangles the curve runs through
+                # sketched, or no display distance to speak of: the triangles
+                # the (partial) curve runs through
                 res.tri_a = _node_tris(w, pa_i, 0, _unique(hit_rows[1][sel], int(w.PNT[pa_i]) + 1),
-                                       None, TRI_CAP)
+                                       None, tri_cap)
                 res.tri_b = _node_tris(w, pb_i, 0, _unique(hit_rows[2][sel], int(w.PNT[pb_i]) + 1),
-                                       shift, TRI_CAP)
+                                       None, tri_cap)
                 grow = max(pad, 0.15 * diag)
-                res.clip_a = res.clip_b = (lo - grow, hi + grow)
-            if segs.shape[0] > SEG_CAP:
-                segs = segs[::segs.shape[0] // SEG_CAP + 1]
+                res.clip_a = _clip_box(res.tri_a, None, lo - grow, hi + grow, grow)
+                res.clip_b = _clip_box(res.tri_b, shift, lo - grow, hi + grow, grow)
+            if segs.shape[0] > seg_cap:
+                segs = segs[::segs.shape[0] // seg_cap + 1]
             res.segs = segs
             res.center = 0.5 * (lo + hi)
             res.radius = max(0.5 * diag, pad)
@@ -867,7 +955,6 @@ def solve(w, keys, exact=True):
             # report the inner part: its outline box and a sample of its surface
             a_inner = enclosed[p] == 1
             pose_in = int(pose_a[p] if a_inner else pose_b[p])
-            sh = None if a_inner else shift
             off = np.zeros(3) if a_inner else rel64[p]
             slot_in = sa[p] if a_inner else sb[p]
             lo = w.O_LO[slot_in] + off
@@ -877,12 +964,11 @@ def solve(w, keys, exact=True):
             res.enclosed = int(enclosed[p])
             res.segs = box_edges(lo, hi)
             tris = _node_tris(w, pose_in, int(w.PH[pose_in]), np.zeros(1, dtype=np.int64),
-                              sh, TRI_CAP)
+                              None, tri_cap)
             if a_inner:
                 res.tri_a = tris
             else:
                 res.tri_b = tris
-            res.clip_a = res.clip_b = (lo - pad, hi + pad)
             res.center = 0.5 * (lo + hi)
             res.radius = max(0.5 * float(np.linalg.norm(hi - lo)), pad)
             res.pa = res.pb = res.center
@@ -924,12 +1010,12 @@ def solve(w, keys, exact=True):
             continue
         pa_i = int(pose_a[p])
         pb_i = int(pose_b[p])
-        tri_a, lo_a, hi_a = _region_side(w, pa_i, int(h_a1[p]), nodes_a, None)
-        tri_b, lo_b, hi_b = _region_side(w, pb_i, int(h_b1[p]), r_ib[sel], shift)
+        tri_a, lo_a, hi_a = _region_side(w, pa_i, int(h_a1[p]), nodes_a, None, tri_cap, box_cap)
+        tri_b, lo_b, hi_b = _region_side(w, pb_i, int(h_b1[p]), r_ib[sel], shift, tri_cap, box_cap)
         res.tri_a = tri_a
         res.tri_b = tri_b
-        res.clip_a = (lo_b - thr_v, hi_b + thr_v)
-        res.clip_b = (lo_a - thr_v, hi_a + thr_v)
+        res.clip_a = _clip_box(tri_a, None, lo_b - thr_v, hi_b + thr_v, thr_v)
+        res.clip_b = _clip_box(tri_b, shift, lo_a - thr_v, hi_a + thr_v, thr_v)
         # where both parts are near each other: used to frame the view
         flo = np.maximum(lo_a, lo_b) - 0.5 * thr_v
         fhi = np.minimum(hi_a, hi_b) + 0.5 * thr_v
