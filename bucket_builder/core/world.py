@@ -51,6 +51,7 @@ VERT_CHUNK = 1 << 16      # vertices posed in one piece
 FIT_BLOCK = 15            # log2 of the triangles whose boxes are fitted in one piece
 FIT_NOW = 40000           # meshes up to this many triangles are re-fitted at once
 BORROW_MAX = 64.0         # largest stretch between a borrowed pose and its user
+MAX_WAIT = 2              # poses still to be fitted that one batch of pairs may wait for
 
 
 class Geom:
@@ -192,14 +193,17 @@ class World:
         self._param_stamp = 0
         self.version = 0          # bumps whenever any result changes
         self._serial = 0
-        # Load control, following the measured cost.  ``live_detail`` is how
-        # many pairs get the full treatment in one live solve; the rest are
-        # sketched and completed when idle.  ``_bg_batch`` is how many pairs a
-        # background solve takes at once.
-        self.live_detail = 8
-        self._detail_cost = 0.0   # seconds one fully treated pair costs (running estimate)
-        self._lite_cost = 0.0     # seconds one sketched pair costs
-        self._bg_batch = 8
+        # Load control, following the measured cost.  A live solve that only
+        # sketches its n pairs takes about _lite_c0 + n * _lite_c1 seconds,
+        # and _detail_cost more for every pair that gets the full treatment.
+        # ``live_detail`` is how many pairs get that in the next live solve;
+        # the rest are sketched and completed when idle.  ``_bg_batch`` is
+        # how many pairs a background solve takes at once.
+        self.live_detail = 4
+        self._lite_c0 = 0.003
+        self._lite_c1 = 0.0005
+        self._detail_cost = 0.0
+        self._bg_batch = 2
         self.tri_cap = narrow.TRI_CAP     # region triangles per part and pair
         self.last_step_ms = 0.0
         self.last_pairs = 0
@@ -575,6 +579,12 @@ class World:
         p.slots.discard(slot)
         if not p.slots:
             self._pose_drop(p)
+        elif self._borrowing:
+            # a borrower that is now alone with the pose can have it re-fitted
+            for other in p.slots:
+                if other in self._borrowing:
+                    self._borrowing.discard(other)
+                    self._virt_todo.add(other)
 
     def _pose_cost(self, slot):
         g = self._obj[slot][1]
@@ -1059,35 +1069,78 @@ class World:
         return len(self._pend_hot) + len(self._pend_cold) + len(self._pend_refine)
 
     def _batch(self, src, size):
-        """The next pairs of a queue to solve together (they stay queued)."""
+        """The next pairs of a queue to solve together (they stay queued).
+
+        Pairs whose poses are fitted go first.  Only when there are none does
+        a batch wait, and then for at most ``MAX_WAIT`` poses, so that the
+        results of a new scene appear as the fits get done and not after all
+        of them."""
         room = self.pose_room()
-        keys = []
+        pairs = self.pairs
+        obj = self._obj
         dead = []
+        ready = []
+        late = []                     # (key, poses it still needs fitted)
+        waiting = set()
+        closed = False
         held = set()
         held_bytes = 0
-        pairs = self.pairs
         for key in src:
-            if len(keys) >= size:
-                break
             if key not in pairs:
                 dead.append(key)
+                continue
+            wait = None
+            for slot in key:
+                p = obj[slot][3]
+                if p is None or p.unfit:
+                    ident = self._pose_ident(slot)
+                    wait = [ident] if wait is None else wait + [ident]
+            if wait is not None:
+                if not closed and len(late) < size:
+                    more = [i for i in wait if i not in waiting]
+                    if late and len(waiting) + len(more) > MAX_WAIT:
+                        closed = True
+                    else:
+                        waiting.update(more)
+                        late.append(key)
                 continue
             if room is not None:
                 # the poses of one batch must fit the cache together
                 extra = 0
                 idents = []
                 for slot in key:
-                    ident = self._pose_ident(slot)
+                    ident = obj[slot][3]
                     if ident not in held and ident not in idents:
                         idents.append(ident)
                         extra += self._pose_cost(slot)
-                if keys and held_bytes + extra > room:
+                if ready and held_bytes + extra > room:
                     break
                 held.update(idents)
                 held_bytes += extra
-            keys.append(key)
+            ready.append(key)
+            if len(ready) >= size:
+                break
         for key in dead:
             del src[key]
+        if ready or not late or room is None:
+            return ready or late
+        # the same limit for a batch that waits
+        keys = []
+        held = set()
+        held_bytes = 0
+        for key in late:
+            extra = 0
+            idents = []
+            for slot in key:
+                ident = self._pose_ident(slot)
+                if ident not in held and ident not in idents:
+                    idents.append(ident)
+                    extra += self._pose_cost(slot)
+            if keys and held_bytes + extra > room:
+                break
+            held.update(idents)
+            held_bytes += extra
+            keys.append(key)
         return keys
 
     def step(self, budget=0.010, hot_budget=0.016, idle=True):
@@ -1130,10 +1183,19 @@ class World:
             if exact:
                 size = self._bg_batch
             else:
-                # as many pairs as a sketch of each fits into one live solve;
-                # with more than that pending, the rest wait for the next step
-                # (their previous result stays on screen meanwhile)
-                size = int(min(MAX_BATCH, max(8, LIVE_TARGET / max(self._lite_cost, 1e-5))))
+                # A live solve takes every pair that is waiting if a sketch of
+                # each fits twice the budget: complete answers a little late
+                # are better than partial ones on time, and a solve has a
+                # fixed cost that is then paid once.  Otherwise it takes as
+                # many as fit what is left of the budget; the rest wait for
+                # the next step (their previous result stays on screen).
+                c0, c1 = self._lite_c0, max(self._lite_c1, 1e-5)
+                elapsed = time.perf_counter() - t0
+                if elapsed + c0 + c1 * len(src) <= 2.0 * limit:
+                    size = len(src)
+                else:
+                    size = max(8.0, (max(limit - elapsed, 0.5 * limit) - c0) / c1)
+                size = int(min(MAX_BATCH, size))
             keys = self._batch(src, size)
             if not keys:
                 continue
@@ -1152,7 +1214,7 @@ class World:
             if exact:
                 # background slices should fit the budget they are given
                 fit = budget * len(keys) / max(dt, 1e-6)
-                self._bg_batch = int(min(MAX_BATCH, max(2, 0.5 * self._bg_batch + 0.5 * fit)))
+                self._bg_batch = int(min(MAX_BATCH, max(1, 0.5 * self._bg_batch + 0.5 * fit)))
             else:
                 self._learn_cost(len(keys), detail, dt)
             self._serial += 1
@@ -1256,18 +1318,26 @@ class World:
         return detail
 
     def _learn_cost(self, n, detail, dt):
-        """Update how many pairs a live solve can afford to treat fully."""
+        """Update the cost estimates of a live solve, and with them how many
+        pairs the next one can afford to treat fully."""
         nd = n if detail is None else int(detail.sum())
         if nd:
-            per = max(dt - self._lite_cost * (n - nd), 0.25 * dt) / nd
+            sketched = self._lite_c0 + self._lite_c1 * (n - nd)
+            per = max(dt - sketched, 0.25 * dt) / nd
             self._detail_cost = per if self._detail_cost <= 0.0 else (
                 0.6 * self._detail_cost + 0.4 * per)
         else:
-            per = dt / n
-            self._lite_cost = per if self._lite_cost <= 0.0 else 0.6 * self._lite_cost + 0.4 * per
+            if n <= 3:
+                # a small solve is mostly its fixed cost
+                c0 = max(dt - self._lite_c1 * n, 0.5 * dt)
+                self._lite_c0 = 0.7 * self._lite_c0 + 0.3 * c0
+            else:
+                c1 = max(dt - self._lite_c0, 0.2 * dt) / n
+                self._lite_c1 = 0.6 * self._lite_c1 + 0.4 * c1
             self._detail_cost *= 0.99        # so that detail is tried again now and then
-        spare = LIVE_TARGET - self._lite_cost * n
-        self.live_detail = int(min(64, max(0, spare / max(self._detail_cost, 1e-5))))
+        if self._detail_cost > 0.0:      # (until one has been measured: the cautious default)
+            spare = LIVE_TARGET - (self._lite_c0 + self._lite_c1 * n)
+            self.live_detail = int(min(64, max(0, spare / self._detail_cost)))
 
     # ----------------------------------------------------------- build volume
     def _update_oob(self):

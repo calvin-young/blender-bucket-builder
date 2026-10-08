@@ -177,9 +177,15 @@ def storm(rng, n_parts=50, tris_small=100000, tris_big=400000, steps=60):
     M0 = meshes.matrix(meshes.rot(rng), (190.0, 142.0, 190.0))
     w.add_object('new', 'new', M0)
     t_add = time.perf_counter() - t0
-    t0 = time.perf_counter()
-    w.step(idle=False)
-    t_first = time.perf_counter() - t0
+    # until every neighbour has its answer: the steps the add-on would take
+    # between redraws (the longest of them is the longest freeze)
+    first = []
+    while True:
+        t0 = time.perf_counter()
+        w.step(idle=False)
+        first.append(time.perf_counter() - t0)
+        if not (w._pend_hot or w._pend_cold) or len(first) > 500:
+            break
     slot = w.slot('new')
 
     def touching():
@@ -194,8 +200,9 @@ def storm(rng, n_parts=50, tris_small=100000, tris_big=400000, steps=60):
     st = w.stats()
     print(f'import storm: {n_parts} parts of ~{tris_small // 1000}k triangles, new part '
           f'{len(f) // 1000}k triangles ({st["triangles"] / 1e6:.1f} M in all, {st["bytes"] / 1e6:.0f} MB)')
-    print(f'  new part lands on {c} parts ({n} neighbours): posed in {t_add * 1000:.0f} ms, '
-          f'first answer after {t_first * 1000:.0f} ms, overlay load {overlay_load(w)}')
+    print(f'  new part lands on {c} parts ({n} neighbours): added in {t_add * 1000:.0f} ms, judged '
+          f'after {sum(first) * 1000:.0f} ms in {len(first)} steps (longest {max(first) * 1000:.0f} ms), '
+          f'overlay load {overlay_load(w)}')
     times, coll, load, late = [], [], [], []
     for i in range(steps):
         M = M0.copy()
