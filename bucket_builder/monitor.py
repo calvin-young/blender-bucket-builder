@@ -22,6 +22,7 @@ Blender data is only ever read here; the scene is never modified.
 import concurrent.futures
 import hashlib
 import os as _os
+import threading
 import time
 from collections import deque
 
@@ -35,6 +36,7 @@ from .core import World, OK, CLEAR, COLLIDE, PARTIAL, OUTSIDE, bvh
 _monitors = {}          # scene.session_uid -> Monitor
 _timer_running = False
 _pool = None            # worker threads, made when first needed
+_stop = threading.Event()   # set to make running sorts give up (add-on switched off)
 HOT_SECONDS = 0.35      # an object counts as "being edited" this long after a change
 IDLE_SECONDS = 0.15     # quiet time before quick results get their exact pass
 RESYNC_SECONDS = 1.5    # safety net: compare the scene with the mirror this often
@@ -77,10 +79,16 @@ class _Job:
 def _executor():
     global _pool
     if _pool is None:
+        _stop.clear()
         workers = max(1, min(4, (_os.cpu_count() or 2) - 1))
         _pool = concurrent.futures.ThreadPoolExecutor(max_workers=workers,
                                                       thread_name_prefix='bucket_builder')
     return _pool
+
+
+def _sort_job(co, tri):
+    """What a worker thread runs: nothing but NumPy on arrays it was given."""
+    return bvh.sort_mesh(co, tri, _stop.is_set)
 
 
 def _uid(idblock):
@@ -387,7 +395,7 @@ class Monitor:
                         if tri.shape[0] <= SYNC_TRIS:
                             w.add_geom(key, co, tri)
                         else:
-                            self.jobs[key] = _Job(_executor().submit(bvh.sort_mesh, co, tri),
+                            self.jobs[key] = _Job(_executor().submit(_sort_job, co, tri),
                                                   int(co.shape[0]), int(tri.shape[0]))
         if key is None:
             if os.in_world:
@@ -952,6 +960,7 @@ def unregister():
     _timer_running = False
     _monitors.clear()
     if _pool is not None:
-        # a sort that is running finishes on its own; nothing waits for it
+        # sorts that are running give up at their next level; nothing waits
+        _stop.set()
         _pool.shutdown(wait=False, cancel_futures=True)
         _pool = None
