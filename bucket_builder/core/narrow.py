@@ -12,6 +12,12 @@ not).  Inside a pair everything is expressed in A's frame, i.e. B is shifted by
 ``rel = translation(B) - translation(A)``.  That is why dragging an object
 costs nothing but a different ``rel``.
 
+An object can also *borrow* a pose that was fitted for another rotation or
+scale of its mesh (see ``world``).  Then every box read from that pose is
+moved into the object's orientation first (``_move_boxes``), and its
+triangles are posed from the mesh's own vertices (``_corners``).  The boxes
+get looser by that, the triangles are exactly the ones a fitted pose holds.
+
 Pipeline for one batch
     1. coarse   descend both trees keeping node pairs closer than the largest
                 threshold, down to a resolution of a fraction of that threshold
@@ -68,16 +74,145 @@ def corners(w, pose_rows, leaf):
     return np.take(w.VERT.data, v.ravel(), axis=0).reshape(-1, 3, 3)
 
 
-def _pair_tris(w, pose_a, pose_b, rel64t, pid, ia, ib):
+def _pose_local(loc, L9):
+    """Mesh-space points ``loc`` (K, 3) under a rotation/scale given as nine
+    coefficients (scalars, or one column per point).  This is the expression
+    of ``World._posed``, so the result is bit for bit what a fitted pose
+    holds."""
+    x = np.ascontiguousarray(loc[:, 0])
+    y = np.ascontiguousarray(loc[:, 1])
+    z = np.ascontiguousarray(loc[:, 2])
+    out = np.empty((loc.shape[0], 3), dtype=np.float32)
+    for c in range(3):
+        t = x * L9[3 * c]
+        t += y * L9[3 * c + 1]
+        t += z * L9[3 * c + 2]
+        out[:, c] = t
+    return out
+
+
+def _corners(w, pose, pid, leaf, side=None):
+    """Posed corners, float32 (K, 3, 3), of triangle ``leaf`` on one side of
+    the pairs ``pid``.  ``side`` is None, or (flags, L9, lbase) per pair for
+    sides that borrow their pose."""
+    pr = np.take(pose, pid)
+    t = np.take(w.TIDX.data, np.take(w.PTB, pr) + leaf, axis=0)
+    if side is not None:
+        flag, L9, lb = side
+        m = np.take(flag, pid)
+        if m.any():
+            if m.all():
+                loc = np.take(w.LVERT.data, (t + np.take(lb, pid)[:, None]).ravel(), axis=0)
+                return _pose_local(loc, np.repeat(np.take(L9, pid, axis=1), 3, axis=1)
+                                   ).reshape(-1, 3, 3)
+            out = np.empty((pid.shape[0], 3, 3), dtype=np.float32)
+            e = np.flatnonzero(~m)
+            b = np.flatnonzero(m)
+            v = t[e] + np.take(w.PVB, pr[e])[:, None]
+            out[e] = np.take(w.VERT.data, v.ravel(), axis=0).reshape(-1, 3, 3)
+            pb = pid[b]
+            loc = np.take(w.LVERT.data, (t[b] + np.take(lb, pb)[:, None]).ravel(), axis=0)
+            out[b] = _pose_local(loc, np.repeat(np.take(L9, pb, axis=1), 3, axis=1)
+                                 ).reshape(-1, 3, 3)
+            return out
+    v = t + np.take(w.PVB, pr)[:, None]
+    return np.take(w.VERT.data, v.ravel(), axis=0).reshape(-1, 3, 3)
+
+
+class _Borrow:
+    """What a batch needs to know about the sides that borrow a pose: how to
+    move its boxes into the object's orientation and how to pose the object's
+    own triangles.  Index 0 is side A, 1 is side B."""
+
+    def __init__(self, w, sa, sb):
+        self.w = w
+        self.slots = (sa, sb)
+        self.flag = (w.O_VIRT[sa], w.O_VIRT[sb])
+        self.any = (bool(self.flag[0].any()), bool(self.flag[1].any()))
+        self.R = [None, None]
+        self.A = [None, None]
+        self.pad = [None, None]
+        self.side = [None, None]
+        for k in range(2):
+            if not self.any[k]:
+                continue
+            s = self.slots[k]
+            R9 = np.ascontiguousarray(w.O_REL[s].reshape(-1, 9).T)
+            self.R[k] = R9
+            self.A[k] = np.abs(R9)
+            self.pad[k] = 2.0 * w.O_PAD[s]      # (boxes are handled doubled, see _move_boxes)
+            self.side[k] = (self.flag[k], np.ascontiguousarray(w.O_L[s].reshape(-1, 9).T), w.O_LB[s])
+
+    def one(self, p, k):
+        """(L, lbase, rel, pad) of one side of pair ``p``, or None if that
+        side has a pose of its own."""
+        slot = int(self.slots[k][p])
+        w = self.w
+        if not w.O_VIRT[slot]:
+            return None
+        return w.O_L[slot], int(w.O_LB[slot]), w.O_REL[slot], float(w.O_PAD[slot])
+
+
+def _move_boxes(X, ps, flag, R9, A9, pad2):
+    """Boxes ``X`` (6, children, rows) with those of borrowing sides moved into
+    their object's orientation: the box around the transformed box (centre
+    through the matrix, half extent through its absolute value) plus a little
+    slack for rounding.  Empty boxes come out as NaN, which fails every test.
+    """
+    m = np.take(flag, ps)
+    if not m.any():
+        return X
+    whole = bool(m.all())
+    sel = ps if whole else ps[m]
+    S = X if whole else X[:, :, m]
+    r = np.take(R9, sel, axis=1)
+    a = np.take(A9, sel, axis=1)
+    pd = np.take(pad2, sel)
+    cx = S[0] + S[3]                     # twice the centre
+    cy = S[1] + S[4]
+    cz = S[2] + S[5]
+    ex = S[3] - S[0]                     # twice the half extent
+    ey = S[4] - S[1]
+    ez = S[5] - S[2]
+    out = np.empty_like(S)
+    for i in range(3):
+        c = r[3 * i] * cx
+        c += r[3 * i + 1] * cy
+        c += r[3 * i + 2] * cz
+        e = a[3 * i] * ex
+        e += a[3 * i + 1] * ey
+        e += a[3 * i + 2] * ez
+        e += pd
+        np.subtract(c, e, out=out[i])
+        np.add(c, e, out=out[3 + i])
+    out *= 0.5
+    if whole:
+        return out
+    X[:, :, m] = out
+    return X
+
+
+def _move_rows(b, rel, pad):
+    """(lo, hi) of boxes ``b`` (n, 6) moved by one matrix ``rel`` (3, 3)."""
+    c = (b[:, :3] + b[:, 3:]) @ (0.5 * rel.T)
+    e = (b[:, 3:] - b[:, :3]) @ (0.5 * np.abs(rel).T) + pad
+    return c - e, c + e
+
+
+def _pair_tris(w, pose_a, pose_b, rel64t, pid, ia, ib, xf=None):
     """Float64 corners of both triangles of each row, in A's frame, laid out
     (3 coords, 3 corners, K) as ``tritri`` expects."""
-    P = tritri.to_soa(corners(w, np.take(pose_a, pid), ia))
-    Q = tritri.to_soa(corners(w, np.take(pose_b, pid), ib))
+    if xf is None:
+        P = tritri.to_soa(corners(w, np.take(pose_a, pid), ia))
+        Q = tritri.to_soa(corners(w, np.take(pose_b, pid), ib))
+    else:
+        P = tritri.to_soa(_corners(w, pose_a, pid, ia, xf.side[0]))
+        Q = tritri.to_soa(_corners(w, pose_b, pid, ib, xf.side[1]))
     Q += np.take(rel64t, pid, axis=1)[:, None, :]
     return P, Q
 
 
-def _test_block(w, p, a, b, sa, sb, blk_a, blk_b, relt, thr2_p, eps2, want_cd, out):
+def _test_block(w, p, a, b, sa, sb, blk_a, blk_b, relt, thr2_p, eps2, want_cd, out, xf=None):
     """Test every child pair of the given rows (all with the same step sizes).
 
     The children of a node are neighbours in memory, so one gather per parent
@@ -94,6 +229,11 @@ def _test_block(w, p, a, b, sa, sb, blk_a, blk_b, relt, thr2_p, eps2, want_cd, o
         bs = b[s:s + chunk]
         A = np.ascontiguousarray(np.take(va, np.take(blk_a, ps) + as_, axis=0).transpose(2, 1, 0))
         B = np.ascontiguousarray(np.take(vb, np.take(blk_b, ps) + bs, axis=0).transpose(2, 1, 0))
+        if xf is not None:
+            if xf.any[0]:
+                A = _move_boxes(A, ps, xf.flag[0], xf.R[0], xf.A[0], xf.pad[0])
+            if xf.any[1]:
+                B = _move_boxes(B, ps, xf.flag[1], xf.R[1], xf.A[1], xf.pad[1])
         r = np.take(relt, ps, axis=1)
         acc = None
         for c in range(3):
@@ -128,7 +268,7 @@ def _test_block(w, p, a, b, sa, sb, blk_a, blk_b, relt, thr2_p, eps2, want_cd, o
             out[4].append(cd)
 
 
-def _step(w, pid, ia, ib, sa_p, sb_p, lvl_a, lvl_b, relt, thr2_p, eps2, want_cd=False):
+def _step(w, pid, ia, ib, sa_p, sb_p, lvl_a, lvl_b, relt, thr2_p, eps2, want_cd=False, xf=None):
     """Descend rows by per-pair steps and keep the children that pass.
 
     ``lvl_a`` / ``lvl_b`` give, per pair, the arena row where the level the
@@ -145,13 +285,13 @@ def _step(w, pid, ia, ib, sa_p, sb_p, lvl_a, lvl_b, relt, thr2_p, eps2, want_cd=
         c0 = int(rc[0])
         if (rc == c0).all():
             _test_block(w, pid, ia, ib, c0 >> 2, c0 & 3, blk_a, blk_b, relt, thr2_p, eps2,
-                        want_cd, out)
+                        want_cd, out, xf)
         else:
             for code in np.unique(rc):
                 sel = np.flatnonzero(rc == code)
                 code = int(code)
                 _test_block(w, np.take(pid, sel), np.take(ia, sel), np.take(ib, sel),
-                            code >> 2, code & 3, blk_a, blk_b, relt, thr2_p, eps2, want_cd, out)
+                            code >> 2, code & 3, blk_a, blk_b, relt, thr2_p, eps2, want_cd, out, xf)
     k = 5 if want_cd else 4
     if not out[0]:
         e = np.zeros(0, dtype=np.int64)
@@ -259,7 +399,7 @@ def _cat(parts, k=4):
 # stages
 # ---------------------------------------------------------------------------
 
-def _coarse(w, pose_a, pose_b, relt, dmax2, floor, eps2, pids):
+def _coarse(w, pose_a, pose_b, relt, dmax2, floor, eps2, pids, xf=None):
     """Rows (node pairs) closer than the threshold for the pairs ``pids``,
     refined until the boxes are about ``floor`` in size.  ``dmax2`` and
     ``floor`` may be scalars or one value per pair."""
@@ -272,7 +412,7 @@ def _coarse(w, pose_a, pose_b, relt, dmax2, floor, eps2, pids):
     pid = pids
     start = np.zeros(pid.shape[0], dtype=np.int64)
     pid, ia, ib, lb2 = _step(w, pid, start, start, zero, zero,
-                             w.LVL[pose_a, h_a], w.LVL[pose_b, h_b], relt, thr, eps2)
+                             w.LVL[pose_a, h_a], w.LVL[pose_b, h_b], relt, thr, eps2, xf=xf)
     live = np.zeros(npid, dtype=bool)
     live[pids] = True
     region = []
@@ -293,11 +433,11 @@ def _coarse(w, pose_a, pose_b, relt, dmax2, floor, eps2, pids):
         h_a = h_a - sa
         h_b = h_b - sb
         pid, ia, ib, lb2 = _step(w, pid, ia, ib, sa, sb,
-                                 w.LVL[pose_a, h_a], w.LVL[pose_b, h_b], relt, thr, eps2)
+                                 w.LVL[pose_a, h_a], w.LVL[pose_b, h_b], relt, thr, eps2, xf=xf)
     return _cat(region), h_a, h_b
 
 
-def _dive(w, rows, h_a, h_b, pose_a, pose_b, relt, beam):
+def _dive(w, rows, h_a, h_b, pose_a, pose_b, relt, beam, xf=None):
     """Greedy beam search from the given rows down to triangle pairs."""
     pid, ia, ib, lb2 = rows
     npid = pose_a.shape[0]
@@ -317,7 +457,7 @@ def _dive(w, rows, h_a, h_b, pose_a, pose_b, relt, beam):
         h_b = h_b - sb
         pid, ia, ib, lb2, cd2 = _step(w, pid, ia, ib, sa, sb,
                                       w.LVL[pose_a, h_a], w.LVL[pose_b, h_b],
-                                      relt, big, 0.0, want_cd=True)
+                                      relt, big, 0.0, want_cd=True, xf=xf)
         if pid.shape[0] == 0:
             break
         sel = _beam(pid, lb2, cd2, beam)
@@ -325,7 +465,8 @@ def _dive(w, rows, h_a, h_b, pose_a, pose_b, relt, beam):
     return pid, ia, ib
 
 
-def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=CAP_FINE, truncate=False):
+def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=CAP_FINE, truncate=False,
+          xf=None):
     """Descend the given rows to triangle pairs.
 
     A row survives while its boxes overlap (within ``eps2``) or its box
@@ -380,7 +521,7 @@ def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=CAP_FINE, tru
         h_a = h_a - sa
         h_b = h_b - sb
         pid, ia, ib, lb2 = _step(w, pid, ia, ib, sa, sb,
-                                 w.LVL[pose_a, h_a], w.LVL[pose_b, h_b], relt, thr2, eps2)
+                                 w.LVL[pose_a, h_a], w.LVL[pose_b, h_b], relt, thr2, eps2, xf=xf)
     return _cat(leaves), _cat(dense_rows), flagged, h_a, h_b
 
 
@@ -411,9 +552,9 @@ class _Best:
         self.pb[p] = cq[:, sel].T
 
 
-def _eval_rows(w, pose_a, pose_b, rel64t, pid, ia, ib, eps_exact, best):
+def _eval_rows(w, pose_a, pose_b, rel64t, pid, ia, ib, eps_exact, best, xf=None):
     """Exact test of a few triangle-pair rows; updates ``best``."""
-    P, Q = _pair_tris(w, pose_a, pose_b, rel64t, pid, ia, ib)
+    P, Q = _pair_tris(w, pose_a, pose_b, rel64t, pid, ia, ib, xf)
     hit, seg = tritri.tri_tri_intersect(P, Q, eps_exact)
     d2, cp, cq = tritri.tri_tri_distance(P, Q)
     if hit.any():
@@ -424,8 +565,9 @@ def _eval_rows(w, pose_a, pose_b, rel64t, pid, ia, ib, eps_exact, best):
     best.update(pid, d2, cp, cq)
 
 
-def _node_tris(w, pose, h, nodes, shift=None, cap=None):
-    """Triangles under the given nodes of one pose as float32 (n, 3, 3)."""
+def _node_tris(w, pose, h, nodes, shift=None, cap=None, virt=None):
+    """Triangles under the given nodes of one pose as float32 (n, 3, 3).
+    ``virt`` (see ``_Borrow.one``) is given when the object borrows the pose."""
     nt = int(w.PNT[pose])
     start = nodes << h
     length = np.minimum(start + (1 << h), nt) - start
@@ -440,7 +582,11 @@ def _node_tris(w, pose, h, nodes, shift=None, cap=None):
     if cap is not None and tot > cap:
         leaf = leaf[::tot // cap + 1]
     t = np.take(w.TIDX.data, int(w.PTB[pose]) + leaf, axis=0)
-    tri = np.take(w.VERT.data, t.ravel() + int(w.PVB[pose]), axis=0).reshape(-1, 3, 3)
+    if virt is None:
+        tri = np.take(w.VERT.data, t.ravel() + int(w.PVB[pose]), axis=0).reshape(-1, 3, 3)
+    else:
+        loc = np.take(w.LVERT.data, t.ravel() + virt[1], axis=0)
+        tri = _pose_local(loc, virt[0].reshape(9)).reshape(-1, 3, 3)
     if shift is not None:
         tri += shift
     return tri
@@ -499,19 +645,23 @@ def _clip_box(tris, shift, lo, hi, slack):
     return None
 
 
-def _region_side(w, pose, h, nodes, shift, tri_cap=TRI_CAP, box_cap=BOX_CAP):
+def _region_side(w, pose, h, nodes, shift, tri_cap=TRI_CAP, box_cap=BOX_CAP, virt=None):
     """Geometry the overlay draws for a set of near nodes, plus their bounds.
 
-    The triangles are returned in the pose's own frame (no translation); the
+    The triangles are returned in the object's own frame (no translation); the
     bounds have ``shift`` added, i.e. they are in the frame of the pair.
     """
     nodes = _unique(nodes, (int(w.PNT[pose]) >> h) + 2)
     boxes = np.take(w.BOX.data, int(w.LVL[pose, h]) + nodes, axis=0)
-    lo = boxes[:, :3].min(axis=0).astype(np.float64)
-    hi = boxes[:, 3:].max(axis=0).astype(np.float64)
+    if virt is None:
+        blo, bhi = boxes[:, :3], boxes[:, 3:]
+    else:
+        blo, bhi = _move_rows(boxes, virt[2], virt[3])
+    lo = blo.min(axis=0).astype(np.float64)
+    hi = bhi.max(axis=0).astype(np.float64)
     ntri = int(min(nodes.shape[0] << h, w.PNT[pose]))
     if ntri <= tri_cap:
-        tris = _node_tris(w, pose, h, nodes)
+        tris = _node_tris(w, pose, h, nodes, None, None, virt)
     else:
         # Too many triangles to hand over: draw boxes of coarser ancestors
         # instead (flat patches still look like the surface).
@@ -523,6 +673,9 @@ def _region_side(w, pose, h, nodes, shift, tri_cap=TRI_CAP, box_cap=BOX_CAP):
             anc = np.unique(anc >> 1)
         b = np.take(w.BOX.data, int(w.LVL[pose, h + up]) + anc, axis=0)
         tris = box_tris(b[:, :3], b[:, 3:])
+        if virt is not None:
+            # the boxes of a borrowed pose turn with the part
+            tris = (tris.reshape(-1, 3) @ virt[2].T).reshape(-1, 3, 3)
     if shift is not None:
         lo = lo + shift
         hi = hi + shift
@@ -652,6 +805,8 @@ def solve(w, keys, exact=True, detail=None):
     rel64t = np.ascontiguousarray(rel64.T)
     rel = rel64.astype(np.float32)
     relt = np.ascontiguousarray(rel.T)
+    # sides that borrow a pose fitted for another rotation/scale
+    xf = _Borrow(w, sa, sb) if (w.O_VIRT[sa].any() or w.O_VIRT[sb].any()) else None
 
     eps = w.eps_len
     eps2 = np.float32(eps * eps)
@@ -697,9 +852,10 @@ def solve(w, keys, exact=True, detail=None):
             lp = np.flatnonzero(lite)
             zs = np.zeros(lp.shape[0], dtype=np.int64)
             d_pid, d_ia, d_ib = _dive(w, (lp, zs, zs, np.zeros(lp.shape[0], dtype=np.float32)),
-                                      w.PH[pose_a], w.PH[pose_b], pose_a, pose_b, relt, BEAM_SKETCH)
+                                      w.PH[pose_a], w.PH[pose_b], pose_a, pose_b, relt, BEAM_SKETCH,
+                                      xf)
             if d_pid.shape[0]:
-                P, Q = _pair_tris(w, pose_a, pose_b, rel64t, d_pid, d_ia, d_ib)
+                P, Q = _pair_tris(w, pose_a, pose_b, rel64t, d_pid, d_ia, d_ib, xf)
                 hit, seg = tritri.tri_tri_intersect(P, Q, w.eps_exact)
                 if seg.shape[0]:
                     sk_rows = (d_pid[hit], d_ia[hit], d_ib[hit], seg.astype(np.float32))
@@ -715,7 +871,7 @@ def solve(w, keys, exact=True, detail=None):
             start = (np.arange(npid), zero, zero, np.zeros(npid, dtype=np.float32))
         leaf, dense_rows, dense, h_ad, h_bd = _fine(
             w, start, w.PH[pose_a], w.PH[pose_b], pose_a, pose_b, relt,
-            np.full(npid, -1.0, dtype=np.float32), eps2)
+            np.full(npid, -1.0, dtype=np.float32), eps2, xf=xf)
         l_pid, l_ia, l_ib, l_lb2 = leaf
         approx |= dense
         if l_pid.shape[0]:
@@ -728,7 +884,7 @@ def solve(w, keys, exact=True, detail=None):
             miss = np.ones(l_pid.shape[0], dtype=bool)
             for s in range(0, l_pid.shape[0], EXACT_CHUNK * 2):
                 e = s + EXACT_CHUNK * 2
-                P, Q = _pair_tris(w, pose_a, pose_b, rel64t, l_pid[s:e], l_ia[s:e], l_ib[s:e])
+                P, Q = _pair_tris(w, pose_a, pose_b, rel64t, l_pid[s:e], l_ia[s:e], l_ib[s:e], xf)
                 hit, seg = tritri.tri_tri_intersect(P, Q, w.eps_exact)
                 if seg.shape[0]:
                     miss[s:e] = ~hit
@@ -753,9 +909,10 @@ def solve(w, keys, exact=True, detail=None):
             collided[sk_rows[0]] = True
 
         if dense.any():
-            d_pid, d_ia, d_ib = _dive(w, dense_rows, h_ad, h_bd, pose_a, pose_b, relt, BEAM_DENSE)
+            d_pid, d_ia, d_ib = _dive(w, dense_rows, h_ad, h_bd, pose_a, pose_b, relt, BEAM_DENSE,
+                                      xf)
             if d_pid.shape[0]:
-                _eval_rows(w, pose_a, pose_b, rel64t, d_pid, d_ia, d_ib, w.eps_exact, best)
+                _eval_rows(w, pose_a, pose_b, rel64t, d_pid, d_ia, d_ib, w.eps_exact, best, xf)
 
         # 2. regions.  One coarse traversal finds, for the pairs that do not
         # intersect, where they come within the thresholds (the search region
@@ -772,7 +929,7 @@ def solve(w, keys, exact=True, detail=None):
                 thr_p[hit_p] = (viz + eps) ** 2
                 flo_p[hit_p] = REGION_RES * viz
             rows, h_a1, h_b1 = _coarse(w, pose_a, pose_b, relt, thr_p, flo_p, eps2,
-                                       np.flatnonzero(full) if show else free_full)
+                                       np.flatnonzero(full) if show else free_full, xf)
             if show:
                 m = np.take(collided, rows[0])
                 region_c = tuple(x[m] for x in rows)
@@ -786,14 +943,14 @@ def solve(w, keys, exact=True, detail=None):
             if show:
                 region_c, h_a2, h_b2 = _coarse(w, pose_a, pose_b, relt,
                                                np.float32((viz + eps) ** 2), REGION_RES * viz,
-                                               eps2, hit_p)
+                                               eps2, hit_p, xf)
 
         # 3. clearance of the pairs that do not intersect
         if free.shape[0]:
             if o_pid.shape[0]:
                 sel = _top_k(o_pid, (np.arange(o_pid.shape[0]),), 256)
                 _eval_rows(w, pose_a, pose_b, rel64t, o_pid[sel], o_ia[sel], o_ib[sel],
-                           w.eps_exact, best)
+                           w.eps_exact, best, xf)
             lf = np.flatnonzero(~collided & lite)
             if lf.shape[0] and clear > 0.0:
                 # sketched: the closest triangles a guided search comes across.
@@ -801,16 +958,16 @@ def solve(w, keys, exact=True, detail=None):
                 # else is unproven and is checked properly later.
                 zs = np.zeros(lf.shape[0], dtype=np.int64)
                 d_pid, d_ia, d_ib = _dive(w, (lf, zs, zs, np.zeros(lf.shape[0], dtype=np.float32)),
-                                          w.PH[pose_a], w.PH[pose_b], pose_a, pose_b, relt, BEAM)
+                                          w.PH[pose_a], w.PH[pose_b], pose_a, pose_b, relt, BEAM, xf)
                 if d_pid.shape[0]:
-                    _eval_rows(w, pose_a, pose_b, rel64t, d_pid, d_ia, d_ib, w.eps_exact, best)
+                    _eval_rows(w, pose_a, pose_b, rel64t, d_pid, d_ia, d_ib, w.eps_exact, best, xf)
             short[lf] = True
             r_pid = region[0]
             if r_pid.shape[0]:
                 near[r_pid] = True
-                d_pid, d_ia, d_ib = _dive(w, region, h_a1, h_b1, pose_a, pose_b, relt, BEAM)
+                d_pid, d_ia, d_ib = _dive(w, region, h_a1, h_b1, pose_a, pose_b, relt, BEAM, xf)
                 if d_pid.shape[0]:
-                    _eval_rows(w, pose_a, pose_b, rel64t, d_pid, d_ia, d_ib, w.eps_exact, best)
+                    _eval_rows(w, pose_a, pose_b, rel64t, d_pid, d_ia, d_ib, w.eps_exact, best, xf)
 
                 # prove the minimum: only rows that could beat the bound are
                 # followed.  While something is moving the search is capped; a
@@ -821,7 +978,7 @@ def solve(w, keys, exact=True, detail=None):
                 thr = u - np.maximum(eps, 1e-3 * u)
                 thr2 = np.where(thr > 0.0, thr * thr, -1.0).astype(np.float32)
                 cand, _, cut, _, _ = _fine(w, region, h_a1, h_b1, pose_a, pose_b, relt, thr2,
-                                           np.float32(-1.0), cap_rows, True)
+                                           np.float32(-1.0), cap_rows, True, xf)
                 short |= cut
                 c_pid, c_ia, c_ib, c_lb2 = cand
                 if c_pid.shape[0]:
@@ -848,7 +1005,7 @@ def solve(w, keys, exact=True, detail=None):
                         rows = rows[m]
                         p = p[m]
                         P, Q = _pair_tris(w, pose_a, pose_b, rel64t, p,
-                                          np.take(c_ia, rows), np.take(c_ib, rows))
+                                          np.take(c_ia, rows), np.take(c_ib, rows), xf)
                         m = tritri.plane_gap2(P, Q) < np.take(t2, p)
                         done += np.bincount(p, minlength=npid)
                         if not m.any():
@@ -872,16 +1029,22 @@ def solve(w, keys, exact=True, detail=None):
                 b_hi = w.O_HI[sb[cand]] + rel64[cand]
                 a_in_b = ((a_lo >= b_lo) & (a_hi <= b_hi)).all(axis=1)
                 b_in_a = ((b_lo >= a_lo) & (b_hi <= a_hi)).all(axis=1) & ~a_in_b
-                zero_leaf = np.zeros(1, dtype=np.int64)
-                for flag, inner, outer, sign, code in ((a_in_b, pose_a, pose_b, -1.0, 1),
-                                                       (b_in_a, pose_b, pose_a, 1.0, 2)):
+                for flag, inner, outer, sign, code, ki, ko in (
+                        (a_in_b, pose_a, pose_b, -1.0, 1, 0, 1), (b_in_a, pose_b, pose_a, 1.0, 2, 1, 0)):
                     sel = cand[flag]
                     if sel.shape[0] == 0:
                         continue
-                    pts = np.empty((sel.shape[0], 3))
-                    for k, p in enumerate(sel):
-                        # one surface point of the inner part, in the outer part's frame
-                        pts[k] = corners(w, inner[p:p + 1], zero_leaf)[0, 0] + sign * rel64[p]
+                    # one surface point of each inner part, in the outer part's frame
+                    pts = _corners(w, inner, sel, np.zeros(sel.shape[0], dtype=np.int64),
+                                   None if xf is None else xf.side[ki])[:, 0, :].astype(np.float64)
+                    pts += sign * rel64[sel]
+                    if xf is not None and xf.any[ko]:
+                        # an outer part that borrows its pose is tested in the
+                        # frame of that pose
+                        so = xf.slots[ko][sel]
+                        mv = w.O_VIRT[so]
+                        if mv.any():
+                            pts[mv] = np.einsum('kij,kj->ki', w.O_RELI[so[mv]], pts[mv])
                     inside = points_inside(w, outer[sel], pts)
                     enclosed[sel[inside]] = code
 
@@ -912,6 +1075,10 @@ def solve(w, keys, exact=True, detail=None):
         res.tri_a = res.tri_b = None
         res.clip_a = res.clip_b = None
         shift = rel[p]
+        va = vb = None
+        if xf is not None:
+            va = xf.one(p, 0)
+            vb = xf.one(p, 1)
         if collided[p]:
             sel = _rows_of(h_order, h_bounds, p)
             segs = hit_rows[3][sel]
@@ -928,18 +1095,18 @@ def solve(w, keys, exact=True, detail=None):
             if csel is not None and region_c[1][csel].shape[0]:
                 # surface patches of both parts near the other part
                 res.tri_a, lo_a, hi_a = _region_side(w, pa_i, int(h_a2[p]), region_c[1][csel],
-                                                     None, tri_cap, box_cap)
+                                                     None, tri_cap, box_cap, va)
                 res.tri_b, lo_b, hi_b = _region_side(w, pb_i, int(h_b2[p]), region_c[2][csel],
-                                                     shift, tri_cap, box_cap)
+                                                     shift, tri_cap, box_cap, vb)
                 res.clip_a = _clip_box(res.tri_a, None, lo_b - viz, hi_b + viz, viz)
                 res.clip_b = _clip_box(res.tri_b, shift, lo_a - viz, hi_a + viz, viz)
             else:
                 # sketched, or no display distance to speak of: the triangles
                 # the (partial) curve runs through
                 res.tri_a = _node_tris(w, pa_i, 0, _unique(hit_rows[1][sel], int(w.PNT[pa_i]) + 1),
-                                       None, tri_cap)
+                                       None, tri_cap, va)
                 res.tri_b = _node_tris(w, pb_i, 0, _unique(hit_rows[2][sel], int(w.PNT[pb_i]) + 1),
-                                       None, tri_cap)
+                                       None, tri_cap, vb)
                 grow = max(pad, 0.15 * diag)
                 res.clip_a = _clip_box(res.tri_a, None, lo - grow, hi + grow, grow)
                 res.clip_b = _clip_box(res.tri_b, shift, lo - grow, hi + grow, grow)
@@ -964,7 +1131,7 @@ def solve(w, keys, exact=True, detail=None):
             res.enclosed = int(enclosed[p])
             res.segs = box_edges(lo, hi)
             tris = _node_tris(w, pose_in, int(w.PH[pose_in]), np.zeros(1, dtype=np.int64),
-                              None, tri_cap)
+                              None, tri_cap, va if a_inner else vb)
             if a_inner:
                 res.tri_a = tris
             else:
@@ -1010,8 +1177,9 @@ def solve(w, keys, exact=True, detail=None):
             continue
         pa_i = int(pose_a[p])
         pb_i = int(pose_b[p])
-        tri_a, lo_a, hi_a = _region_side(w, pa_i, int(h_a1[p]), nodes_a, None, tri_cap, box_cap)
-        tri_b, lo_b, hi_b = _region_side(w, pb_i, int(h_b1[p]), r_ib[sel], shift, tri_cap, box_cap)
+        tri_a, lo_a, hi_a = _region_side(w, pa_i, int(h_a1[p]), nodes_a, None, tri_cap, box_cap, va)
+        tri_b, lo_b, hi_b = _region_side(w, pb_i, int(h_b1[p]), r_ib[sel], shift, tri_cap, box_cap,
+                                         vb)
         res.tri_a = tri_a
         res.tri_b = tri_b
         res.clip_a = _clip_box(tri_a, None, lo_b - thr_v, hi_b + thr_v, thr_v)
@@ -1028,6 +1196,35 @@ def solve(w, keys, exact=True, detail=None):
 # build volume
 # ---------------------------------------------------------------------------
 
+def _borrowed_rows(w, b, slots, pose, rid, idx, hr, mv):
+    """Boxes ``b`` (n, 6) of one traversal step against the volume, with the
+    rows of borrowing objects (``mv``) put right: moved into the object's
+    orientation, and at the leaves replaced by the exact box of the triangle,
+    so that a triangle is only reported if it really is out."""
+    sel = np.flatnonzero(mv)
+    sl = np.take(slots, rid[sel])
+    raw = b[sel]
+    empty = raw[:, 0] > raw[:, 3]
+    R = w.O_REL[sl]
+    c = np.einsum('kij,kj->ki', R, raw[:, :3] + raw[:, 3:]) * 0.5
+    e = np.einsum('kij,kj->ki', np.abs(R), raw[:, 3:] - raw[:, :3]) * 0.5 + w.O_PAD[sl][:, None]
+    out = np.concatenate([c - e, c + e], axis=1)
+    leaf = hr[sel] == 0
+    if leaf.any():
+        k = np.flatnonzero(leaf)
+        g = sl[k]
+        t = np.take(w.TIDX.data, np.take(w.PTB, np.take(pose, rid[sel[k]])) + idx[sel[k]], axis=0)
+        loc = np.take(w.LVERT.data, (t + w.O_LB[g][:, None]).ravel(), axis=0)
+        L9 = np.repeat(np.ascontiguousarray(w.O_L[g].reshape(-1, 9).T), 3, axis=1)
+        tri = _pose_local(loc, L9).reshape(-1, 3, 3)
+        out[k, :3] = tri.min(axis=1)
+        out[k, 3:] = tri.max(axis=1)
+    out[empty, :3] = np.inf
+    out[empty, 3:] = -np.inf
+    b[sel] = out
+    return b
+
+
 def oob_solve(w, slots, vlo, vhi, tri_cap):
     """Triangles of the given objects that are not completely inside the box.
 
@@ -1041,6 +1238,8 @@ def oob_solve(w, slots, vlo, vhi, tri_cap):
     """
     n = slots.shape[0]
     pose = w.O_POSE[slots]
+    virt = w.O_VIRT[slots]
+    borrowing = bool(virt.any())
     t = w.O_T[slots]
     lo = (vlo[None, :] - t).astype(np.float32)
     hi = (vhi[None, :] - t).astype(np.float32)
@@ -1051,13 +1250,18 @@ def oob_solve(w, slots, vlo, vhi, tri_cap):
     em = []
     while rid.shape[0]:
         b = np.take(box, np.take(w.LVL[pose, h], rid) + idx, axis=0)
+        hr = np.take(h, rid)
+        if borrowing:
+            mv = np.take(virt, rid)
+            if mv.any():
+                with np.errstate(invalid='ignore', over='ignore'):
+                    b = _borrowed_rows(w, b, slots, pose, rid, idx, hr, mv)
         blo = b[:, :3]
         bhi = b[:, 3:]
         l = np.take(lo, rid, axis=0)
         u = np.take(hi, rid, axis=0)
         drop = (blo[:, 0] > bhi[:, 0]) | ((blo >= l) & (bhi <= u)).all(axis=1)
         outside = ((blo > u) | (bhi < l)).any(axis=1)
-        hr = np.take(h, rid)
         emit = ~drop & (outside | (hr == 0))
         if emit.any():
             em.append((rid[emit], idx[emit], hr[emit], outside[emit]))
@@ -1103,8 +1307,10 @@ def oob_solve(w, slots, vlo, vhi, tri_cap):
                 hh = hh[:ii.shape[0]]
         parts = []
         shift = t[r].astype(np.float32)
+        slot = int(slots[r])
+        vr = (w.O_L[slot], int(w.O_LB[slot])) if virt[r] else None
         for level in np.unique(hh):
-            parts.append(_node_tris(w, p, int(level), ii[hh == level], shift))
+            parts.append(_node_tris(w, p, int(level), ii[hh == level], shift, None, vr))
         if parts:
             out[r] = parts[0] if len(parts) == 1 else np.concatenate(parts)
     return out, band

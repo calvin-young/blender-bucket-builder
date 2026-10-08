@@ -15,13 +15,9 @@ import meshes  # noqa: E402
 
 
 def posed_tris(w, uid):
-    """World-space float64 triangles of an object exactly as the world stores them."""
+    """World-space float64 triangles of an object exactly as the world sees them."""
     slot = w.slot(uid)
-    w.need_poses([slot])            # poses are built on demand
-    pose = int(w.O_POSE[slot])
-    nt = int(w.PNT[pose])
-    P = narrow.corners(w, np.full(nt, pose), np.arange(nt)).astype(np.float64)
-    return P + w.O_T[slot]
+    return w.part_corners(slot).astype(np.float64) + w.O_T[slot]
 
 
 def brute(PA, PB, eps):
@@ -478,6 +474,7 @@ def enclosure_tests(rng):
         w.add_geom(name, v, f)
         w.add_object('o', name, meshes.matrix(meshes.rot(rng) if name != 'box' else None))
         P = posed_tris(w, 'o')
+        w.need_poses([w.slot('o')])            # poses are built on demand
         pose = int(w.O_POSE[w.slot('o')])
         pts = rng.uniform(-1.6, 1.6, (400, 3))
         if name == 'box':
@@ -848,6 +845,340 @@ def cache_tests(rng):
           f'{peak / 1e6:.1f} MB at most with the limit)')
 
 
+def check_volume(w, uid, label):
+    """What is reported as outside the volume / inside the wall margin must be
+    exactly the triangles that are."""
+    slot = w.slot(uid)
+    vlo, vhi = w.volume
+    P = posed_tris(w, uid)
+    r = w.oob.get(slot)
+    lo = P.min(axis=(0, 1))
+    hi = P.max(axis=(0, 1))
+    inside = (lo >= vlo - w.eps_len).all() and (hi <= vhi + w.eps_len).all()
+    outside = (lo > vhi + w.eps_len).any() or (hi < vlo - w.eps_len).any()
+    want = None if inside else (OUTSIDE if outside else PARTIAL)
+    got = None if r is None else r.state
+    assert got == want, (label, uid, got, want)
+    n = 0
+    if want == PARTIAL:
+        out = ((P < vlo - w.eps_len) | (P > vhi + w.eps_len)).any(axis=(1, 2))
+        assert r.tris is not None and len(r.tris) == int(out.sum()), (
+            label, uid, None if r.tris is None else len(r.tris), int(out.sum()))
+        n += 1
+    inner = w.inner_box()
+    wr = w.wall.get(slot)
+    if inner is not None and wr is not None:
+        band = ((P < inner[0] - w.eps_len) | (P > inner[1] + w.eps_len)).any(axis=(1, 2))
+        assert wr.tris is not None and len(wr.tris) == int(band.sum()) > 0, (
+            label, uid, None if wr.tris is None else len(wr.tris), int(band.sum()))
+        n += 1
+    return n
+
+
+def borrow_tests(rng):
+    """A part that is rotated or scaled keeps using the pose it had, with its
+    boxes moved as they are looked at, until things are quiet.  Whatever is
+    worked out that way must be what a fitted pose gives."""
+    gens = [
+        lambda: meshes.box((1.0, 0.8, 0.6)),
+        lambda: meshes.grid_box((1.0, 0.8, 0.6), 6),
+        lambda: meshes.uv_sphere(0.6, 20, 10),
+        lambda: meshes.torus(0.6, 0.2, 20, 10),
+        lambda: meshes.blob(rng, 0.6, 18, 9, 0.3),
+        lambda: meshes.cylinder(0.3, 1.4, 20),
+    ]
+
+    def turn(trial):
+        L = meshes.rot(rng)
+        if trial % 4 == 0:
+            L = L @ np.diag(rng.uniform(0.6, 1.6, 3))       # scaled as well, unevenly
+        return L
+
+    stats = {}
+    n_borrow = n_quick = n_vol = n_small_angle = 0
+    for trial in range(360):
+        w = World()
+        w.fit_now = 0                                 # every mesh may borrow, however small
+        w.set_scale(2.0, 0.01)
+        clear = float(rng.choice([0.0, 0.05, 0.15, 0.4]))
+        coll = float(rng.choice([0.0, 0.0, 0.02]))
+        w.set_thresholds(coll, clear)
+        w.set_volume((-1.1, -1.1, -1.1), (1.1, 1.1, 1.1), 0.12 if trial % 2 else 0.0)
+        w.add_geom('a', *gens[rng.integers(len(gens))]())
+        w.add_geom('b', *gens[rng.integers(len(gens))]())
+        w.add_object('A', 'a', meshes.matrix(meshes.rot(rng), (5.0, 0.0, 0.0)))
+        w.add_object('B', 'b', meshes.matrix(meshes.rot(rng), (-5.0, 0.0, 0.0)))
+        sa, sb = w.slot('A'), w.slot('B')
+        w.need_poses([sa, sb])                        # both have a fitted pose ...
+        while w.step():
+            pass
+        # ... and are then turned (and moved next to each other)
+        direction = rng.normal(size=3)
+        direction /= np.linalg.norm(direction)
+        small = 0.25 if trial % 7 == 0 else 1.0       # small part: may end up inside
+        Mb = meshes.matrix(turn(trial) * small, direction * rng.uniform(0.0, 1.9))
+        if trial % 5 == 0:
+            # only slightly turned, as at the start of a rotation with the mouse
+            a = rng.uniform(0.002, 0.2)
+            c, s_ = np.cos(a), np.sin(a)
+            Mb[:3, :3] = np.array([[c, -s_, 0], [s_, c, 0], [0, 0, 1]]) @ w.part_matrix(sb)[:3, :3]
+            n_small_angle += 1
+        hot = trial % 2 == 0
+        both = trial % 3 == 1
+        w.set_matrix('B', Mb, hot=hot)
+        if trial % 3 == 2:                            # turned again before anything was solved
+            Mb = Mb.copy()
+            Mb[:3, :3] = turn(trial) * small
+            w.set_matrix('B', Mb, hot=hot)
+        Ma = meshes.matrix(turn(trial + 1) if both else w.part_matrix(sa)[:3, :3],
+                           rng.normal(0, 0.2, 3))
+        w.set_matrix('A', Ma, hot=hot)
+        assert w.O_VIRT[sb] and (w.O_VIRT[sa] or not both), (trial, w.O_VIRT[sa], w.O_VIRT[sb])
+        key = (sa, sb)
+        if hot:
+            # one frame of a drag: the quick answer, from borrowed boxes
+            w.step(idle=False)
+            assert w.O_VIRT[sb]
+            pr = w.pairs.get(key)
+            assert pr is None or not pr.stale
+            quick = (OK if pr is None else pr.state, None if pr is None else pr.dist)
+            n_quick += 1
+        else:
+            # background work while something else is being edited: the
+            # complete answer, still from borrowed boxes
+            # (step() keeps reporting work: the parts still want poses of their own)
+            steps = 0
+            while w.unsettled or w._oob_geom:
+                w.step(idle=False, budget=0.0005)
+                steps += 1
+                assert steps < 10000
+            assert w.O_VIRT[sb]
+            check_pair(w, 'A', 'B', f'borrow trial {trial} (borrowing)', {})
+            n_vol += check_volume(w, 'A', trial) + check_volume(w, 'B', trial)
+            pr = w.pairs.get(key)
+            assert pr is None or pr.loose, trial
+        n_borrow += 1 + both
+        while w.step():                               # quiet: fitted poses, results refreshed
+            pass
+        assert not w.O_VIRT[sa] and not w.O_VIRT[sb] and w.stats()['borrowing'] == 0
+        pr = w.pairs.get(key)
+        assert pr is None or not (pr.loose or pr.stale or pr.refine), (trial, pr.loose, pr.stale)
+        check_pair(w, 'A', 'B', f'borrow trial {trial} (settled)', stats)
+        n_vol += check_volume(w, 'A', trial) + check_volume(w, 'B', trial)
+        e_state = OK if pr is None else pr.state
+        if hot:
+            q_state, q_dist = quick
+            if COLLIDE in (q_state, e_state):
+                assert q_state == e_state, ('collision differs with borrowed boxes', trial)
+            elif q_state == CLEAR:
+                assert e_state == CLEAR and q_dist >= pr.dist * (1 - 2e-3) - 1e-9, (trial, q_dist)
+        # and exactly what a world built from scratch says
+        f = World()
+        f.set_scale(2.0, 0.01)
+        f.set_thresholds(coll, clear)
+        f.set_volume(*w.volume, w.wall_margin)
+        for name, uid in (('a', 'A'), ('b', 'B')):
+            g, verts, tris = w.part_mesh(w.slot(uid))
+            f.add_sorted(name, verts.copy(), tris.copy())
+            f.add_object(uid, name, w.part_matrix(w.slot(uid)))
+        while f.step():
+            pass
+        fr = f.pairs.get((f.slot('A'), f.slot('B')))
+        assert (pr is None or pr.state == OK) == (fr is None or fr.state == OK), trial
+        if pr is not None and pr.state != OK:
+            assert (pr.state, round(pr.dist, 6), pr.nseg, pr.enclosed) == (
+                fr.state, round(fr.dist, 6), fr.nseg, fr.enclosed), (trial, pr.dist, fr.dist)
+    print(f'borrowed poses: {n_borrow} turned or scaled parts ({n_small_angle} only slightly), '
+          f'states OK/CLEAR/COLLIDE = {stats.get(OK, 0)}/{stats.get(CLEAR, 0)}/{stats.get(COLLIDE, 0)} '
+          f'(enclosed: {stats.get("enclosed", 0)}), {n_quick} quick answers consistent, '
+          f'{n_vol} build-volume reports exact')
+
+    # a part inside another one that borrows its pose: the question "is this
+    # point inside?" has to be asked in the frame of the borrowed pose
+    bar = meshes.grid_box((2.0, 0.4, 0.4), 6)
+    ball = meshes.uv_sphere(0.1, 12, 6)
+    quarter = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    tilt = meshes.rot(rng)
+    for where, want in (((0.8, 0.0, 0.0), OK), ((0.0, 0.8, 0.0), COLLIDE)):
+        for swap in (False, True):
+            w = World()
+            w.fit_now = 0
+            w.set_scale(4.0, 0.01)
+            w.set_thresholds(0.0, 0.02)
+            w.add_geom('bar', *bar)
+            w.add_geom('ball', *ball)
+            names = ('ball', 'bar') if swap else ('bar', 'ball')
+            w.add_object(names[0], names[0], meshes.matrix(tilt if names[0] == 'bar' else None,
+                                                           (9.0, 0.0, 0.0) if names[0] == 'ball' else (0, 0, 0)))
+            w.add_object(names[1], names[1], meshes.matrix(tilt if names[1] == 'bar' else None,
+                                                           (9.0, 0.0, 0.0) if names[1] == 'ball' else (0, 0, 0)))
+            w.need_poses([0, 1])
+            while w.step():
+                pass
+            # the bar now lies along y; the ball is put where the bar was, or is
+            w.set_matrix('bar', meshes.matrix(tilt @ quarter @ tilt.T @ tilt), hot=False)
+            w.set_matrix('ball', meshes.matrix(None, tilt @ quarter @ np.array(where) * 0 +
+                                               tilt @ quarter @ np.array([where[1], -where[0], 0.0])),
+                         hot=False)
+            while w.unsettled:
+                w.step(idle=False)
+            assert w.O_VIRT[w.slot('bar')]
+            pr = w.pairs.get((0, 1))
+            got = OK if pr is None else pr.state
+            assert got == want, ('enclosed in a borrowing part', where, swap, got)
+            if want == COLLIDE:
+                assert pr.enclosed == (1 if swap else 2), (where, swap, pr.enclosed)
+            check_pair(w, names[0], names[1], f'ball in bar {where} {swap}', {})
+
+    # the moved boxes of a borrowed pose must contain what a fitted pose has
+    # in them, at every level of the tree, rounding included
+    worst = np.inf                                     # the closest call
+    grow = []
+    for trial in range(30):
+        v, f = gens[trial % len(gens)]()
+        w = World()
+        w.fit_now = 0
+        w.set_scale(2.0, 0.01)
+        w.add_geom('g', v, f)
+        w.add_object('base', 'g', meshes.matrix(meshes.rot(rng) @ np.diag(rng.uniform(0.5, 2.0, 3))))
+        L = turn(trial)
+        w.add_object('fit', 'g', meshes.matrix(L))
+        w.need_poses([0, 1])
+        w.add_object('user', 'g', meshes.matrix(meshes.rot(rng)))
+        w.need_poses([2])
+        w.set_matrix('user', meshes.matrix(L))
+        slot = w.slot('user')
+        w._detach(slot)                                # (it would simply join 'fit')
+        w._link(slot, w._obj[0][3])
+        w._borrow(slot, *w._rel_to(w._obj[0][3], w._obj[0][1], w._obj[slot][2]))
+        pb, pf = w._obj[0][3], w._obj[1][3]
+        g = pb.geom
+        for h in range(g.H + 1):
+            n = g.nreal[h]
+            raw = w.BOX.data[pb.bbase + g.off[h]:pb.bbase + g.off[h] + n]
+            tight = w.BOX.data[pf.bbase + g.off[h]:pf.bbase + g.off[h] + n]
+            lo, hi = narrow._move_rows(raw, w.O_REL[slot], float(w.O_PAD[slot]))
+            # the same through the routine the traversal uses
+            X = np.ascontiguousarray(raw.T[:, None, :])
+            flag = np.ones(1, dtype=bool)
+            R9 = np.ascontiguousarray(w.O_REL[slot].reshape(9, 1))
+            Y = narrow._move_boxes(X, np.zeros(n, dtype=np.int64), flag, R9, np.abs(R9),
+                                   2.0 * w.O_PAD[slot:slot + 1])
+            for blo, bhi in ((lo, hi), (Y[:3, 0].T, Y[3:, 0].T)):
+                assert (blo <= tight[:, :3]).all() and (bhi >= tight[:, 3:]).all(), (trial, h)
+                worst = min(worst, float((tight[:, :3] - blo).min()), float((bhi - tight[:, 3:]).min()))
+            if n >= 16:
+                grow.append(float(((hi - lo).sum(axis=1) / np.maximum(
+                    (tight[:, 3:] - tight[:, :3]).sum(axis=1), 1e-12)).mean()))
+    print(f'  moved boxes contain the fitted ones on every level (closest call {worst:.1e}; '
+          f'they are {np.mean(grow):.2f} times as large on average)')
+
+    # copies of one mesh in many rotations with memory for two poses only:
+    # the others borrow, and nothing is reported differently
+    big = meshes.blob(rng, 0.5, 64, 32, 0.3)
+    one = World.pose_size(len(big[0]), len(big[1]))
+
+    def build(limit):
+        w = World()
+        w.fit_now = 0
+        w.set_scale(8.0, 0.01)
+        w.set_thresholds(0.0, 0.2)
+        w.set_volume((-1.6, -1.6, -1.6), (1.6, 1.6, 1.6), 0.1)
+        w.add_geom('m', *big)
+        if limit:
+            w.set_cache_limit(w.geom_bytes + int(2.5 * one))
+        return w
+
+    ref, lim = build(False), build(True)
+    count = 18
+    mats = {}
+    for i in range(count):
+        mats[i] = meshes.matrix(meshes.rot(rng), rng.uniform(-1.5, 1.5, 3))
+        for w in (ref, lim):
+            w.add_object(i, 'm', mats[i])
+    peak = 0
+    for it in range(40):
+        if it:
+            uid = int(rng.integers(count))
+            M = mats[uid].copy()
+            if it % 3 == 0:
+                M[:3, :3] = meshes.rot(rng)
+            else:
+                M[:3, 3] += rng.normal(0, 0.3, 3)
+            mats[uid] = M
+            for w in (ref, lim):
+                w.set_matrix(uid, M)
+        for w in (ref, lim):
+            if it % 2:
+                w.step(idle=False)
+            while w.step(budget=0.002):
+                pass
+        assert lim.pose_bytes + lim.geom_bytes <= lim.cache_limit and len(lim._poses) <= 2
+        assert lim.BOX.nbytes + lim.geom_bytes <= lim.cache_limit
+        peak = max(peak, lim.stats()['borrowing'])
+        assert set(lim.viol) == set(ref.viol), (it, set(lim.viol) ^ set(ref.viol))
+        for k, pr in ref.viol.items():
+            pl = lim.viol[k]
+            assert pl.state == pr.state and pl.nseg == pr.nseg and pl.enclosed == pr.enclosed, (it, k)
+            assert abs(pl.dist - pr.dist) <= 2e-3 * pr.dist + 1e-9, (it, k, pl.dist, pr.dist)
+        assert {s: r.state for s, r in lim.oob.items()} == {s: r.state for s, r in ref.oob.items()}
+        for s, r in ref.oob.items():
+            assert (r.tris is None) == (lim.oob[s].tris is None)
+            assert r.tris is None or len(r.tris) == len(lim.oob[s].tris), (it, s)
+        assert set(lim.wall) == set(ref.wall)
+    assert peak >= count - 6 and ref.stats()['borrowing'] == 0, peak
+    assert lim.evictions == 0, lim.evictions          # borrowing instead of taking turns
+    print(f'  {count} copies of one mesh, memory for two poses: up to {peak} borrow, results the same')
+
+    # a pose shared by two parts: the one that is turned gets its own beside it
+    w = build(False)
+    M = meshes.matrix(meshes.rot(rng), (0.0, 0.0, 0.0))
+    w.add_object('p', 'm', M)
+    M2 = M.copy()
+    M2[:3, 3] = (0.9, 0.0, 0.0)
+    w.add_object('q', 'm', M2)
+    while w.step():
+        pass
+    assert len(w._poses) == 1
+    M3 = M2.copy()
+    M3[:3, :3] = meshes.rot(rng)
+    w.set_matrix('q', M3)
+    w.step(idle=False)
+    assert w.O_VIRT[w.slot('q')] and len(w._poses) == 1
+    while w.step():
+        pass
+    assert not w.O_VIRT[w.slot('q')] and len(w._poses) == 2
+    w.remove_object('p')
+    assert len(w._poses) == 1
+    w.remove_object('q')
+    w.drop_unused_geoms()
+    assert w.BOX.live == 0 and w.pose_bytes == 0 and not w._virt_todo and not w._fitting
+
+    # a large mesh is fitted in pieces: no single step takes it all
+    v, f = meshes.blob(rng, 0.5, 400, 200, 0.3)                 # about 160 000 triangles
+    w = World()
+    w.set_scale(8.0, 0.01)
+    w.set_thresholds(0.0, 0.2)
+    w.add_geom('g', v, f)
+    w.add_object(0, 'g', meshes.matrix(meshes.rot(rng)))
+    w.add_object(1, 'g', meshes.matrix(meshes.rot(rng), (0.9, 0.0, 0.0)))
+    steps = 0
+    while w.step(budget=0.0005, hot_budget=0.0005):
+        steps += 1
+        assert steps < 5000
+    assert steps >= 6 and w.pairs[(0, 1)].state == COLLIDE, steps
+    M = w.part_matrix(1)
+    M[:3, :3] = meshes.rot(rng)
+    w.set_matrix(1, M)
+    w.step(idle=False, budget=0.0005, hot_budget=0.0005)        # answered at once, borrowing
+    assert w.O_VIRT[1] and not w.pairs[(0, 1)].stale
+    steps = 0
+    while w.step(budget=0.0005, hot_budget=0.0005):
+        steps += 1
+    assert steps >= 4 and not w.O_VIRT[1] and len(w._poses) == 2
+    print(f'  fits are spread over steps ({steps} for a mesh of {len(f)} triangles)')
+
+
 def main():
     rng = np.random.default_rng(11)
     special_pair_tests()
@@ -860,6 +1191,7 @@ def main():
     quick_mode_tests(rng)
     sketch_tests(rng)
     cache_tests(rng)
+    borrow_tests(rng)
     incremental_tests(rng)
     print('OK')
 
