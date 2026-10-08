@@ -385,6 +385,7 @@ class Monitor:
             'partly_out': npart,
             'outside': nout,
             'skipped': skipped,
+            'volume': w.volume is not None,
             # the verdict is final once every part is read and every pair has a
             # result; exact-distance refinement and the periodic resync that
             # may still be queued do not make it provisional

@@ -176,6 +176,10 @@ class BuildCheckPreferences(AddonPreferences):
         name="See-Through", description="How strongly problem regions hidden behind "
         "geometry still show through (0 hides them)",
         default=0.45, min=0.0, max=1.0, subtype='FACTOR', update=_poke_redraw)
+    volume_fill: FloatProperty(
+        name="Volume Fill", description="How strongly the faces of the build volume are tinted "
+        "(0 draws the edges only)",
+        default=0.25, min=0.0, max=1.0, subtype='FACTOR', update=_poke_redraw)
     badge_scale: FloatProperty(
         name="Badge Size", description="Size of the pass / fail badge in the viewport",
         default=1.0, min=0.5, max=3.0, subtype='FACTOR', update=_poke_redraw)
@@ -197,6 +201,7 @@ class BuildCheckPreferences(AddonPreferences):
         col.prop(self, "color_outside")
         col.prop(self, "color_volume")
         col = layout.column()
+        col.prop(self, "volume_fill")
         col.prop(self, "hatch_spacing")
         col.prop(self, "xray")
         col.prop(self, "badge_scale")

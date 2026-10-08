@@ -28,6 +28,25 @@ STATE = {'log': [], 'drag': [], 'fail': None, 't0': time.perf_counter()}
 NAMES = {core.OK: 'OK', core.CLEAR: 'CLEAR', core.COLLIDE: 'COLLIDE'}
 
 
+PROBE = {'deps': [], 'draws': 0, 'on': False}
+
+
+def _probe_deps(scene, depsgraph):
+    if PROBE['on']:
+        PROBE['deps'].append((time.perf_counter(), tuple(sorted(
+            (type(u.id).__name__ + ('/T' if u.is_updated_transform else '') +
+             ('/G' if u.is_updated_geometry else '')) for u in depsgraph.updates))))
+
+
+def _probe_draw():
+    if PROBE['on']:
+        PROBE['draws'] += 1
+
+
+bpy.app.handlers.depsgraph_update_post.append(_probe_deps)
+bpy.types.SpaceView3D.draw_handler_add(_probe_draw, (), 'WINDOW', 'POST_PIXEL')
+
+
 def log(*a):
     msg = ' '.join(str(x) for x in a)
     STATE['log'].append(msg)
@@ -46,10 +65,45 @@ def view_region():
     return next(r for r in view_area().regions if r.type == 'WINDOW')
 
 
+# With software OpenGL on a virtual display Blender cannot read its own front
+# buffer back (the screenshot operator returns black).  When the display is an
+# Xvfb started with -fbdir, its framebuffer file is read instead: that is
+# exactly what a monitor would show.
+XVFB_FB = os.environ.get('BUILD_CHECK_XVFB_FB', '')
+
+
+def _xwd_to_png(src, dst):
+    import struct
+    import zlib
+    import numpy as np
+    data = open(src, 'rb').read()
+    hdr = struct.unpack('>25I', data[:100])
+    header_size, width, height = hdr[0], hdr[4], hdr[5]
+    byte_order, bpp, bytes_per_line, ncolors = hdr[7], hdr[11], hdr[12], hdr[19]
+    raw = np.frombuffer(data, dtype=np.uint8, count=bytes_per_line * height,
+                        offset=header_size + ncolors * 12).reshape(height, bytes_per_line)
+    px = raw[:, :width * (bpp // 8)].reshape(height, width, bpp // 8)
+    rgb = np.ascontiguousarray(px[:, :, [2, 1, 0]] if byte_order == 0 else px[:, :, 1:4])
+    rows = b''.join(b'\x00' + rgb[y].tobytes() for y in range(height))
+
+    def chunk(tag, d):
+        c = struct.pack('>I', len(d)) + tag + d
+        return c + struct.pack('>I', zlib.crc32(tag + d) & 0xffffffff)
+
+    with open(dst, 'wb') as f:
+        f.write(b'\x89PNG\r\n\x1a\n')
+        f.write(chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)))
+        f.write(chunk(b'IDAT', zlib.compress(rows, 6)))
+        f.write(chunk(b'IEND', b''))
+
+
 def shot(name):
     path = os.path.join(OUT, name + '.png')
-    with bpy.context.temp_override(window=win(), screen=win().screen):
-        bpy.ops.screen.screenshot(filepath=path)
+    if XVFB_FB and os.path.exists(XVFB_FB):
+        _xwd_to_png(XVFB_FB, path)
+    else:
+        with bpy.context.temp_override(window=win(), screen=win().screen):
+            bpy.ops.screen.screenshot(filepath=path)
     log('screenshot', path)
 
 
@@ -93,8 +147,8 @@ def step_setup():
         bpy.context.active_object.name = 'Block'
         bpy.ops.mesh.primitive_cylinder_add(vertices=64, radius=14, depth=70, location=(230, 90, 103))
         bpy.context.active_object.name = 'Pin'
-        bpy.ops.mesh.primitive_monkey_add(size=60, location=(330, 200, 60), rotation=(0, 0, -0.6))
-        bpy.context.active_object.name = 'Head'
+        bpy.ops.mesh.primitive_monkey_add(size=60, location=(346, 200, 60), rotation=(0, 0, -0.6))
+        bpy.context.active_object.name = 'Head'         # reaches through the x = 380 wall
         bpy.ops.mesh.primitive_cone_add(vertices=48, radius1=22, depth=60, location=(60, 240, 30))
         bpy.context.active_object.name = 'Cone'
         bpy.ops.object.select_all(action='DESELECT')
@@ -166,6 +220,8 @@ def step_drag_begin():
 def step_drag_grab():
     w = win()
     x, y = STATE['mouse']
+    PROBE['on'] = True
+    PROBE['t_start'] = time.perf_counter()
     w.event_simulate(type='G', value='PRESS', x=x, y=y)
     w.event_simulate(type='G', value='RELEASE', x=x, y=y)
     log('pressed G (modal translate)')
@@ -185,9 +241,12 @@ def make_drag_step(dx, label=None):
         ball = bpy.data.objects['Ball']
         st = pair_state(ball, ring)
         mon = monitor.get(win().scene)
+        badge = bc.overlay.badge_text(mon.status())
         STATE['drag'].append((round(ring.matrix_world.translation.x, 2), st, mon.world.version))
+        STATE.setdefault('badges', []).append(badge[0])
         log('drag: ring x =', round(ring.matrix_world.translation.x, 2), 'ball/ring:', st,
-            '| last update', round(mon.last_tick_ms, 2), 'ms')
+            '| last update', round(mon.last_tick_ms, 2), 'ms | badge', badge[0], '|', badge[1],
+            '| hot parts', len(mon.hot), '| redraws so far', PROBE['draws'])
         if label:
             shot(label)
         return 0.05
@@ -215,6 +274,14 @@ def step_after_drag():
     assert len(set(versions)) >= 4, f'results were not recomputed while dragging: {STATE["drag"]}'
     log('results were recomputed on', len(set(versions)), 'of', len(versions), 'drag steps;',
         'states:', ' > '.join(states))
+    PROBE['on'] = False
+    kinds = {}
+    for _, ids in PROBE['deps']:
+        kinds[ids] = kinds.get(ids, 0) + 1
+    log('dependency-graph updates during the drag:', len(PROBE['deps']), '| viewport redraws:', PROBE['draws'])
+    for ids, n in sorted(kinds.items(), key=lambda kv: -kv[1]):
+        log('   ', n, 'x', ids)
+    log('badge during the drag:', ' > '.join(STATE.get('badges', [])))
     if len(set(states)) < 2:
         log('note: the pair stayed in one state for the whole drag')
     shot('gui_4_after_drag')
@@ -224,7 +291,7 @@ def step_after_drag():
 def step_fix():
     bpy.data.objects['Pin'].location.z = 115
     bpy.data.objects['Head'].location = (300, 200, 60)
-    bpy.data.objects['Ring'].location = (190, 110, 150)
+    bpy.data.objects['Ring'].location = (128, 110, 150)
     return 1.5
 
 
