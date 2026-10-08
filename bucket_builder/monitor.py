@@ -168,6 +168,16 @@ class Monitor:
             lo = off - 0.5 * size
         return lo, lo + size
 
+    def margin_box(self, st):
+        """The volume shrunk by the wall clearance in X and Y (scene units), or
+        None while that check is off."""
+        if not (st.use_volume and st.use_wall_clearance) or st.wall_clearance_mm <= 0.0:
+            return None
+        lo, hi = self.volume_box(st)
+        m = np.array([st.wall_clearance_mm, st.wall_clearance_mm, 0.0]) / self.mm_per_unit
+        mid = 0.5 * (lo + hi)
+        return np.minimum(lo + m, mid), np.maximum(hi - m, mid)
+
     def apply_params(self, scene, st):
         self.params_dirty = False
         self.mm_per_unit, self.unit_note = self._resolve_units(scene, st)
@@ -182,7 +192,7 @@ class Monitor:
         w.set_thresholds(st.collision_mm * k, st.clearance_mm * k if st.use_clearance else 0.0)
         w.set_detect_enclosed(st.detect_enclosed)
         if st.use_volume:
-            w.set_volume(lo, hi)
+            w.set_volume(lo, hi, st.wall_clearance_mm * k if st.use_wall_clearance else 0.0)
         else:
             w.set_volume(None, None)
 
@@ -381,7 +391,7 @@ class Monitor:
     def status(self):
         """Summary for the panel and the viewport badge."""
         w = self.world
-        nc, ncl, npart, nout = w.counts()
+        nc, ncl, npart, nout, nwall = w.counts()
         skipped = sum(1 for o in self.objs.values() if o.skipped)
         return {
             'objects': w.object_count,
@@ -389,6 +399,7 @@ class Monitor:
             'clearance': ncl,
             'partly_out': npart,
             'outside': nout,
+            'near_wall': nwall,
             'skipped': skipped,
             'volume': w.volume is not None,
             # the verdict is final once every part is read and every pair has a
@@ -432,7 +443,18 @@ class Monitor:
                 'inside': 0,
                 'key': ('V', w.uid(slot)),
             })
-        rank = {'COLLIDE': 0, 'PARTIAL': 1, 'OUTSIDE': 2, 'CLEAR': 3}
+        for slot, r in w.wall.items():
+            out.append({
+                'kind': 'WALL',
+                'a': self.name_of(slot), 'b': '',
+                'dist_mm': r.dist * k,
+                'center': r.center,
+                'radius': float(r.radius),
+                'approx': False,
+                'inside': 0,
+                'key': ('W', w.uid(slot)),
+            })
+        rank = {'COLLIDE': 0, 'PARTIAL': 1, 'OUTSIDE': 2, 'CLEAR': 3, 'WALL': 4}
         out.sort(key=lambda d: (rank[d['kind']], d['dist_mm'], d['a'], d['b']))
         self._problems = (ver, out)
         return out

@@ -274,6 +274,51 @@ def main():
     st.volume_align = 'CORNER'
     mon = settle()
 
+    # --------------------------------------------------------- wall clearance
+    badge = bc.overlay.badge_text
+    check(mon.status()['near_wall'] == 0 and badge(mon.status())[0] == 'OK', 'wall clearance is off by default')
+    st.use_wall_clearance = True                       # 5 mm unless changed
+    mon = settle()
+    check(mon.status()['near_wall'] == 0, 'no part within 5 mm of a wall')
+    a.location = (23.0, 100.0, 100.0)                  # sphere r=20: 3 mm from the x = 0 wall
+    update()
+    s = mon.status()
+    check(s['near_wall'] == 1 and s['partly_out'] == 0, 'part 3 mm from a side wall -> warning (live)', s)
+    r = mon.world.wall[mon.world.slot(a.session_uid)]
+    check(abs(r.dist - 3.0) < 0.05, 'distance to the wall ~3 mm', r.dist)
+    check(r.tris is not None and len(r.tris) > 0 and float(r.tris[:, :, 0].min()) < 5.0,
+          'the geometry inside the margin is collected', len(r.tris))
+    check(badge(s)[0] == 'WARN', 'it is a warning: the verdict stays "Build OK"', badge(s))
+    wall = [p for p in mon.problems() if p['kind'] == 'WALL']
+    check(len(wall) == 1 and wall[0]['a'] == 'PartA' and abs(wall[0]['dist_mm'] - 3.0) < 0.05,
+          'listed among the problems with its distance', wall)
+    a.location = (100.0, 100.0, 21.0)                  # 1 mm above the floor
+    update()
+    check(mon.status()['near_wall'] == 0, 'the floor is not a wall')
+    a.location = (100.0, 100.0, 359.0)                 # 1 mm below the top
+    update()
+    check(mon.status()['near_wall'] == 0, 'neither is the top')
+    a.location = (15.0, 100.0, 100.0)                  # through the wall: an error instead
+    update()
+    s = mon.status()
+    check(s['partly_out'] == 1 and s['near_wall'] == 0 and badge(s)[0] == 'FAIL',
+          'a part crossing the wall is an error, not a wall warning', s)
+    a.location = (100.0, 100.0, 100.0)
+    update()
+    st.wall_clearance_mm = 90.0                        # A and B are 80 mm from a wall, C 64 mm
+    mon = settle()
+    check(mon.status()['near_wall'] == 3, 'changing the distance re-evaluates the parts', mon.status())
+    lo, hi = mon.margin_box(st)
+    check(np.allclose(lo, (90, 90, 0)) and np.allclose(hi, (290, 194, 380)), 'margin box: sides only', (lo, hi))
+    st.use_volume = False
+    mon = settle()
+    check(mon.status()['near_wall'] == 0 and mon.margin_box(st) is None, 'off together with the volume check')
+    st.use_volume = True
+    st.use_wall_clearance = False
+    st.wall_clearance_mm = 5.0
+    mon = settle()
+    check(mon.status()['near_wall'] == 0, 'wall clearance switched off again')
+
     # -------------------------------------------------------- printer profiles
     props.seed_profiles(props.prefs())
     p = props.prefs()

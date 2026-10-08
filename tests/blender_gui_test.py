@@ -271,11 +271,29 @@ def step_clean_shot():
     return 0.2
 
 
+def step_wall():
+    st = win().scene.bucket_builder
+    st.use_wall_clearance = True                      # 5 mm by default
+    bpy.data.objects['Cone'].location.x = 25.0        # base radius 22: 3 mm from the x = 0 wall
+    look((60, 160, 40), (-0.2, -0.75, 0.62), 420)
+    return 1.5
+
+
+def step_wall_shot():
+    mon = monitor.get(win().scene)
+    s = mon.status()
+    log('status with a part 3 mm from a side wall:', s, '| badge', bc.overlay.badge_text(s)[:2])
+    assert s['near_wall'] == 1 and s['collisions'] == 0 and s['partly_out'] == 0, s
+    assert bc.overlay.badge_text(s)[0] == 'WARN', bc.overlay.badge_text(s)
+    shot('gui_6_wall_clearance')
+    return 0.2
+
+
 STEPS = [step_setup, step_enable, step_check_initial, step_closeup, step_closeup_shot,
          step_drag_begin, step_drag_grab]
 for i, dx in enumerate([-30, -30, -30, -30, 30, 40, 40, 40, 40, 40, 40]):
     STEPS += make_drag_step(dx, 'gui_3_mid_drag' if i == 2 else None)
-STEPS += [step_drag_confirm, step_after_drag, step_fix, step_clean_shot]
+STEPS += [step_drag_confirm, step_after_drag, step_fix, step_clean_shot, step_wall, step_wall_shot]
 
 
 def runner():

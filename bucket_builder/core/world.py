@@ -71,6 +71,12 @@ class OobResult:
     __slots__ = ('state', 'tris', 'lo', 'hi', 'band_only', 'serial')
 
 
+class WallResult:
+    """A part inside the build volume but closer to a side wall than allowed
+    (geometry in world space; ``dist`` is the gap to the nearest side wall)."""
+    __slots__ = ('dist', 'tris', 'lo', 'hi', 'band_only', 'center', 'radius', 'serial')
+
+
 class World:
     def __init__(self):
         self.BOX = Arena(6, np.float32, 1 << 14, align=bvh.PAD)   # node boxes: lo xyz, hi xyz
@@ -104,12 +110,14 @@ class World:
         self.clear_thr = 0.0      # 0 disables the clearance check
         self.detect_enclosed = True   # report parts completely inside other parts
         self.volume = None        # (lo, hi) in world space
+        self.wall_margin = 0.0    # wanted distance to the side walls (X and Y), 0 = off
         self.set_scale(100.0, 0.5)
 
         self.pairs = {}           # (slot_a, slot_b), a < b -> PairResult
         self.adj = {}             # slot -> set of slots it has a pair with
         self.viol = {}            # pairs currently in CLEAR / COLLIDE state
         self.oob = {}             # slot -> OobResult (only PARTIAL / OUTSIDE)
+        self.wall = {}            # slot -> WallResult (inside, but too close to a side wall)
         self._dirty = {}          # slot -> hot flag
         self._pend_hot = {}       # pairs touched by a live edit: solved first, quickly
         self._pend_cold = {}      # background work: solved exactly
@@ -148,17 +156,30 @@ class World:
             self.detect_enclosed = flag
             self.invalidate_all()
 
-    def set_volume(self, lo, hi):
+    def set_volume(self, lo, hi, wall_margin=0.0):
+        """Build volume, and optionally the distance parts should keep from
+        its side walls (X and Y; the top and bottom are not included)."""
         if lo is None:
             new = None
         else:
             new = (np.array(lo, dtype=np.float64), np.array(hi, dtype=np.float64))
+        margin = max(0.0, float(wall_margin)) if new is not None else 0.0
         old = self.volume
-        if (new is None) == (old is None) and (
+        if margin == self.wall_margin and (new is None) == (old is None) and (
                 new is None or (np.array_equal(new[0], old[0]) and np.array_equal(new[1], old[1]))):
             return
         self.volume = new
+        self.wall_margin = margin
         self._oob_all = True
+
+    def inner_box(self):
+        """The build volume shrunk by the wall margin in X and Y, or None."""
+        if self.volume is None or self.wall_margin <= 0.0:
+            return None
+        lo, hi = self.volume
+        m = np.array([self.wall_margin, self.wall_margin, 0.0])
+        mid = 0.5 * (lo + hi)
+        return np.minimum(lo + m, mid), np.maximum(hi - m, mid)
 
     def invalidate_all(self):
         self._param_stamp += 1
@@ -446,8 +467,8 @@ class World:
         self._slot_free.append(slot)
         self._dirty.pop(slot, None)
         self._oob_dirty.discard(slot)
-        if self.oob.pop(slot, None) is not None:
-            pass
+        self.oob.pop(slot, None)
+        self.wall.pop(slot, None)
         self.version += 1
 
     @property
@@ -599,8 +620,9 @@ class World:
     # ----------------------------------------------------------- build volume
     def _update_oob(self):
         if self.volume is None:
-            if self.oob:
+            if self.oob or self.wall:
                 self.oob.clear()
+                self.wall.clear()
                 self.version += 1
             self._oob_dirty.clear()
             self._oob_all = False
@@ -616,14 +638,47 @@ class World:
         slots = np.array(cand, dtype=np.int64)
         vlo, vhi = self.volume
         e = self.eps_len
+        # The root box of a pose is fitted to its vertices, so these are the
+        # exact extents of each part: translation alone decides most cases.
         lo = self.O_LO[slots] + self.O_T[slots]
         hi = self.O_HI[slots] + self.O_T[slots]
         inside = ((lo >= vlo - e) & (hi <= vhi + e)).all(axis=1)
         outside = ((lo > vhi + e) | (hi < vlo - e)).any(axis=1)
+        inner = self.inner_box()
+        if inner is not None:
+            # gaps to the four side walls (x low, y low, x high, y high); the
+            # floor and the top do not count
+            gaps = np.concatenate([lo[:, :2] - vlo[:2], vhi[:2] - hi[:, :2]], axis=1)
+            gap = gaps.min(axis=1)
+            which = gaps.argmin(axis=1)
+            near = inside & (gap < self.wall_margin - e)
+        else:
+            gap = which = None
+            near = np.zeros(slots.shape[0], dtype=bool)
         changed = False
         self._serial += 1
         partial = []
+        close = []
         for i, slot in enumerate(cand):
+            if near[i]:
+                r = WallResult()
+                r.dist = max(0.0, float(gap[i]))
+                r.lo = lo[i]
+                r.hi = hi[i]
+                r.tris = None
+                r.band_only = False
+                # until the geometry is known: the middle of the side of the
+                # part's bounding box that faces the nearest wall
+                axis, high = int(which[i]) % 2, int(which[i]) >= 2
+                r.center = 0.5 * (lo[i] + hi[i])
+                r.center[axis] = hi[i][axis] if high else lo[i][axis]
+                r.radius = 0.25 * float(np.linalg.norm(hi[i] - lo[i]))
+                r.serial = self._serial
+                self.wall[slot] = r
+                close.append((slot, r, axis, high))
+                changed = True
+            elif self.wall.pop(slot, None) is not None:
+                changed = True
             if inside[i]:
                 if self.oob.pop(slot, None) is not None:
                     changed = True
@@ -645,12 +700,30 @@ class World:
             for (slot, r), t, b in zip(partial, tris, band):
                 r.tris = t
                 r.band_only = b
+        if close:
+            # the triangles that reach into the margin: everything that is not
+            # completely inside the inner box
+            ps = np.array([c[0] for c in close], dtype=np.int64)
+            tris, band = narrow.oob_solve(self, ps, inner[0], inner[1], OOB_TRI_CAP)
+            for (slot, r, axis, high), t, b in zip(close, tris, band):
+                r.tris = t
+                r.band_only = b
+                if len(t):
+                    # mark the geometry that is inside the margin of the nearest wall
+                    pts = t.reshape(-1, 3)
+                    c = pts[:, axis]
+                    sel = pts[c > inner[1][axis]] if high else pts[c < inner[0][axis]]
+                    if len(sel):
+                        r.center = sel.mean(axis=0, dtype=np.float64)
+                        r.radius = max(0.5 * float(np.linalg.norm(sel.max(axis=0) - sel.min(axis=0))),
+                                       self.wall_margin)
         if changed:
             self.version += 1
 
     # ---------------------------------------------------------------- reports
     def counts(self):
-        """(collisions, clearance warnings, partly outside, fully outside)."""
+        """(collisions, clearance warnings, partly outside, fully outside,
+        too close to a side wall)."""
         nc = ncl = 0
         for pr in self.viol.values():
             if pr.state == COLLIDE:
@@ -663,7 +736,7 @@ class World:
                 npart += 1
             else:
                 nout += 1
-        return nc, ncl, npart, nout
+        return nc, ncl, npart, nout, len(self.wall)
 
     def stats(self):
         return {
