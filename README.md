@@ -14,7 +14,8 @@ rotate and scale parts as usual. While you drag, the viewport shows:
 * which parts are at fault: every colliding part is **shaded light red**,
 * optionally, parts that sit too close to the **side walls** of the volume,
 * a large **green tick** when there are no collisions and every part is inside
-  the volume.
+  the volume, with a warning mark when the scene holds something that is not
+  being checked.
 
 Nothing in the scene is modified; everything is drawn on top of it.
 
@@ -45,10 +46,10 @@ on **Blender 5.2.2** (Linux, software OpenGL), where:
 * the geometry engine agrees with brute-force references on random and
   hand-picked cases, and with Blender's own `BVHTree.overlap` on which
   triangles intersect,
-* 66 end-to-end checks pass with the add-on installed from the packaged zip
-  (live updates on move / rotate / scale, mesh edits, modifiers, linked
-  duplicates, hiding, the build volume, printer profiles, units, undo, save
-  and reload),
+* 118 end-to-end checks pass inside Blender (live updates on move / rotate /
+  scale, mesh edits, modifiers, linked duplicates, hiding, the build volume,
+  printer profiles, units, undo, save and reload; and for large parts:
+  worker threads, the memory limit, the warnings about unchecked geometry),
 * the overlay has been rendered off-screen and inspected,
 * in an interactive Blender window on a virtual display, a part dragged with
   simulated mouse input updates the overlay on every step of the drag
@@ -56,6 +57,20 @@ on **Blender 5.2.2** (Linux, software OpenGL), where:
 
 Not yet tried: a real GPU, a person at the mouse, Blender 4.2 - 5.1, Windows
 or macOS.
+
+### Large builds
+
+Measured on a 2-core virtual machine without a GPU, where one worker thread
+does the sorting (there is one per processor core less one, up to four).
+
+| Build | Taking it in | Longest freeze | Drag, per step | Rotate, per step | Memory |
+| --- | --- | --- | --- | --- | --- |
+| 30 M triangles, 20 parts of 1.5 M (in Blender) | first results after 4 s, all checked after 15 s | 43 ms | 5 ms (32 at worst) | 8 ms (16 at worst) | 2.2 GB |
+| 180 M triangles, 600 copies of 12 meshes, each in its own rotation, memory limited to 2 GB (engine alone) | every collision known after 9 s, all distances after 56 s | 211 ms | 12 ms (48 at worst) | 12 ms (30 at worst) | 2.3 GB |
+
+"Longest freeze" is the longest the main thread was busy in one go, so the
+longest Blender would not respond. `tests/blender_bench_large.py` and
+`tests/bench_scale.py` produce these figures.
 
 ## Install
 
@@ -76,12 +91,22 @@ To build the zip from this repository:
         -> viewport drawing
 
 * **One tree per unique mesh.** Triangles are sorted once into an implicit
-  bounding-volume tree. Copies of a part share it.
+  bounding-volume tree. Copies of a part share it. Sorting costs about half a
+  microsecond per triangle; for large meshes it is done by worker threads,
+  which only ever see NumPy arrays.
 * **Moving is free.** A part's tree is stored without its translation; the
   offset between two parts is applied while querying. Dragging a part
   therefore rebuilds nothing.
-* **Rotating or scaling re-fits** the boxes of that one part (a few vectorised
-  passes, no re-sorting). Only a real geometry change re-sorts a mesh.
+* **Rotating or scaling borrows.** New boxes for a rotated part cost about
+  45 ns per triangle, too much per mouse step for a large mesh. So while it is
+  edited the part keeps the boxes it had, and they are moved into the new
+  orientation as they are looked at (looser, so queries cost about twice as
+  much, but nothing is recomputed). Its triangles are posed from the mesh's
+  own vertices with the same expression a fitted tree is made with, so they
+  are bit-identical to it. A moment after the edit the boxes are fitted
+  again, in pieces of a millisecond or two, and what was worked out with
+  borrowed boxes is redone: what is on screen at rest does not depend on how
+  the parts got there.
 * **Only what changed is recomputed.** Results are kept per pair of
   neighbouring parts; when a part moves, only its own pairs are looked at.
 * **No Python loops over triangles.** All pairs that need work are traversed
@@ -93,6 +118,12 @@ To build the zip from this repository:
   lands on dozens of others, most pairs are only *sketched* (one intersecting
   triangle pair proves a collision) and the detail fills in for as many as
   fit. Whatever was left out is completed exactly just after release.
+* **Nothing blocks.** Fitted trees are built in slices between redraws, and
+  pairs whose trees are ready are solved first, so the results of a new scene
+  appear as the work gets done.
+* **Memory is bounded.** The fitted trees (55 bytes per triangle and part) are
+  a cache with a limit; the least recently used are dropped and built again
+  when needed. A part without neighbours never gets one.
 * **Colliding parts are shaded from a mesh uploaded once** per unique part and
   redrawn with the object's current matrix, so the cheapest answer (collides
   or not) costs nothing to draw while a part moves.
@@ -112,28 +143,34 @@ collision check only (`tests/blender_bvhtree_compare.py`):
 
 | Triangles (both parts) | BVHTree: rebuild the moving tree + overlap | This add-on |
 | ---: | ---: | ---: |
-| 6,000 | 1.3 ms | 2.4 ms |
-| 24,000 | 4.3 ms | 3.8 ms |
-| 98,000 | 19.9 ms | 4.6 ms |
-| 327,000 | 39.1 ms | 6.6 ms |
+| 6,000 | 1.4 ms | 3.6 ms |
+| 24,000 | 5.5 ms | 6.3 ms |
+| 98,000 | 26.9 ms | 8.0 ms |
+| 327,000 | 44.5 ms | 8.0 ms |
 
-The add-on's figure also covers the intersection curve and the geometry the
-overlay draws. Both find the same intersecting triangles.
+The add-on's figure also covers the complete intersection curve and the
+geometry the overlay draws. Both find the same intersecting triangle pairs,
+with one exception in the 64 steps of that test: a pair that touches along a
+millionth of a millimetre, which one counts and the other does not.
 
 ## Tests
 
 The engine needs only NumPy:
 
     python3 tests/test_tritri.py     # triangle routines against slow references
-    python3 tests/test_world.py      # the collision world against brute force
-    python3 tests/bench.py --quick   # timings on build-sized scenes
+    python3 tests/test_world.py      # the collision world against brute force (about 3 minutes)
+    python3 tests/bench.py --quick   # timings on build-sized scenes (--storm: import into a full build)
+    python3 tests/bench_scale.py parts 20 1500000        # 30 M triangles
+    python3 tests/bench_scale.py instances 600 300000 12 2   # 180 M, 2 GB limit
 
 With the add-on installed and enabled in Blender:
 
     blender --background --python tests/blender_test.py             # end to end
+    blender --background --python tests/blender_large_test.py       # large parts, memory, warnings
     blender --background --python tests/blender_ui_test.py          # panels and menus
     blender --background --python tests/blender_gpu_test.py -- out  # overlay, off-screen PNGs
     blender --background --python tests/blender_bvhtree_compare.py  # against BVHTree
+    blender --background --python tests/blender_bench_large.py -- 20 1500000   # timings, large build
     blender --enable-event-simulate --python tests/blender_gui_test.py -- out   # in a window
 
 ## Layout
@@ -141,11 +178,11 @@ With the add-on installed and enabled in Blender:
     bucket_builder/       the add-on (this folder is what gets zipped)
       core/               NumPy engine, no Blender imports
         tritri.py         exact triangle / triangle intersection and distance
-        bvh.py            implicit bounding-volume tree layout and build order
+        bvh.py            implicit bounding-volume tree layout, sorting a mesh
         arena.py          growable shared storage
-        world.py          objects, cached trees, incremental pair results
+        world.py          objects, cached trees, incremental pair results, scheduling
         narrow.py         batched tree traversal, regions, build-volume test
-      monitor.py          mirrors the Blender scene into the engine, handlers, timer
+      monitor.py          mirrors the Blender scene into the engine: handlers, timer, workers
       overlay.py          viewport drawing
       props.py            settings, preferences, printer profiles
       ops.py              operators: navigation, printer profiles

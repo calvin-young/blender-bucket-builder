@@ -65,12 +65,13 @@ class ObjState:
 
 class _Job:
     """A mesh being sorted by a worker thread, and the objects waiting for it."""
-    __slots__ = ('future', 'uids', 'ntri')
+    __slots__ = ('future', 'uids', 'ntri', 'rows')
 
-    def __init__(self, future, ntri):
+    def __init__(self, future, nv, ntri):
         self.future = future
         self.uids = set()
         self.ntri = ntri
+        self.rows = World.rows_for(nv, ntri)
 
 
 def _executor():
@@ -387,7 +388,7 @@ class Monitor:
                             w.add_geom(key, co, tri)
                         else:
                             self.jobs[key] = _Job(_executor().submit(bvh.sort_mesh, co, tri),
-                                                  int(tri.shape[0]))
+                                                  int(co.shape[0]), int(tri.shape[0]))
         if key is None:
             if os.in_world:
                 self.hot.pop(w.slot(uid), None)
@@ -399,6 +400,7 @@ class Monitor:
             # put in when the worker is done (see _collect_jobs)
             job.uids.add(uid)
             os.pending = key
+            self._expect()
             return
         self._install(obj, os, key, ob_eval, now)
         w.drop_unused_geoms()
@@ -415,11 +417,22 @@ class Monitor:
             w.add_object(os.uid, key, _matrix(ob_eval))
             os.in_world = True
 
+    def _expect(self):
+        """Tell the world what the workers are going to deliver, so that it
+        sizes its storage once."""
+        t = v = p = 0
+        for job in self.jobs.values():
+            t += job.rows[0]
+            v += job.rows[1]
+            p += job.rows[2] * max(1, len(job.uids))
+        self.world.incoming = (t, v, p)
+
     def _collect_jobs(self, view_layer, depsgraph, now):
         """Take over the meshes the worker threads have finished sorting."""
         done = [(key, job) for key, job in self.jobs.items() if job.future.done()]
         if not done:
             return 0
+        self._expect()                    # (still counting the ones that just finished)
         by_uid = None
         for key, job in done:
             del self.jobs[key]
@@ -451,6 +464,7 @@ class Monitor:
                     self.error = f'{os.name}: {ex}'
         self.world.drop_unused_geoms()
         self._count_waiting()
+        self._expect()
         return len(done)
 
     def wait_jobs(self, timeout=None):
@@ -615,9 +629,8 @@ class Monitor:
             self.tick(scene, depsgraph, view_layer, live=False)
             if self.jobs:
                 self.wait_jobs(0.02)
-            elif self.need_scan and not (self.queue or self.need_resync or self.params_dirty
-                                         or self.world.busy):
-                self.scan_unchecked(depsgraph, view_layer)
+        if self.need_scan and not self.busy:
+            self.scan_unchecked(depsgraph, view_layer)
         return not self.busy
 
     def _only_new(self):
@@ -632,7 +645,7 @@ class Monitor:
     @property
     def busy(self):
         return (bool(self.queue) or bool(self.jobs) or self.need_resync or self.params_dirty
-                or self.need_scan or self.world.busy)
+                or self.world.busy)
 
     # -------------------------------------------------------------- reports
     def name_of(self, slot):
@@ -886,6 +899,8 @@ def _timer():
                 interval = min(interval, 0.02)
             elif mon.hot:
                 interval = min(interval, 0.1)
+            elif mon.need_scan:
+                interval = min(interval, 0.25)
         # monitors of scenes that no longer exist
         alive = {_uid(s) for s in bpy.data.scenes}
         for uid in [u for u in _monitors if u not in alive]:

@@ -153,6 +153,10 @@ class World:
         self.fit_now = FIT_NOW    # meshes up to this size never borrow a pose
         self._clock = 0           # advances with every use of poses (for eviction)
         self._demand = 0          # rows the poses of all objects would take together
+        # What is on its way but not here yet (meshes being sorted): triangle
+        # rows, vertex rows, pose rows.  The shared arrays are then sized for
+        # it in one go instead of being grown and copied as each one arrives.
+        self.incoming = (0, 0, 0)
 
         m = 64
         self.O_T = np.zeros((m, 3), dtype=np.float64)
@@ -293,6 +297,8 @@ class World:
         g.nv = verts.shape[0]
         g.nt = nt
         g.H, g.nreal, g.npad, g.off, g.rows = bvh.level_layout(nt)
+        self.TIDX.want = self.TIDX.top + max(g.npad[0], self.incoming[0])
+        self.LVERT.want = self.LVERT.top + max(g.nv, self.incoming[1])
         g.tbase = self.TIDX.alloc(g.npad[0])
         t = self.TIDX.data[g.tbase:g.tbase + g.npad[0]]
         t[:nt] = tris
@@ -342,6 +348,13 @@ class World:
     def pose_size(nv, nt):
         """Bytes one pose of a mesh with ``nv`` vertices and ``nt`` triangles takes."""
         return World._pose_rows(nv, bvh.level_layout(nt)[4])[1] * 24
+
+    @staticmethod
+    def rows_for(nv, nt):
+        """(triangle rows, vertex rows, pose rows) a mesh of this size takes,
+        for ``incoming``."""
+        return (-(-int(nt) // bvh.PAD) * bvh.PAD, int(nv),
+                World._pose_rows(nv, bvh.level_layout(nt)[4])[1])
 
     def pose_room(self):
         """Bytes available for poses, or None when there is no limit."""
@@ -457,7 +470,8 @@ class World:
         # When the storage has to grow it goes straight to what the scene is
         # going to need (the memory is only really taken as it is written
         # to), but never beyond the limit.
-        self.BOX.want = self._demand + (self._demand >> 3) + 4096
+        want = self._demand + self.incoming[2]
+        self.BOX.want = want + (want >> 3) + 4096
         p.base = self.BOX.alloc(p.rows, None if room is None else room - self.BOX.nbytes)
         p.vbase = 2 * p.base
         p.bbase = p.base + vrows
@@ -697,7 +711,8 @@ class World:
     def reserve(self):
         """Make the pose storage as large as the scene is going to need (within
         the limit) in one go.  Optional: it happens anyway with the first pose."""
-        want = self._demand + (self._demand >> 3) + 4096
+        want = self._demand + self.incoming[2]
+        want += (want >> 3) + 4096
         room = self.pose_room()
         if room is not None:
             want = min(want, room // 24)

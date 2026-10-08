@@ -33,7 +33,8 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
 ## How to work on it
 
 * Engine tests need only NumPy: `python3 tests/test_tritri.py`,
-  `python3 tests/test_world.py` (about a minute), `python3 tests/bench.py --quick`.
+  `python3 tests/test_world.py` (about 3 minutes), `python3 tests/bench.py --quick`,
+  `--storm`, and `tests/bench_scale.py` for builds of the owner's size.
 * Blender tests need the add-on installed and enabled in the profile that
   `BLENDER_USER_RESOURCES` points to. See `README.md` (Tests) for the commands
   and `tools/test-blender/README.md` for building Blender in a sandbox that
@@ -43,7 +44,12 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
 * The off-screen overlay test draws with `srgb_target=False` and does not look
   like the real viewport, which blends in linear light. Judge appearance from
   the window tests' screenshots only.
-* Commit style: imperative subject, a body that says why. Push to `main`.
+* Commit style: imperative subject, a body that says why. Commit and push
+  straight to `main` (the owner asked for that and lets Claude manage the
+  repository); push after every verified step.
+* Timing in the sandbox: the first write to a page of memory is about twenty
+  times slower than on real hardware and run-to-run noise is around 20 %.
+  Compare old and new in the same session (`git worktree add` the old one).
 
 ## Decisions already made, and why
 
@@ -58,6 +64,30 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
   axes, without the translation. Translation is added at query time. Copies
   with the same rotation share a pose. This is what makes dragging free, and
   it is also the memory cost: about 55 bytes per triangle per pose.
+* **Poses are a cache** (`World.set_cache_limit`), built on demand, least
+  recently used out first, each one a single block (vertices + boxes) in one
+  array, in size classes. A part without neighbours never has one.
+* **Borrowed poses, for live answers only.** An object whose rotation/scale
+  changes keeps its pose; boxes read from it are moved at query time
+  (`narrow._move_boxes`, padded for rounding), its triangles are posed from
+  the mesh's own vertices with exactly `World._posed`'s expression, so they
+  are bit-identical to a fitted pose. Exact work never uses borrowed boxes:
+  proving a clearance with them was measured 10 - 50 x slower than fitting
+  (16 ms per 300 k triangles). `_prepare(borrow=False)` gives every object
+  its own pose; `_upgrade` queues what was solved with borrowed boxes
+  (`PairResult.loose`) to be redone.
+* **Fits are generators** (`World._fit_steps`), a block of 32768 triangles per
+  piece; a step fits what its batch needs until its deadline. `_batch` takes
+  pairs whose poses are ready first, and otherwise waits for two poses at
+  most, so results appear as fits get done.
+* **Live load control**: a solve of n sketched pairs costs c0 + c1 n, a fully
+  treated pair `_detail_cost` (rises fast, falls slowly). All pending pairs
+  are taken at once if that fits twice the budget; full detail for all only
+  up to 8 pairs and 24 ms (`_choose_detail`).
+* **Clearance proof in two passes** (`narrow.solve`, `prove`): moderate caps
+  first, with a proven lower bound for what was left out; large caps only if
+  that bound could change the verdict. Else the value stands, flagged
+  `approx` when not proven to 1 % (shown as "~").
 * **Quick vs exact**: during a live edit intersections are complete but the
   clearance search is capped; pairs cut short are redone exactly when idle.
 * **The hatched collision region** is the surface of both parts within a few
@@ -67,95 +97,55 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
   (unread parts, unsolved pairs), not for refinement or the periodic resync.
 * Live updates come from `depsgraph_update_post` (during a modal transform it
   reports only `Object` with the transform flag), background work from a timer.
+* **Mesh data is read from attribute arrays** (`position`, `.corner_vert`): a
+  memory copy, 100 x faster than `vertices` / `loop_triangles` (which remain
+  as fallbacks). A triangles-only mesh needs no triangulation.
+* **Sorting runs in worker threads** (`monitor._executor`, `bvh.sort_mesh`),
+  which see NumPy arrays only. Meshes up to 60000 triangles are sorted inline.
+* **What is not checked is reported, not hidden**: unrealized geometry-node
+  instances, collection instances, non-mesh objects with faces
+  (`Monitor.scan_unchecked`); the badge turns to a warning.
+* Never use `.min(axis=0)` on an (n, 3) array in a hot path (7 x slower than
+  per-column), nor `ndarray.resize` (it zero-fills, which really allocates).
 
 ## State
 
-Last updated: 2026-10-08 (session 2, early afternoon).
+Last updated: 2026-10-08 (session 2, afternoon).
 
-* Engine, monitor, overlay, panels, printer profiles: working and tested on
-  Blender 5.2.2 (Linux, software OpenGL), headless and in a real window on a
-  virtual display with simulated mouse input.
+* Everything is on `main`. Engine, monitor, overlay, panels, printer profiles:
+  working and tested on Blender 5.2.2 (Linux, software OpenGL), headless and
+  in a real window on a virtual display with simulated mouse input.
 * Added this session at the owner's request: wall gap (side walls only,
   warning), light red shading of every colliding part, printers 5600 / 1200 /
-  580, fewer labels in crowded builds.
-* Load control: a live step has a time budget. Pairs are *sketched* (collision
-  yes/no, exact) or fully treated depending on measured cost; see
-  `World._choose_detail`, `World._learn_cost`, `narrow.solve(detail=...)`.
-  `tests/bench.py --storm` and `tests/blender_gui_stress.py ... storm` are the
-  owner's "import a part into the middle of 50" scenario: 159 -> 24 ms per
-  step with 20+ parts in contact.
-* On `main` (commit 47fb638): poses are an on-demand cache with an optional
-  byte limit (`World.set_cache_limit`), least recently used first out. Nothing
-  sets a limit yet.
+  580, fewer labels in crowded builds, warnings for geometry that is not
+  checked.
+* Large builds (the afternoon's work): pose cache with a Memory preference
+  (automatic: a fifth of installed RAM, 6.4 GB on the owner's 32 GB machine),
+  borrowed poses, sliced fits, worker threads, fast mesh reading. Figures are
+  in `README.md` ("Large builds"): 30 M triangles in 20 parts in Blender: all
+  checked after 15 s on 2 cores, longest main-thread block 43 ms, drag 5 ms,
+  rotate 8 ms per step, 2.2 GB. At the start of the session the same scene
+  froze Blender for about 25 s and rotating took 150 ms per step.
 * Live modifiers: the evaluated mesh is what is checked (verified with Array
-  and Shrinkwrap). Silent gaps the owner has been told about and wants a
-  warning for: geometry-node instances that are not realized are not checked,
-  and neither are non-mesh objects (text, curves).
+  and Shrinkwrap; Subdivision is not in the test build).
 * Not tested: a real GPU, Blender 4.2 - 5.1, Windows, macOS, a human at the
-  mouse. The owner works on an HP ZBook Firefly 14 G11 with 32 GB RAM.
+  mouse, worker threads in an interactive session on a many-core machine.
+  The owner works on an HP ZBook Firefly 14 G11 with 32 GB RAM.
 
-### Measured at the owner's size (tests/bench_scale.py parts 20 1500000)
+## Next
 
-30 M triangles in 20 parts, 2-core sandbox, commit 47fb638:
-sorting 15 s (0.5 us per triangle, on the main thread, 0.8 s per mesh);
-first complete check 9 s in ONE slice (interface frozen); memory 2.3 GB;
-drag step 5 ms; rotating a 1.5 M triangle part 150 ms per step.
-In this virtual machine the first write to a page of memory is about twenty
-times slower than on real hardware, which is most of that 9 s; the benchmark
-now touches the pose storage once before timing (pass `cold` to see it raw).
-
-## In progress: branch `wip/borrowed-poses` (NOT finished, NOT verified)
-
-Goal: no freeze and no lag with large parts. Three pieces, in this order.
-
-1. **Borrowed poses** (engine). An object whose rotation/scale changes keeps
-   the pose it had and its boxes are transformed as they are looked at
-   (`O_VIRT`, `O_REL`, `O_PAD` in `World`; centre and half extent through
-   `rel` and `|rel|`, padded for rounding). Triangles of a borrowing object
-   are posed from the mesh's own vertices (`LVERT`) with exactly the
-   expression `World._posed` uses, so they are bit-identical to what a fitted
-   pose holds; only the boxes are looser (about 1.3 - 1.6 x per axis, measured).
-   When idle, `World._upgrade` gives the object a fitted pose again (in place
-   if nobody else uses the pose) and `_refresh` re-solves the pairs that were
-   solved with borrowed boxes (`PairResult.loose`). Under a memory limit,
-   copies of one mesh in different rotations borrow one pose instead of each
-   having their own (`_attach`, `_borrowing`).
-   Done: `core/world.py` rewritten for this (not run yet). To do:
-   `core/narrow.py` must honour it everywhere boxes or posed vertices are
-   read: `_test_block` (transform gathered boxes of borrowing sides),
-   `corners` / `_pair_tris` / `_node_tris` (pose from `LVERT` with `O_L`),
-   `_region_side` (bounds, proxy boxes), the enclosure test (move the query
-   point into the pose's frame with `O_RELI`), `oob_solve` (transformed
-   boxes, exact triangle boxes at the leaves). Then tests: force borrowing
-   with `w.fit_now = 0`; collisions must equal a world without borrowing,
-   distances within the usual 0.1 %, and after settling everything must
-   equal a freshly built world. `tests/test_world.py: posed_tris` should use
-   `World.part_corners`.
-2. **Fits in slices** (done in `world.py`, not run yet): `_fit_steps` is a
-   generator (blocks of 32768 triangles, about 1.5 ms each), `_prepare`
-   fits what a batch needs until the step's deadline, pairs wait in their
-   queue meanwhile, `_oob_fill` collects out-of-volume geometry the same way.
-   Also there: pose storage grows straight to what the scene needs
-   (`Arena.want`), new array + copy instead of `ndarray.resize` (which zero
-   fills and so really allocates everything); mesh vertices in a shared array
-   `LVERT`; extents 7x faster (never use `.min(axis=0)` on an (n, 3) array).
-3. **Sorting off the main thread** (to do, `monitor.py`): `bvh.sort_mesh` is
-   a pure function made for this; run it in a worker thread (a few in
-   parallel), poll from the timer, then `World.add_sorted`.
-
-Then: memory preference (automatic default about 20 % of installed RAM, so
-about 6 GB on the owner's machine) wired to `World.set_cache_limit`, cache
-use and "borrowing" count in the Parts panel, the warning for unrealized
-instances and non-mesh objects, benchmarks (`tests/bench_scale.py`, both
-modes), README and user guide.
-
-## Next (after the branch is merged)
-
-1. Measure and report: 30 M triangles in 20 parts, and 600 instanced parts
-   with a memory limit (`tests/bench_scale.py instances 600 300000 12 2`).
-2. Throttle viewport redraws during the first analysis of a scene.
-3. If memory still matters: smaller poses (quantised boxes for the two lowest
-   levels would halve them; the fit is memory bound, so it would get faster
-   too).
-4. Possibly: an "import beside the bucket" helper, amber shading for
-   warning-only parts (offered, not requested).
+1. Package: rebuild `dist/bucket_builder-1.0.0.zip`, install it into a clean
+   profile, run the tests against that, send the zip to the owner.
+2. Things the owner may want (asked, no answer yet): wall gap on by default?
+   amber shading for warning-only parts? a built-in profile for his 580 with
+   custom firmware (needs the dimensions)? an "import beside the bucket"
+   helper (probably unnecessary now)?
+3. If memory matters more: smaller poses (quantised boxes for the two lowest
+   levels would halve them; the fit is memory bound, so it would get faster).
+4. Extents of a rotating part are an O(vertices) pass per step (5 ms for
+   1.5 M triangles); a support query on the borrowed tree would make it
+   logarithmic. The fixed cost of a live solve is 3 - 6 ms of Python overhead
+   over about 20 tree levels.
+5. Non-mesh objects could be checked instead of warned about (`to_mesh`
+   works on them).
+6. Throttle viewport redraws during the first analysis of a scene.
