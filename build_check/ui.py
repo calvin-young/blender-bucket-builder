@@ -178,6 +178,7 @@ class BUILDCHECK_PT_display(_Base, Panel):
             col.prop(p, "color_clearance")
             col.prop(p, "color_outside")
             col.prop(p, "color_volume")
+            col.prop(p, "volume_fill")
             col.prop(p, "hatch_spacing")
             col.prop(p, "xray")
             col.prop(p, "badge_scale")

@@ -375,12 +375,17 @@ def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport,
             bad = st.use_volume and (counts[2] or counts[3])
             vc = col_o if bad else col_v
             gpu.state.depth_test_set('LESS_EQUAL')
-            flat = shaders['flat']
-            flat.bind()
-            flat.uniform_float("color", (vc[0], vc[1], vc[2], 0.035))
-            faces.draw(flat)
-            flat.uniform_float("color", (vc[0], vc[1], vc[2], 0.06))
-            floor.draw(flat)
+            # The viewport blends in linear light, where a little alpha goes a
+            # long way on a dark background: keep the tint faint so the parts
+            # and the problem colours stay readable.
+            fill = p.volume_fill if p else 0.25
+            if fill > 0.0:
+                flat = shaders['flat']
+                flat.bind()
+                flat.uniform_float("color", (vc[0], vc[1], vc[2], 0.02 * fill))
+                faces.draw(flat)
+                flat.uniform_float("color", (vc[0], vc[1], vc[2], 0.05 * fill))
+                floor.draw(flat)
             _draw_lines(shaders, edges, (vc[0], vc[1], vc[2], 0.25), 1.0 * ui, viewport, xray=True)
             _draw_lines(shaders, edges, (vc[0], vc[1], vc[2], 0.9), 1.6 * ui, viewport, xray=False)
 
@@ -551,7 +556,10 @@ def badge_text(status):
     n = status['objects']
     if n == 0:
         return 'BUSY', "No parts", ["no visible mesh objects"]
-    lines.append(f"{n} part" + ("s" if n != 1 else "") + ", no collisions, all inside the volume")
+    # short lines: the same text has to fit the sidebar
+    lines.append(f"{n} part" + ("s" if n != 1 else "") + ", no collisions")
+    if status['volume']:
+        lines.append("all inside the build volume")
     if ncl:
         lines.append(f"{ncl} clearance warning" + ("s" if ncl != 1 else ""))
         return 'WARN', "Build OK", lines
