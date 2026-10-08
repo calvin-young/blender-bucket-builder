@@ -2,12 +2,15 @@
 """Settings: per-scene monitor settings, the printer profile library (stored in
 the add-on preferences so it is shared by all files) and display options."""
 
+import sys
+
 import bpy
 from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProperty,
                        FloatVectorProperty, IntProperty, StringProperty)
 from bpy.types import AddonPreferences, PropertyGroup
 
 ADDON_ID = __package__
+GIB = float(1 << 30)
 
 # Build volumes in millimetres (X, Y, Z) as published by HP.  These only seed
 # the editable profile list; nothing else in the add-on depends on them.
@@ -31,6 +34,64 @@ def settings(scene):
     return getattr(scene, "bucket_builder", None)
 
 
+_installed = [False, None]
+
+
+def installed_memory():
+    """Memory installed in the computer in bytes, or None if that cannot be
+    found out."""
+    if _installed[0]:
+        return _installed[1]
+    total = None
+    try:
+        if sys.platform == 'win32':
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong),
+                            ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong),
+                            ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong),
+                            ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong),
+                            ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+            status = MEMORYSTATUSEX()
+            status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                total = int(status.ullTotalPhys)
+        else:
+            import os
+            total = int(os.sysconf('SC_PHYS_PAGES')) * int(os.sysconf('SC_PAGE_SIZE'))
+    except Exception:
+        total = None
+    if total is not None and total <= 0:
+        total = None
+    _installed[0] = True
+    _installed[1] = total
+    return total
+
+
+def automatic_memory_limit():
+    """What the checker may use when the preference is left on automatic: a
+    fifth of the installed memory, but between 1 and 16 GiB."""
+    total = installed_memory()
+    if total is None:
+        return int(3 * GIB)
+    return int(min(max(0.2 * total, 1 * GIB), 16 * GIB))
+
+
+def memory_limit(context=None):
+    """Bytes the checker's cached data may take (the Memory preference)."""
+    p = prefs(context)
+    gb = p.memory_gb if p is not None else 0.0
+    if gb <= 0.0:
+        return automatic_memory_limit()
+    return int(gb * GIB)
+
+
 # ---------------------------------------------------------------------------
 # update callbacks (kept tiny: they only poke the monitor)
 # ---------------------------------------------------------------------------
@@ -48,6 +109,11 @@ def _poke_enabled(self, context):
 def _poke_redraw(self, context):
     from . import monitor
     monitor.tag_redraw_all()
+
+
+def _poke_prefs(self, context):
+    from . import monitor
+    monitor.on_prefs_changed()
 
 
 def _poke_volume(self, context):
@@ -214,7 +280,13 @@ class BucketBuilderPreferences(AddonPreferences):
     max_tris_millions: FloatProperty(
         name="Largest Part", description="Parts with more triangles than this (in millions) "
         "are skipped and listed as not checked",
-        default=8.0, min=0.1, max=100.0)
+        default=50.0, min=0.1, max=1000.0)
+    memory_gb: FloatProperty(
+        name="Memory (GB)", description="Most memory the checker may use for the data that "
+        "makes it fast. 0 is automatic: a fifth of the installed memory. When it runs short, "
+        "copies of a part in different rotations share data, which makes checking them slower "
+        "but not less exact; a part too large for it is listed as not checked",
+        default=0.0, min=0.0, soft_max=64.0, step=100, precision=1, update=_poke_prefs)
 
     def draw(self, context):
         layout = self.layout
@@ -234,6 +306,14 @@ class BucketBuilderPreferences(AddonPreferences):
         col = layout.column()
         col.prop(self, "budget_ms")
         col.prop(self, "max_tris_millions")
+        col.prop(self, "memory_gb")
+        total = installed_memory()
+        auto = automatic_memory_limit() / GIB
+        if self.memory_gb <= 0.0:
+            note = f"Automatic: {auto:.1f} GB"
+            if total is not None:
+                note += f" of the {total / GIB:.0f} GB installed"
+            col.label(text=note)
         layout.separator()
         layout.label(text="Printer profiles are edited in the Bucket tab of the 3D viewport sidebar.")
 

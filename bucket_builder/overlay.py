@@ -714,19 +714,39 @@ def _text_shadow(on):
         pass
 
 
+def unchecked_lines(status):
+    """Short lines about what is in the scene but is not being checked."""
+    lines = []
+    n = status.get('skipped', 0)
+    if n:
+        lines.append(f"{n} part" + ("s" if n != 1 else "") + " not checked (too large)")
+    un = status.get('unchecked') or {}
+    n = un.get('instances', 0)
+    if n:
+        lines.append(f"{n} part" + ("s have" if n != 1 else " has") + " unchecked instances")
+    n = un.get('collections', 0)
+    if n:
+        lines.append(f"{n} collection instance" + ("s" if n != 1 else "") + " not checked")
+    n = un.get('other', 0)
+    if n:
+        lines.append(f"{n} object" + ("s" if n != 1 else "") + " not checked (not a mesh)")
+    return lines
+
+
 def badge_text(status):
     """(state, headline, detail lines) for the status badge and the panel.
 
-    state is 'BUSY', 'OK', 'WARN' (pass, but with clearance warnings) or 'FAIL'.
+    state is 'BUSY', 'OK', 'WARN' (pass, but with warnings) or 'FAIL'.
     """
     nc = status['collisions']
     nout = status['partly_out'] + status['outside']
     ncl = status['clearance']
     nw = status['near_wall']
+    gaps = unchecked_lines(status)
     lines = []
     if status['preparing']:
         done, total = status['preparing']
-        return 'BUSY', "Preparing parts", [f"{done} of {total} read"]
+        return 'BUSY', "Preparing parts", [f"{done} of {total} ready"]
     if nc or nout:
         if nc:
             lines.append(f"{nc} collision" + ("s" if nc != 1 else ""))
@@ -736,6 +756,7 @@ def badge_text(status):
             lines.append(f"{ncl} clearance warning" + ("s" if ncl != 1 else ""))
         if nw:
             lines.append(f"{nw} part" + ("s" if nw != 1 else "") + " close to a wall")
+        lines += gaps
         if status['busy']:
             lines.append("still checking...")
         return 'FAIL', "Build has problems", lines
@@ -743,7 +764,7 @@ def badge_text(status):
         return 'BUSY', "Checking", [f"{status['pending']} pairs to go"] if status['pending'] else []
     n = status['objects']
     if n == 0:
-        return 'BUSY', "No parts", ["no visible mesh objects"]
+        return 'BUSY', "No parts", ["no visible mesh objects"] + gaps
     # short lines: the same text has to fit the sidebar
     lines.append(f"{n} part" + ("s" if n != 1 else "") + ", no collisions")
     if status['volume']:
@@ -752,10 +773,11 @@ def badge_text(status):
         lines.append(f"{ncl} clearance warning" + ("s" if ncl != 1 else ""))
     if nw:
         lines.append(f"{nw} part" + ("s" if nw != 1 else "") + " close to a wall")
+    lines += gaps
     if status['refining'] and status['clearance_on']:
         # collisions are settled; some gaps are still being measured exactly
         lines.append("measuring clearances...")
-    return ('WARN' if ncl or nw else 'OK'), "Build OK", lines
+    return ('WARN' if ncl or nw or gaps else 'OK'), "Build OK", lines
 
 
 def _badge_shapes(state, cx, cy, r, flat):
@@ -803,9 +825,7 @@ def _draw_badge(mon, st, p, shaders, ui, cx):
     centred at the bottom of the viewport."""
     status = mon.status()
     state, head, lines = badge_text(status)
-    if status['skipped']:
-        lines = lines + [f"{status['skipped']} object(s) not checked"]
-    lines = lines[:5]
+    lines = lines[:6]
     green = (0.25, 0.85, 0.35, 1.0)
     red = tuple(p.color_collision) if p else (1.0, 0.08, 0.05, 1.0)
     amber = tuple(p.color_clearance) if p else (1.0, 0.72, 0.0, 1.0)
@@ -841,7 +861,8 @@ def _draw_badge(mon, st, p, shaders, ui, cx):
     y -= 3.0 * k
     for line in lines:
         y -= line_h
-        lc = amber if ('clearance' in line or 'wall' in line) else (0.92, 0.92, 0.92, 1.0)
+        lc = amber if ('clearance' in line or 'wall' in line or 'not checked' in line
+                       or 'unchecked' in line) else (0.92, 0.92, 0.92, 1.0)
         _text(tx, y, line, body_size, lc)
     _text_shadow(False)
 

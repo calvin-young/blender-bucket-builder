@@ -11,10 +11,17 @@ to date from three sources:
   resync) in small time slices so the interface never blocks,
 * undo / redo / file load -- full resync.
 
+Taking in a mesh has an expensive part, sorting its triangles into a tree
+(about half a microsecond per triangle).  For large meshes that is done by
+worker threads, which only ever see NumPy arrays: Blender data is read, and
+the scene is touched, on the main thread alone.
+
 Blender data is only ever read here; the scene is never modified.
 """
 
+import concurrent.futures
 import hashlib
+import os as _os
 import time
 from collections import deque
 
@@ -23,18 +30,26 @@ import numpy as np
 from bpy.app.handlers import persistent
 
 from . import props
-from .core import World, OK, CLEAR, COLLIDE, PARTIAL, OUTSIDE
+from .core import World, OK, CLEAR, COLLIDE, PARTIAL, OUTSIDE, bvh
 
 _monitors = {}          # scene.session_uid -> Monitor
 _timer_running = False
+_pool = None            # worker threads, made when first needed
 HOT_SECONDS = 0.35      # an object counts as "being edited" this long after a change
 IDLE_SECONDS = 0.15     # quiet time before quick results get their exact pass
 RESYNC_SECONDS = 1.5    # safety net: compare the scene with the mirror this often
 LIVE_RESYNC_SECONDS = 0.25   # at most this often while something is being edited
+SYNC_TRIS = 60000       # meshes up to this size are sorted at once, larger ones by a worker
+MAX_INFLIGHT = 40000000  # triangles being sorted at a time (their arrays are in memory)
+SCAN_SECONDS = 2.0      # the scene is searched for unchecked things at most this often
+SCAN_INSTANCES = 20000  # instances looked at per search
+NON_MESH = {'CURVE', 'SURFACE', 'FONT', 'META'}   # objects with faces that are not read
+BIG_SKIPS = ('too many triangles', 'not enough memory', 'error')
 
 
 class ObjState:
-    __slots__ = ('uid', 'name', 'in_world', 'skipped', 'data_uid', 'shareable', 'ntri', 'sig')
+    __slots__ = ('uid', 'name', 'in_world', 'skipped', 'data_uid', 'shareable', 'ntri', 'sig',
+                 'pending')
 
     def __init__(self, uid, name):
         self.uid = uid
@@ -45,6 +60,26 @@ class ObjState:
         self.shareable = False
         self.ntri = 0
         self.sig = None
+        self.pending = None       # key of the mesh it is waiting for (being sorted)
+
+
+class _Job:
+    """A mesh being sorted by a worker thread, and the objects waiting for it."""
+    __slots__ = ('future', 'uids', 'ntri')
+
+    def __init__(self, future, ntri):
+        self.future = future
+        self.uids = set()
+        self.ntri = ntri
+
+
+def _executor():
+    global _pool
+    if _pool is None:
+        workers = max(1, min(4, (_os.cpu_count() or 2) - 1))
+        _pool = concurrent.futures.ThreadPoolExecutor(max_workers=workers,
+                                                      thread_name_prefix='bucket_builder')
+    return _pool
 
 
 def _uid(idblock):
@@ -80,25 +115,51 @@ def _signature(obj):
 def read_mesh(obj_eval):
     """Evaluated geometry of an object as (float32 (nv, 3), int32 (nt, 3)).
 
-    Uses ``foreach_get`` so the copy is done by Blender, not by a Python loop.
+    The arrays are copied out by Blender, not by a Python loop, and where
+    possible straight from the attribute arrays: that is a plain memory copy,
+    a hundred times faster than going through ``vertices`` and
+    ``loop_triangles`` (5 M triangles: 1.3 s that way).  A mesh that consists
+    of triangles only, which imported parts do, needs no triangulation: its
+    face corners are its triangles.
     """
     me = obj_eval.to_mesh()
     try:
         nv = len(me.vertices)
-        if nv == 0 or len(me.polygons) == 0:
+        nf = len(me.polygons)
+        if nv == 0 or nf == 0:
             return None
         co = np.empty(nv * 3, dtype=np.float32)
-        me.vertices.foreach_get("co", co)
-        me.calc_loop_triangles()
-        tris = me.loop_triangles
-        nt = len(tris)
-        if nt == 0:
-            return None
-        idx = np.empty(nt * 3, dtype=np.int32)
-        tris.foreach_get("vertices", idx)
+        try:
+            me.attributes['position'].data.foreach_get('vector', co)
+        except Exception:
+            me.vertices.foreach_get("co", co)
+        nl = len(me.loops)
+        corner = None
+        try:
+            corner = np.empty(nl, dtype=np.int32)
+            me.attributes['.corner_vert'].data.foreach_get('value', corner)
+        except Exception:
+            corner = None
+        if nl == 3 * nf:
+            if corner is None:
+                corner = np.empty(nl, dtype=np.int32)
+                me.loops.foreach_get("vertex_index", corner)
+            idx = corner
+        else:
+            me.calc_loop_triangles()
+            tris = me.loop_triangles
+            nt = len(tris)
+            if nt == 0:
+                return None
+            idx = np.empty(nt * 3, dtype=np.int32)
+            if corner is None:
+                tris.foreach_get("vertices", idx)
+            else:
+                tris.foreach_get("loops", idx)
+                idx = np.take(corner, idx)
     finally:
         obj_eval.to_mesh_clear()
-    return co.reshape(nv, 3), idx.reshape(nt, 3)
+    return co.reshape(nv, 3), idx.reshape(-1, 3)
 
 
 class Monitor:
@@ -118,6 +179,12 @@ class Monitor:
         self.mm_per_unit = 1.0
         self.unit_note = ''
         self.data_geom = {}       # mesh data uid -> geometry key (unmodified shared meshes)
+        self.jobs = {}            # geometry key -> _Job (meshes being sorted)
+        self.mem_limit = -1       # the cache limit last given to the world
+        self.unchecked = {}       # what the scene holds that is not checked: kind -> count
+        self.need_scan = True
+        self.last_scan = 0.0
+        self._faces = {}          # non-mesh object uid -> (signature, has faces)
         self.seen_version = -1
         self.move_serial = 0      # any transform change
         self.cold_serial = 0      # transform changes found by polling (not live edits)
@@ -195,6 +262,10 @@ class Monitor:
             w.set_volume(lo, hi, st.wall_clearance_mm * k if st.use_wall_clearance else 0.0)
         else:
             w.set_volume(None, None)
+        limit = props.memory_limit()
+        if limit != self.mem_limit:
+            self.mem_limit = limit
+            w.set_cache_limit(limit)
 
     # ----------------------------------------------------------------- sync
     def _remove(self, uid):
@@ -203,6 +274,14 @@ class Monitor:
         if os is not None and os.in_world:
             self.hot.pop(self.world.slot(uid), None)
             self.world.remove_object(uid)
+
+    def _waiting(self):
+        """Objects whose geometry is not in the world yet."""
+        return len(self.queue) + sum(len(j.uids) for j in self.jobs.values())
+
+    def _count_waiting(self):
+        n = self._waiting()
+        self.queue_total = max(self.queue_total, n) if n else 0
 
     def resync(self, depsgraph, view_layer):
         """Compare every object of the view layer with the mirror."""
@@ -237,9 +316,7 @@ class Monitor:
                 self.cold_serial += 1
         for uid in [u for u in self.objs if u not in seen]:
             self._remove(uid)
-        self.queue_total = max(self.queue_total, len(self.queue))
-        if not self.queue:
-            self.queue_total = 0
+        self._count_waiting()
 
     def note_update(self, obj_eval, transform, geometry, now):
         """A dependency-graph update for one object (called from the handler)."""
@@ -252,28 +329,42 @@ class Monitor:
         if os is None:
             if obj.type == 'MESH':
                 self.need_resync = True
+            self.need_scan = True
             return
         if geometry:
             self.data_geom.pop(os.data_uid, None)
             self.queue[uid] = None
-            self.queue_total = max(self.queue_total, len(self.queue))
+            self._count_waiting()
+            self.need_scan = True
         if transform and os.in_world:
             if self.world.set_matrix(uid, _matrix(obj_eval), hot=True):
                 self.hot[self.world.slot(uid)] = now
                 self.last_hot = now
                 self.move_serial += 1
 
+    def _too_big(self, nv, nt, max_tris):
+        """Why a mesh of this size is left out, or ''."""
+        if nt > max_tris:
+            return 'too many triangles'
+        limit = self.mem_limit
+        if limit is not None and limit > 0 and (
+                World.geom_size(nv, nt) + World.pose_size(nv, nt) > 0.5 * limit):
+            return 'not enough memory'
+        return ''
+
     def _load_geometry(self, obj, depsgraph, max_tris, now):
-        """Read one object's evaluated mesh and put it in the world."""
+        """Read one object's evaluated mesh and put it in the world, or hand
+        it to a worker thread to be sorted first."""
         uid = _uid(obj)
         os = self.objs[uid]
         w = self.world
         me = obj.data
         os.data_uid = _uid(me)
         os.shareable = (len(obj.modifiers) == 0 and me.shape_keys is None)
+        os.pending = None
         ob_eval = obj.evaluated_get(depsgraph)
         key = self.data_geom.get(os.data_uid) if os.shareable else None
-        if key is not None and not w.has_geom(key):
+        if key is not None and not w.has_geom(key) and key not in self.jobs:
             key = None
         os.skipped = ''
         if key is None:
@@ -282,33 +373,91 @@ class Monitor:
                 os.skipped = 'no faces'
             else:
                 co, tri = data
-                if tri.shape[0] > max_tris:
-                    os.skipped = 'too many triangles'
-                else:
-                    h = hashlib.blake2b(digest_size=16)
+                os.skipped = self._too_big(co.shape[0], tri.shape[0], max_tris)
+                if not os.skipped:
+                    h = hashlib.sha1()
                     h.update(co)
                     h.update(tri)
                     key = h.digest()
-                    if not w.has_geom(key):
-                        w.add_geom(key, co, tri)
                     os.ntri = int(tri.shape[0])
                     if os.shareable:
                         self.data_geom[os.data_uid] = key
+                    if not w.has_geom(key) and key not in self.jobs:
+                        if tri.shape[0] <= SYNC_TRIS:
+                            w.add_geom(key, co, tri)
+                        else:
+                            self.jobs[key] = _Job(_executor().submit(bvh.sort_mesh, co, tri),
+                                                  int(tri.shape[0]))
         if key is None:
             if os.in_world:
                 self.hot.pop(w.slot(uid), None)
                 w.remove_object(uid)
                 os.in_world = False
             return
+        job = self.jobs.get(key)
+        if job is not None:
+            # put in when the worker is done (see _collect_jobs)
+            job.uids.add(uid)
+            os.pending = key
+            return
+        self._install(obj, os, key, ob_eval, now)
+        w.drop_unused_geoms()
+
+    def _install(self, obj, os, key, ob_eval, now):
+        """Give an object its (sorted) geometry in the world."""
+        w = self.world
         os.sig = _signature(obj)
         if os.in_world:
-            if w.set_geometry(uid, key):
-                self.hot[w.slot(uid)] = now
+            if w.set_geometry(os.uid, key):
+                self.hot[w.slot(os.uid)] = now
                 self.last_hot = now
         else:
-            w.add_object(uid, key, _matrix(ob_eval))
+            w.add_object(os.uid, key, _matrix(ob_eval))
             os.in_world = True
-        w.drop_unused_geoms()
+
+    def _collect_jobs(self, view_layer, depsgraph, now):
+        """Take over the meshes the worker threads have finished sorting."""
+        done = [(key, job) for key, job in self.jobs.items() if job.future.done()]
+        if not done:
+            return 0
+        by_uid = None
+        for key, job in done:
+            del self.jobs[key]
+            waiting = [u for u in job.uids if u in self.objs and self.objs[u].pending == key]
+            try:
+                verts, tris = job.future.result()
+            except Exception as ex:
+                for uid in waiting:
+                    self.objs[uid].pending = None
+                    self.objs[uid].skipped = 'error'
+                self.error = f'sorting a mesh failed: {ex}'
+                continue
+            if not waiting:
+                continue                  # nobody wants it any more
+            self.world.add_sorted(key, verts, tris)
+            if by_uid is None:
+                by_uid = {_uid(o): o for o in view_layer.objects if o.type == 'MESH'}
+            for uid in waiting:
+                os = self.objs[uid]
+                os.pending = None
+                obj = by_uid.get(uid)
+                if obj is None:
+                    self.need_resync = True       # object left the view layer
+                    continue
+                try:
+                    self._install(obj, os, key, obj.evaluated_get(depsgraph), now)
+                except Exception as ex:
+                    os.skipped = 'error'
+                    self.error = f'{os.name}: {ex}'
+        self.world.drop_unused_geoms()
+        self._count_waiting()
+        return len(done)
+
+    def wait_jobs(self, timeout=None):
+        """Block until the worker threads are done (for tests and scripts;
+        the results are taken over by the next ``tick``)."""
+        if self.jobs:
+            concurrent.futures.wait([j.future for j in self.jobs.values()], timeout=timeout)
 
     def process_queue(self, view_layer, depsgraph, deadline, max_tris, now):
         """Read queued geometry until the deadline (always at least one)."""
@@ -324,6 +473,8 @@ class Monitor:
                 continue
             if obj.data is None or obj.data.is_editmode:
                 continue            # wait until edit mode is left
+            if self.jobs and sum(j.ntri for j in self.jobs.values()) > MAX_INFLIGHT:
+                break               # the workers have enough for now
             del self.queue[uid]
             try:
                 self._load_geometry(obj, depsgraph, max_tris, now)
@@ -333,9 +484,85 @@ class Monitor:
             done += 1
             if time.perf_counter() > deadline:
                 break
-        if not self.queue:
-            self.queue_total = 0
+        self._count_waiting()
         return done
+
+    # ------------------------------------------------------- what is not checked
+    def _has_faces(self, obj, depsgraph):
+        """True if an object that is not a mesh would come out as one with faces."""
+        bb = obj.bound_box
+        sig = (_uid(obj.data) if obj.data is not None else 0,
+               round(bb[0][0], 5), round(bb[0][1], 5), round(bb[0][2], 5),
+               round(bb[6][0], 5), round(bb[6][1], 5), round(bb[6][2], 5))
+        uid = _uid(obj)
+        hit = self._faces.get(uid)
+        if hit is not None and hit[0] == sig:
+            return hit[1]
+        faces = False
+        try:
+            ob_eval = obj.evaluated_get(depsgraph)
+            me = ob_eval.to_mesh()
+            try:
+                faces = me is not None and len(me.polygons) > 0
+            finally:
+                ob_eval.to_mesh_clear()
+        except Exception:
+            faces = False
+        self._faces[uid] = (sig, faces)
+        return faces
+
+    def scan_unchecked(self, depsgraph, view_layer):
+        """Count what the scene shows but the check does not cover.  Only real
+        mesh data of mesh objects is read, so that leaves out instances
+        (from geometry nodes that do not realize them, or collection
+        instances) and objects that are not meshes.  Returns True if the
+        counts changed."""
+        self.need_scan = False
+        self.last_scan = time.perf_counter()
+        parts = set()
+        collections = set()
+        try:
+            n = 0
+            for inst in depsgraph.object_instances:
+                if not inst.is_instance:
+                    continue
+                n += 1
+                if n > SCAN_INSTANCES:
+                    break
+                parent = inst.parent
+                if parent is None or inst.object.type != 'MESH':
+                    continue
+                po = parent.original
+                if po.bucket_builder_ignore:
+                    continue
+                uid = _uid(po)
+                if uid in self.objs:
+                    parts.add(uid)
+                elif po.type == 'EMPTY':
+                    collections.add(uid)
+        except Exception:
+            pass
+        other = 0
+        seen = set()
+        for obj in view_layer.objects:
+            if obj.type not in NON_MESH or obj.bucket_builder_ignore:
+                continue
+            try:
+                if not obj.visible_get(view_layer=view_layer):
+                    continue
+            except Exception:
+                continue
+            seen.add(_uid(obj))
+            if self._has_faces(obj, depsgraph):
+                other += 1
+        for uid in [u for u in self._faces if u not in seen]:
+            del self._faces[uid]
+        new = {k: v for k, v in (('instances', len(parts)), ('collections', len(collections)),
+                                 ('other', other)) if v}
+        if new != self.unchecked:
+            self.unchecked = new
+            return True
+        return False
 
     # ----------------------------------------------------------------- tick
     def tick(self, scene, depsgraph, view_layer, live):
@@ -348,17 +575,23 @@ class Monitor:
         max_tris = int((p.max_tris_millions if p else 8.0) * 1e6)
         t0 = time.perf_counter()
         now = t0
+        changed = False
         if self.need_resync and not (live and now - self.last_resync < LIVE_RESYNC_SECONDS):
             self.resync(depsgraph, view_layer)
         if self.params_dirty:
             self.apply_params(scene, st)
+        had = len(self.world._slot_of)
+        if self.jobs and self._collect_jobs(view_layer, depsgraph, now):
+            changed = True
         if self.queue and not (live and now - self.last_hot < HOT_SECONDS and self._only_new()):
-            had = len(self.world._slot_of)
             self.process_queue(view_layer, depsgraph, t0 + budget, max_tris, now)
-            if had == 0 and self.world._slot_of:
-                self.apply_params(scene, st)        # units may now be detectable
+        if had == 0 and self.world._slot_of:
+            self.apply_params(scene, st)        # units may now be detectable
         idle = (not live) and (time.perf_counter() - self.last_hot) > IDLE_SECONDS
         self.world.step(budget=budget, hot_budget=max(0.016, budget), idle=idle)
+        if self.need_scan and idle and time.perf_counter() - self.last_scan > SCAN_SECONDS:
+            if self.scan_unchecked(depsgraph, view_layer):
+                changed = True
         self.last_tick_ms = (time.perf_counter() - t0) * 1000.0
         cutoff = now - HOT_SECONDS
         if self.hot:
@@ -367,7 +600,25 @@ class Monitor:
         if self.world.version != self.seen_version:
             self.seen_version = self.world.version
             return True
-        return False
+        return changed
+
+    def settle(self, scene, depsgraph, view_layer, timeout=300.0):
+        """Run background slices until nothing is left to do, waiting for the
+        worker threads as needed.  For tests and scripts: in the interface
+        the timer does this, a slice at a time.  Returns True if it got
+        there."""
+        end = time.perf_counter() + timeout
+        wait = self.last_hot + IDLE_SECONDS - time.perf_counter()
+        if wait > 0.0:
+            time.sleep(wait + 0.01)
+        while self.busy and time.perf_counter() < end:
+            self.tick(scene, depsgraph, view_layer, live=False)
+            if self.jobs:
+                self.wait_jobs(0.02)
+            elif self.need_scan and not (self.queue or self.need_resync or self.params_dirty
+                                         or self.world.busy):
+                self.scan_unchecked(depsgraph, view_layer)
+        return not self.busy
 
     def _only_new(self):
         """True if the geometry queue holds only objects not yet in the world
@@ -380,7 +631,8 @@ class Monitor:
 
     @property
     def busy(self):
-        return bool(self.queue) or self.need_resync or self.params_dirty or self.world.busy
+        return (bool(self.queue) or bool(self.jobs) or self.need_resync or self.params_dirty
+                or self.need_scan or self.world.busy)
 
     # -------------------------------------------------------------- reports
     def name_of(self, slot):
@@ -392,7 +644,8 @@ class Monitor:
         """Summary for the panel and the viewport badge."""
         w = self.world
         nc, ncl, npart, nout, nwall = w.counts()
-        skipped = sum(1 for o in self.objs.values() if o.skipped)
+        skipped = sum(1 for o in self.objs.values() if o.skipped in BIG_SKIPS)
+        waiting = self._waiting()
         return {
             'objects': w.object_count,
             'collisions': nc,
@@ -405,8 +658,9 @@ class Monitor:
             # the verdict is final once every part is read and every pair has a
             # result; exact-distance refinement and the periodic resync that
             # may still be queued do not make it provisional
-            'busy': bool(self.queue) or self.params_dirty or w.unsettled,
-            'preparing': (self.queue_total - len(self.queue), self.queue_total) if self.queue else None,
+            'busy': bool(self.queue) or bool(self.jobs) or self.params_dirty or w.unsettled,
+            'preparing': (max(self.queue_total - waiting, 0), self.queue_total) if waiting else None,
+            'unchecked': self.unchecked,
             'pending': len(w._pend_hot) + len(w._pend_cold),
             'refining': len(w._pend_refine),
             'clearance_on': w.clear_thr > 0.0,
@@ -507,6 +761,16 @@ def on_settings_changed(scene):
     if mon is not None:
         mon.params_dirty = True
         mon.need_resync = True
+        mon.need_scan = True
+        _ensure_timer()
+    tag_redraw_all()
+
+
+def on_prefs_changed():
+    """A preference that the monitors act on was edited."""
+    for mon in _monitors.values():
+        mon.params_dirty = True
+    if _monitors:
         _ensure_timer()
     tag_redraw_all()
 
@@ -554,6 +818,7 @@ def _on_depsgraph_update(scene, depsgraph):
                     mon.note_update(idd, tr, ge, now)
             elif isinstance(idd, (bpy.types.Scene, bpy.types.Collection)):
                 mon.need_resync = True
+                mon.need_scan = True
         view_layer = depsgraph.view_layer
         if mon.tick(scene, depsgraph, view_layer, live=True):
             tag_redraw_all()
@@ -571,6 +836,7 @@ def _on_depsgraph_update(scene, depsgraph):
 def _on_undo_redo(scene, *_args):
     for mon in _monitors.values():
         mon.need_resync = True
+        mon.need_scan = True
         mon.check_sigs = True
         mon.data_geom.clear()
     _ensure_timer()
@@ -661,7 +927,7 @@ def register():
 
 
 def unregister():
-    global _timer_running
+    global _timer_running, _pool
     for name, fn in _HANDLERS:
         lst = getattr(bpy.app.handlers, name)
         if fn in lst:
@@ -670,3 +936,7 @@ def unregister():
         bpy.app.timers.unregister(_timer)
     _timer_running = False
     _monitors.clear()
+    if _pool is not None:
+        # a sort that is running finishes on its own; nothing waits for it
+        _pool.shutdown(wait=False, cancel_futures=True)
+        _pool = None
