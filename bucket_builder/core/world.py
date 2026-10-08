@@ -56,6 +56,13 @@ FIT_BLOCK = 15            # log2 of the triangles whose boxes are fitted in one 
 FIT_NOW = 40000           # meshes up to this many triangles are re-fitted at once
 BORROW_MAX = 64.0         # largest stretch between a borrowed pose and its user
 MAX_WAIT = 2              # poses still to be fitted that one batch of pairs may wait for
+# Two parts count as not having moved against each other while their offset
+# stays within this fraction of their distance from the origin.  Positions
+# arrive as single precision numbers: when several parts are moved together,
+# each is rounded on its own and their offsets jitter by a few units in the
+# last place (1.2e-7 of the coordinate at most).  Without the slack every
+# pair among them would be solved again on every step of the move.
+POS_TOL = 1e-6
 
 
 class Geom:
@@ -1036,10 +1043,18 @@ class World:
 
     # ------------------------------------------------------------ broad phase
     def _stamp(self, key):
+        """What the result of a pair was worked out for: the versions of the
+        two objects (geometry, rotation, scale), the settings, and where the
+        second object is as seen from the first."""
         a, b = key
-        r = np.rint((self.O_T[b] - self.O_T[a]) * 1e6)
-        return (int(self.O_VER[a]), int(self.O_VER[b]),
-                float(r[0]), float(r[1]), float(r[2]), self._param_stamp)
+        d = (self.O_T[b] - self.O_T[a]).tolist()
+        return (int(self.O_VER[a]), int(self.O_VER[b]), self._param_stamp, d[0], d[1], d[2])
+
+    def solved_for(self, key):
+        """The offset of the second object of a pair from the first that its
+        result was worked out for, or None if it has none yet."""
+        st = self.pairs[key].stamp
+        return None if st is None else np.array(st[3:6])
 
     def _drop_pair(self, a, b):
         key = (a, b) if a < b else (b, a)
@@ -1064,6 +1079,11 @@ class World:
         d = self._dmax() + self.eps_len
         d2max = d * d
         block = max(1, min(256, (1 << 21) // max(n, 1)))
+        # for comparing stamps, as plain numbers: positions, versions and
+        # how far an offset may be out (see POS_TOL)
+        at = np.abs(self.O_T[:n])
+        known = (self.O_T[:n].tolist(), self.O_VER[:n].tolist(),
+                 (POS_TOL * np.maximum(np.maximum(at[:, 0], at[:, 1]), at[:, 2])).tolist())
         for s in range(0, slots.shape[0], block):
             sl = slots[s:s + block]
             g = np.maximum(lo[sl][:, None, :] - hi[None, :, :],
@@ -1075,14 +1095,18 @@ class World:
             bounds = np.searchsorted(rows, np.arange(sl.shape[0] + 1))
             for i in range(sl.shape[0]):
                 a = int(sl[i])
-                self._update_pairs(a, cols[bounds[i]:bounds[i + 1]].tolist(), dirty[a])
+                self._update_pairs(a, cols[bounds[i]:bounds[i + 1]].tolist(), dirty[a], known)
 
-    def _update_pairs(self, a, cand, hot):
+    def _update_pairs(self, a, cand, hot, known):
         adj = self.adj[a]
         gone = adj.difference(cand)
         for o in gone:
             self._drop_pair(a, o)
         pairs = self.pairs
+        T, ver, tol = known
+        ta = T[a]
+        va = ver[a]
+        params = self._param_stamp
         for o in cand:
             key = (a, o) if a < o else (o, a)
             pr = pairs.get(key)
@@ -1091,8 +1115,23 @@ class World:
                 pairs[key] = pr
                 adj.add(o)
                 self.adj[o].add(a)
-            elif pr.stamp == self._stamp(key):
-                continue
+            else:
+                # Nothing to do if the pair is as it was when it was solved:
+                # the same objects, the same settings, the same offset.  (The
+                # stamp is that of the solve, so offsets cannot creep.)
+                st = pr.stamp
+                if st is not None and st[2] == params:
+                    to = T[o]
+                    if a < o:
+                        same = st[0] == va and st[1] == ver[o]
+                        dx, dy, dz = to[0] - ta[0], to[1] - ta[1], to[2] - ta[2]
+                    else:
+                        same = st[0] == ver[o] and st[1] == va
+                        dx, dy, dz = ta[0] - to[0], ta[1] - to[1], ta[2] - to[2]
+                    if same:
+                        e = tol[a] if tol[a] > tol[o] else tol[o]
+                        if abs(dx - st[3]) <= e and abs(dy - st[4]) <= e and abs(dz - st[5]) <= e:
+                            continue
             if not pr.stale:
                 pr.stale = True
                 # A live edit is answered within a frame or two; until then
