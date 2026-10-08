@@ -99,9 +99,9 @@ def describe(pr):
     return f"{pr['a']} is outside the build volume"
 
 
-class BUILDCHECK_OT_focus_problem(Operator):
+class BUCKETBUILDER_OT_focus_problem(Operator):
     """Frame this problem in the viewport and select the parts involved"""
-    bl_idname = "buildcheck.focus_problem"
+    bl_idname = "bucketbuilder.focus_problem"
     bl_label = "Go to Problem"
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -117,9 +117,9 @@ class BUILDCHECK_OT_focus_problem(Operator):
         return {'FINISHED'}
 
 
-class BUILDCHECK_OT_step_problem(Operator):
+class BUCKETBUILDER_OT_step_problem(Operator):
     """Jump to the next or previous problem"""
-    bl_idname = "buildcheck.step_problem"
+    bl_idname = "bucketbuilder.step_problem"
     bl_label = "Next Problem"
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -139,9 +139,9 @@ class BUILDCHECK_OT_step_problem(Operator):
         return {'FINISHED'}
 
 
-class BUILDCHECK_OT_frame_volume(Operator):
+class BUCKETBUILDER_OT_frame_volume(Operator):
     """Frame the whole build volume in the viewport"""
-    bl_idname = "buildcheck.frame_volume"
+    bl_idname = "bucketbuilder.frame_volume"
     bl_label = "View Build Volume"
 
     def execute(self, context):
@@ -157,9 +157,9 @@ class BUILDCHECK_OT_frame_volume(Operator):
         return {'FINISHED'}
 
 
-class BUILDCHECK_OT_recheck(Operator):
+class BUCKETBUILDER_OT_recheck(Operator):
     """Discard all cached data and analyse the scene again"""
-    bl_idname = "buildcheck.recheck"
+    bl_idname = "bucketbuilder.recheck"
     bl_label = "Recheck Everything"
 
     def execute(self, context):
@@ -167,9 +167,9 @@ class BUILDCHECK_OT_recheck(Operator):
         return {'FINISHED'}
 
 
-class BUILDCHECK_OT_ignore(Operator):
-    """Include or exclude the selected objects from the build check"""
-    bl_idname = "buildcheck.ignore"
+class BUCKETBUILDER_OT_ignore(Operator):
+    """Include or exclude the selected objects from the checks"""
+    bl_idname = "bucketbuilder.ignore"
     bl_label = "Ignore Selected"
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -178,8 +178,8 @@ class BUILDCHECK_OT_ignore(Operator):
     def execute(self, context):
         n = 0
         for o in context.selected_objects:
-            if o.type == 'MESH' and o.build_check_ignore != self.ignore:
-                o.build_check_ignore = self.ignore
+            if o.type == 'MESH' and o.bucket_builder_ignore != self.ignore:
+                o.bucket_builder_ignore = self.ignore
                 n += 1
         monitor.on_settings_changed(context.scene)
         self.report({'INFO'}, f"{n} object(s) {'ignored' if self.ignore else 'included'}")
@@ -218,9 +218,9 @@ def apply_volume(st, name, size):
     st.lock_printer_name = False
 
 
-class BUILDCHECK_OT_profile_apply(Operator):
+class BUCKETBUILDER_OT_profile_apply(Operator):
     """Use this printer's build volume"""
-    bl_idname = "buildcheck.profile_apply"
+    bl_idname = "bucketbuilder.profile_apply"
     bl_label = "Select Printer"
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -236,9 +236,9 @@ class BUILDCHECK_OT_profile_apply(Operator):
         return {'FINISHED'}
 
 
-class BUILDCHECK_OT_profile_add(Operator):
+class BUCKETBUILDER_OT_profile_add(Operator):
     """Save the current build volume as a new printer profile"""
-    bl_idname = "buildcheck.profile_add"
+    bl_idname = "bucketbuilder.profile_add"
     bl_label = "Save as New Printer"
 
     name: StringProperty(name="Name", default="Custom Printer")
@@ -270,9 +270,9 @@ class BUILDCHECK_OT_profile_add(Operator):
         return {'FINISHED'}
 
 
-class BUILDCHECK_OT_profile_update(Operator):
+class BUCKETBUILDER_OT_profile_update(Operator):
     """Store the current build volume in the selected printer profile"""
-    bl_idname = "buildcheck.profile_update"
+    bl_idname = "bucketbuilder.profile_update"
     bl_label = "Update Printer Profile"
 
     def execute(self, context):
@@ -290,9 +290,9 @@ class BUILDCHECK_OT_profile_update(Operator):
         return {'CANCELLED'}
 
 
-class BUILDCHECK_OT_profile_remove(Operator):
+class BUCKETBUILDER_OT_profile_remove(Operator):
     """Delete the selected printer profile from the library"""
-    bl_idname = "buildcheck.profile_remove"
+    bl_idname = "bucketbuilder.profile_remove"
     bl_label = "Delete Printer Profile"
 
     def invoke(self, context, event):
@@ -315,9 +315,9 @@ class BUILDCHECK_OT_profile_remove(Operator):
         return {'CANCELLED'}
 
 
-class BUILDCHECK_OT_profile_rename(Operator):
+class BUCKETBUILDER_OT_profile_rename(Operator):
     """Rename the selected printer profile"""
-    bl_idname = "buildcheck.profile_rename"
+    bl_idname = "bucketbuilder.profile_rename"
     bl_label = "Rename Printer Profile"
 
     name: StringProperty(name="Name")
@@ -344,9 +344,9 @@ class BUILDCHECK_OT_profile_rename(Operator):
         return {'CANCELLED'}
 
 
-class BUILDCHECK_OT_profiles_reset(Operator):
+class BUCKETBUILDER_OT_profiles_reset(Operator):
     """Add the built-in printer profiles again (existing ones are kept)"""
-    bl_idname = "buildcheck.profiles_reset"
+    bl_idname = "bucketbuilder.profiles_reset"
     bl_label = "Restore Default Printers"
 
     def execute(self, context):
@@ -363,40 +363,40 @@ class BUILDCHECK_OT_profiles_reset(Operator):
         return {'FINISHED'}
 
 
-class BUILDCHECK_MT_printers(Menu):
+class BUCKETBUILDER_MT_printers(Menu):
     bl_label = "Printer"
-    bl_idname = "BUILDCHECK_MT_printers"
+    bl_idname = "BUCKETBUILDER_MT_printers"
 
     def draw(self, context):
         layout = self.layout
         st = props.settings(context.scene)
         for i, (name, size) in enumerate(profile_items(context)):
             text = f"{name}   ({size[0]:g} x {size[1]:g} x {size[2]:g} mm)"
-            op = layout.operator("buildcheck.profile_apply", text=text,
+            op = layout.operator("bucketbuilder.profile_apply", text=text,
                                  icon='CHECKMARK' if name == st.printer else 'BLANK1')
             op.index = i
         layout.separator()
-        layout.operator("buildcheck.profile_add", icon='ADD')
-        layout.operator("buildcheck.profile_update", icon='FILE_TICK')
-        layout.operator("buildcheck.profile_rename")
-        layout.operator("buildcheck.profile_remove", icon='REMOVE')
+        layout.operator("bucketbuilder.profile_add", icon='ADD')
+        layout.operator("bucketbuilder.profile_update", icon='FILE_TICK')
+        layout.operator("bucketbuilder.profile_rename")
+        layout.operator("bucketbuilder.profile_remove", icon='REMOVE')
         layout.separator()
-        layout.operator("buildcheck.profiles_reset")
+        layout.operator("bucketbuilder.profiles_reset")
 
 
 CLASSES = (
-    BUILDCHECK_OT_focus_problem,
-    BUILDCHECK_OT_step_problem,
-    BUILDCHECK_OT_frame_volume,
-    BUILDCHECK_OT_recheck,
-    BUILDCHECK_OT_ignore,
-    BUILDCHECK_OT_profile_apply,
-    BUILDCHECK_OT_profile_add,
-    BUILDCHECK_OT_profile_update,
-    BUILDCHECK_OT_profile_remove,
-    BUILDCHECK_OT_profile_rename,
-    BUILDCHECK_OT_profiles_reset,
-    BUILDCHECK_MT_printers,
+    BUCKETBUILDER_OT_focus_problem,
+    BUCKETBUILDER_OT_step_problem,
+    BUCKETBUILDER_OT_frame_volume,
+    BUCKETBUILDER_OT_recheck,
+    BUCKETBUILDER_OT_ignore,
+    BUCKETBUILDER_OT_profile_apply,
+    BUCKETBUILDER_OT_profile_add,
+    BUCKETBUILDER_OT_profile_update,
+    BUCKETBUILDER_OT_profile_remove,
+    BUCKETBUILDER_OT_profile_rename,
+    BUCKETBUILDER_OT_profiles_reset,
+    BUCKETBUILDER_MT_printers,
 )
 
 

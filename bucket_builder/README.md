@@ -1,4 +1,4 @@
-# Build Check
+# Bucket Builder
 
 Live collision, clearance and build-volume monitoring for 3D-print build
 preparation in Blender, aimed at dense HP Multi Jet Fusion nests.
@@ -13,11 +13,11 @@ Requires Blender 4.2 or newer.
 ## Install
 
 Edit > Preferences > Get Extensions (or Add-ons) > the down arrow in the top
-right > Install from Disk, and pick `build_check-1.0.0.zip`.
+right > Install from Disk, and pick `bucket_builder-1.0.0.zip`.
 
 ## Use
 
-Open the sidebar in the 3D viewport (N) and the **Build** tab.
+Open the sidebar in the 3D viewport (N) and the **Bucket** tab.
 
 1. Press **Enable Monitoring**.
 2. Move, rotate or scale parts. Results follow while you drag.

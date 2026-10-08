@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Build Check: live collision, clearance and build-volume monitor for
+"""Bucket Builder: live collision, clearance and build-volume monitor for
 3D-print build preparation (aimed at HP Multi Jet Fusion nesting)."""
 
 bl_info = {
-    "name": "Build Check",
-    "author": "Build Check contributors",
+    "name": "Bucket Builder",
+    "author": "Bucket Builder contributors",
     "version": (1, 0, 0),
     "blender": (4, 2, 0),
-    "location": "3D Viewport > Sidebar > Build",
+    "location": "3D Viewport > Sidebar > Bucket",
     "description": "Live collision, clearance and build-volume monitor for 3D-print build preparation",
     "category": "3D View",
 }

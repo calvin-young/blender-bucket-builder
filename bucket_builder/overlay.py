@@ -92,7 +92,7 @@ void main()
 
 
 def _make_hatch_shader():
-    iface = gpu.types.GPUStageInterfaceInfo("build_check_iface")
+    iface = gpu.types.GPUStageInterfaceInfo("bucket_builder_iface")
     iface.smooth('VEC3', "v_pos")
     iface.flat('VEC3', "v_lo")
     iface.flat('VEC3', "v_hi")
@@ -121,7 +121,7 @@ def _shaders():
         try:
             sh['hatch'] = _make_hatch_shader()
         except Exception as ex:      # unusual GPU / backend: fall back to flat tinting
-            print("Build Check: hatch shader unavailable, using flat tint:", ex)
+            print("Bucket Builder: hatch shader unavailable, using flat tint:", ex)
             sh['hatch'] = None
         sh['flat'] = gpu.shader.from_builtin('UNIFORM_COLOR')
         sh['line'] = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')

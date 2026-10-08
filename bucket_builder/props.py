@@ -25,7 +25,7 @@ def prefs(context=None):
 
 
 def settings(scene):
-    return getattr(scene, "build_check", None)
+    return getattr(scene, "bucket_builder", None)
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ def _poke_volume(self, context):
 # property groups
 # ---------------------------------------------------------------------------
 
-class BuildCheckProfile(PropertyGroup):
+class BucketBuilderProfile(PropertyGroup):
     """One printer build volume in the user's library"""
     size: FloatVectorProperty(
         name="Build Volume", description="Usable build volume in millimetres",
@@ -79,7 +79,7 @@ class BuildCheckProfile(PropertyGroup):
         default=(380.0, 284.0, 380.0))
 
 
-class BuildCheckSettings(PropertyGroup):
+class BucketBuilderSettings(PropertyGroup):
     """Per-scene settings of the build monitor"""
 
     enabled: BoolProperty(
@@ -151,10 +151,10 @@ class BuildCheckSettings(PropertyGroup):
     problem_index: IntProperty(default=-1, options={'HIDDEN', 'SKIP_SAVE'})
 
 
-class BuildCheckPreferences(AddonPreferences):
+class BucketBuilderPreferences(AddonPreferences):
     bl_idname = ADDON_ID
 
-    profiles: CollectionProperty(type=BuildCheckProfile)
+    profiles: CollectionProperty(type=BucketBuilderProfile)
     profiles_seeded: BoolProperty(default=False)
 
     color_collision: FloatVectorProperty(
@@ -209,7 +209,7 @@ class BuildCheckPreferences(AddonPreferences):
         col.prop(self, "budget_ms")
         col.prop(self, "max_tris_millions")
         layout.separator()
-        layout.label(text="Printer profiles are edited in the Build tab of the 3D viewport sidebar.")
+        layout.label(text="Printer profiles are edited in the Bucket tab of the 3D viewport sidebar.")
 
 
 def seed_profiles(p):
@@ -224,21 +224,21 @@ def seed_profiles(p):
     p.profiles_seeded = True
 
 
-CLASSES = (BuildCheckProfile, BuildCheckSettings, BuildCheckPreferences)
+CLASSES = (BucketBuilderProfile, BucketBuilderSettings, BucketBuilderPreferences)
 
 
 def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
-    bpy.types.Scene.build_check = bpy.props.PointerProperty(type=BuildCheckSettings)
-    bpy.types.Object.build_check_ignore = BoolProperty(
-        name="Ignore in Build Check",
+    bpy.types.Scene.bucket_builder = bpy.props.PointerProperty(type=BucketBuilderSettings)
+    bpy.types.Object.bucket_builder_ignore = BoolProperty(
+        name="Ignore in Bucket Builder",
         description="Leave this object out of collision, clearance and build-volume checks",
         default=False, update=_poke)
 
 
 def unregister():
-    del bpy.types.Object.build_check_ignore
-    del bpy.types.Scene.build_check
+    del bpy.types.Object.bucket_builder_ignore
+    del bpy.types.Scene.bucket_builder
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
