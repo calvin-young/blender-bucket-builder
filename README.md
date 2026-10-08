@@ -24,8 +24,16 @@ Nothing in the scene is modified; everything is drawn on top of it.
 | --- | --- |
 | ![Colliding parts are shaded, the overlap is hatched](docs/images/collision.png) | ![A clean build](docs/images/build-ok.png) |
 
-Screenshots are from the automated window test (`tests/blender_gui_test.py`),
-with test primitives sized in millimetres inside a 380 x 284 x 380 mm volume.
+A large part imported into the middle of a full build, and being dragged out
+of it (50 parts; the new one lands on 33 of them):
+
+| | |
+| --- | --- |
+| ![Just imported](docs/images/import-into-full-build.png) | ![Being dragged out](docs/images/dragging-out.png) |
+
+Screenshots are from the automated window tests (`tests/blender_gui_test.py`,
+`tests/blender_gui_stress.py`), with test shapes sized in millimetres inside a
+380 x 284 x 380 mm volume.
 
 The user guide is in [bucket_builder/README.md](bucket_builder/README.md).
 

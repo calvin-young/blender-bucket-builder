@@ -440,7 +440,10 @@ class World:
         self.O_ALIVE[slot] = True
         self.adj[slot] = set()
         self._set_pose(slot, self._pose_acquire(g, M[:3, :3]))
-        self._mark(slot, False)
+        # like a live edit: every neighbour gets a quick answer first (does it
+        # collide?), the details follow.  A part dropped into a full build is
+        # then judged within a frame or two instead of after a long first pass.
+        self._mark(slot, True)
         return slot
 
     def set_matrix(self, uid, matrix, hot=True):
