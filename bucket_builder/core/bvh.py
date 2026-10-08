@@ -36,13 +36,19 @@ def level_layout(nt):
     return len(nreal) - 1, nreal, npad, off, acc
 
 
-def build_order(cx, cy, cz):
+class Cancelled(Exception):
+    """A sort was told to stop (the add-on is being switched off)."""
+
+
+def build_order(cx, cy, cz, cancel=None):
     """Triangle order for the implicit tree, by recursive median split.
 
     ``cx, cy, cz`` are contiguous float32 arrays with the triangle bounding-box
     centres; they are used as scratch space.  Every level of the tree is split
     in one vectorised pass (all nodes of a level are the rows of a 2-D array),
     so the cost is a few NumPy calls per level, never a Python loop over nodes.
+    ``cancel``, if given, is called between levels; when it returns true the
+    sort is abandoned with ``Cancelled``.
     """
     n = cx.shape[0]
     order = np.arange(n, dtype=np.int32)
@@ -50,6 +56,8 @@ def build_order(cx, cy, cz):
         return order
     size = 1 << (n - 1).bit_length()
     while size >= 4:
+        if cancel is not None and cancel():
+            raise Cancelled()
         half = size >> 1
         m = n // size
         end = m * size
@@ -86,7 +94,7 @@ def build_order(cx, cy, cz):
     return order
 
 
-def sort_mesh(verts, tris):
+def sort_mesh(verts, tris, cancel=None):
     """Bring a triangle mesh into the form the collision world stores.
 
     Returns (float32 vertices (nv, 3), int32 triangles (nt, 3) in tree order).
@@ -125,6 +133,6 @@ def sort_mesh(verts, tris):
         lo *= 0.5
         cen.append(lo)
     del idx
-    order = build_order(cen[0], cen[1], cen[2])
+    order = build_order(cen[0], cen[1], cen[2], cancel)
     del cen
     return verts, np.take(tris, order, axis=0)
