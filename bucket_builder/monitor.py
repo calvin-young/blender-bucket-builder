@@ -408,6 +408,8 @@ class Monitor:
             'busy': bool(self.queue) or self.params_dirty or w.unsettled,
             'preparing': (self.queue_total - len(self.queue), self.queue_total) if self.queue else None,
             'pending': len(w._pend_hot) + len(w._pend_cold),
+            'refining': len(w._pend_refine),
+            'clearance_on': w.clear_thr > 0.0,
         }
 
     def problems(self):

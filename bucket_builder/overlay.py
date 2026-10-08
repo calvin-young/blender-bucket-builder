@@ -30,60 +30,64 @@ _handles = []
 _state = {}          # lazily created GPU resources and per-scene caches
 
 MAX_MARKERS = 200
+MAX_LABELS = 12      # with more distances than this, only those of the parts being edited
 
 # styles understood by the hatch fragment shader
 STYLE_CROSS, STYLE_DIAG, STYLE_BACK, STYLE_SOLID = 0.0, 1.0, 2.0, 3.0
 
+# The constants of the hatch shader are packed into 128 bytes, the size every
+# graphics backend passes directly:
+#   u_a = (hatch spacing, code, fill, k1)      code = style + 4 * clip mode + 16 * sRGB target
+#   u_b = (clip box low corner, k2)            clip mode 0: draw everything,
+#   u_c = (clip box high corner, k3)                     1: only inside the box, 2: only outside
+# k1..k3 pull the surface slightly towards the viewer so that it does not
+# z-fight with the mesh it lies on: z' = (z + k1 * w) * k2 + k3.
 _VERT = """
 void main()
 {
   v_pos = pos;
   vec4 p = u_viewProj * vec4(pos, 1.0);
-  /* Pull the surface slightly towards the viewer so it does not z-fight with
-   * the mesh it lies on: u_bias = (perspective?, winmat[2][2], relative, absolute). */
-  if (u_bias.x > 0.5) {
-    p.z = (p.z + u_bias.y * u_bias.z * p.w) / (1.0 - u_bias.z);
-  }
-  else {
-    p.z += u_bias.y * u_bias.w;
-  }
+  p.z = (p.z + u_a.w * p.w) * u_b.w + u_c.w;
   gl_Position = p;
 }
 """
 
-# u_params = (hatch spacing, line width, clip mode, style)
-# clip mode 0: draw everything, 1: only inside the clip box, 2: only outside it
 _FRAG = """
 void main()
 {
-  if (u_params.z > 0.5) {
-    bool inside = all(greaterThanEqual(v_pos, u_clipLo.xyz)) && all(lessThanEqual(v_pos, u_clipHi.xyz));
-    if (inside == (u_params.z > 1.5)) {
+  float code = u_a.y;
+  float srgb = floor(code / 16.0);
+  code -= 16.0 * srgb;
+  float mode = floor(code / 4.0);
+  float style = code - 4.0 * mode;
+  if (mode > 0.5) {
+    bool inside = all(greaterThanEqual(v_pos, u_b.xyz)) && all(lessThanEqual(v_pos, u_c.xyz));
+    if (inside == (mode > 1.5)) {
       discard;
     }
   }
-  float s = u_params.x;
-  float w = u_params.y;
+  float s = u_a.x;
+  float w = 0.145 * s;
   float d1 = mod(gl_FragCoord.x + gl_FragCoord.y, s);
   float d2 = mod(gl_FragCoord.x - gl_FragCoord.y + 16384.0, s);
   float l1 = (d1 <= w) ? 1.0 : 0.0;
   float l2 = (d2 <= w) ? 1.0 : 0.0;
   float cov = 1.0;
-  if (u_params.w < 0.5) {
+  if (style < 0.5) {
     cov = max(l1, l2);
   }
-  else if (u_params.w < 1.5) {
+  else if (style < 1.5) {
     cov = l1;
   }
-  else if (u_params.w < 2.5) {
+  else if (style < 2.5) {
     cov = l2;
   }
-  float alpha = u_color.a * max(cov, u_extra.x);
+  float alpha = u_color.a * max(cov, u_a.z);
   if (alpha < 0.004) {
     discard;
   }
   vec3 c = u_color.rgb;
-  if (u_extra.y > 0.5) {
+  if (srgb > 0.5) {
     /* The viewport overlay buffer is sRGB encoded by the hardware on write, so
      * hand over linear values (this is what Blender's built-in shaders do). */
     vec3 lin_lo = c / 12.92;
@@ -101,12 +105,7 @@ _TINT_VERT = """
 void main()
 {
   vec4 p = u_mvp * vec4(pos, 1.0);
-  if (u_bias.x > 0.5) {
-    p.z = (p.z + u_bias.y * u_bias.z * p.w) / (1.0 - u_bias.z);
-  }
-  else {
-    p.z += u_bias.y * u_bias.w;
-  }
+  p.z = (p.z + u_bias.x * p.w) * u_bias.y + u_bias.z;      /* k1, k2, k3 as above */
   gl_Position = p;
 }
 """
@@ -115,7 +114,7 @@ _TINT_FRAG = """
 void main()
 {
   vec3 c = u_color.rgb;
-  if (u_extra.y > 0.5) {
+  if (u_bias.w > 0.5) {                                    /* sRGB target */
     vec3 lin_lo = c / 12.92;
     vec3 lin_hi = pow((c + vec3(0.055)) / 1.055, vec3(2.4));
     c = mix(lin_lo, lin_hi, step(vec3(0.04045), c));
@@ -130,7 +129,6 @@ def _make_tint_shader():
     info.push_constant('MAT4', "u_mvp")
     info.push_constant('VEC4', "u_color")
     info.push_constant('VEC4', "u_bias")
-    info.push_constant('VEC4', "u_extra")
     info.vertex_in(0, 'VEC3', "pos")
     info.fragment_out(0, 'VEC4', "fragColor")
     info.vertex_source(_TINT_VERT)
@@ -146,11 +144,9 @@ def _make_hatch_shader():
     info = gpu.types.GPUShaderCreateInfo()
     info.push_constant('MAT4', "u_viewProj")
     info.push_constant('VEC4', "u_color")
-    info.push_constant('VEC4', "u_params")
-    info.push_constant('VEC4', "u_bias")
-    info.push_constant('VEC4', "u_extra")
-    info.push_constant('VEC4', "u_clipLo")
-    info.push_constant('VEC4', "u_clipHi")
+    info.push_constant('VEC4', "u_a")
+    info.push_constant('VEC4', "u_b")
+    info.push_constant('VEC4', "u_c")
     info.vertex_in(0, 'VEC3', "pos")
     info.vertex_out(iface)
     info.fragment_out(0, 'VEC4', "fragColor")
@@ -364,10 +360,11 @@ def _rgba(color, alpha_scale=1.0):
     return (color[0], color[1], color[2], color[3] * alpha_scale)
 
 
-def _draw_tris(shaders, batch, color, style, spacing, width, fill, vp, bias, xray, srgb,
+def _draw_tris(shaders, batch, color, style, spacing, fill, vp, bias, xray, srgb,
                clip=None, outside=False):
     """Draw hatched triangles.  ``clip`` is an optional box (lo, hi): only the
-    part inside it is drawn, or with ``outside`` only the part beyond it."""
+    part inside it is drawn, or with ``outside`` only the part beyond it.
+    ``bias`` is (k1, k2, k3), see the shader."""
     hatch = shaders['hatch']
     if hatch is None:
         sh = shaders['flat']
@@ -382,22 +379,22 @@ def _draw_tris(shaders, batch, color, style, spacing, width, fill, vp, bias, xra
         return
     hatch.bind()
     hatch.uniform_float("u_viewProj", vp)
-    mode = 0.0 if clip is None else (2.0 if outside else 1.0)
-    hatch.uniform_float("u_params", (spacing, width, mode, style))
-    if clip is not None:
-        hatch.uniform_float("u_clipLo", (clip[0][0], clip[0][1], clip[0][2], 0.0))
-        hatch.uniform_float("u_clipHi", (clip[1][0], clip[1][1], clip[1][2], 0.0))
+    code = style + (0.0 if clip is None else (8.0 if outside else 4.0)) + 16.0 * srgb
+    lo = clip[0] if clip is not None else (0.0, 0.0, 0.0)
+    hi = clip[1] if clip is not None else (0.0, 0.0, 0.0)
     if xray > 0.0:
         # hidden parts of the region: dimmer, drawn through everything
         gpu.state.depth_test_set('NONE')
-        hatch.uniform_float("u_bias", (bias[0], bias[1], 0.0, 0.0))
         hatch.uniform_float("u_color", _rgba(color, xray))
-        hatch.uniform_float("u_extra", (fill * 0.5, srgb, 0.0, 0.0))
+        hatch.uniform_float("u_a", (spacing, code, fill * 0.5, 0.0))
+        hatch.uniform_float("u_b", (lo[0], lo[1], lo[2], 1.0))
+        hatch.uniform_float("u_c", (hi[0], hi[1], hi[2], 0.0))
         batch.draw(hatch)
     gpu.state.depth_test_set('LESS_EQUAL')
-    hatch.uniform_float("u_bias", bias)
     hatch.uniform_float("u_color", color)
-    hatch.uniform_float("u_extra", (fill, srgb, 0.0, 0.0))
+    hatch.uniform_float("u_a", (spacing, code, fill, bias[0]))
+    hatch.uniform_float("u_b", (lo[0], lo[1], lo[2], bias[1]))
+    hatch.uniform_float("u_c", (hi[0], hi[1], hi[2], bias[2]))
     batch.draw(hatch)
 
 
@@ -444,8 +441,7 @@ def _draw_tint(mon, p, shaders, persp_matrix, bias, srgb, viewport, ui, color):
         P = np.array(persp_matrix, dtype=np.float64)
         sh.bind()
         sh.uniform_float("u_color", (color[0], color[1], color[2], 0.5 * strength))
-        sh.uniform_float("u_bias", bias)
-        sh.uniform_float("u_extra", (0.0, srgb, 0.0, 0.0))
+        sh.uniform_float("u_bias", (bias[0], bias[1], bias[2], srgb))
         gpu.state.depth_test_set('LESS_EQUAL')
     for slot in slots:
         n = w.part_triangles(slot)
@@ -547,49 +543,51 @@ def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport,
                             xray=False)
 
         if st.show_overlay:
-            persp = 1.0 if window_matrix[3][3] == 0.0 else 0.0
             # How far the overlay is pulled towards the viewer to sit on top of
-            # the surface it marks.  With a very small clip start the depth
-            # buffer is coarse at working distance, so the pull grows with it.
-            rel = 0.0015
-            if persp:
-                a, b = window_matrix[2][2], window_matrix[2][3]
-                near = abs(b / (a - 1.0)) if a != 1.0 else 0.0
+            # the surface it marks, as (k1, k2, k3) for z' = (z + k1 w) k2 + k3.
+            # With a very small clip start the depth buffer is coarse at
+            # working distance, so the pull grows with it.
+            a = window_matrix[2][2]
+            if window_matrix[3][3] == 0.0:              # perspective: a relative pull
+                rel = 0.0015
+                near = abs(window_matrix[2][3] / (a - 1.0)) if a != 1.0 else 0.0
                 if near > 0.0:
                     rel = min(0.02, max(rel, 6.0 * view_distance / (near * 16777216.0)))
-            bias = (persp, window_matrix[2][2], rel, 0.004 * max(view_distance, 1e-9))
-            lw = 1.3 * ui
+                bias = (a * rel, 1.0 / (1.0 - rel), 0.0)
+                tint_bias = (a * 0.4 * rel, 1.0 / (1.0 - 0.4 * rel), 0.0)
+            else:                                       # orthographic: an absolute one
+                pull = 0.004 * max(view_distance, 1e-9)
+                bias = (0.0, 1.0, a * pull)
+                tint_bias = (0.0, 1.0, a * 0.4 * pull)
             if st.show_tint:
-                _draw_tint(mon, p, shaders, persp_matrix,
-                           (bias[0], bias[1], 0.4 * bias[2], 0.4 * bias[3]), srgb, viewport, ui,
-                           col_c)
+                _draw_tint(mon, p, shaders, persp_matrix, tint_bias, srgb, viewport, ui, col_c)
             groups = _groups(mon, st, shaders)
             for g in groups:
                 if g.empty:
                     continue
                 b = g.tri.get('clear')
                 if b is not None:
-                    _draw_tris(shaders, b, col_w, STYLE_DIAG, spacing, lw, 0.10,
+                    _draw_tris(shaders, b, col_w, STYLE_DIAG, spacing, 0.10,
                                persp_matrix, bias, xray, srgb)
                 for b, lo, hi in g.clipped.get('clear', ()):
-                    _draw_tris(shaders, b, col_w, STYLE_DIAG, spacing, lw, 0.10,
+                    _draw_tris(shaders, b, col_w, STYLE_DIAG, spacing, 0.10,
                                persp_matrix, bias, xray, srgb, (lo, hi))
                 b = g.tri.get('wall')
                 if b is not None:
                     # only what lies beyond the inner box, i.e. inside the margin
-                    _draw_tris(shaders, b, col_w, STYLE_BACK, spacing, lw, 0.10,
+                    _draw_tris(shaders, b, col_w, STYLE_BACK, spacing, 0.10,
                                persp_matrix, bias, xray, srgb, w.inner_box(), True)
                 b = g.tri.get('outside')
                 if b is not None:
                     # only what lies beyond the walls
-                    _draw_tris(shaders, b, col_o, STYLE_BACK, spacing * 0.8, lw, 0.16,
+                    _draw_tris(shaders, b, col_o, STYLE_BACK, spacing * 0.8, 0.16,
                                persp_matrix, bias, xray, srgb, w.volume, True)
                 b = g.tri.get('collide')
                 if b is not None:
-                    _draw_tris(shaders, b, col_c, STYLE_CROSS, spacing, lw, 0.16,
+                    _draw_tris(shaders, b, col_c, STYLE_CROSS, spacing, 0.16,
                                persp_matrix, bias, xray, srgb)
                 for b, lo, hi in g.clipped.get('collide', ()):
-                    _draw_tris(shaders, b, col_c, STYLE_CROSS, spacing, lw, 0.16,
+                    _draw_tris(shaders, b, col_c, STYLE_CROSS, spacing, 0.16,
                                persp_matrix, bias, xray, srgb, (lo, hi))
             for g in groups:
                 if g.empty:
@@ -754,6 +752,9 @@ def badge_text(status):
         lines.append(f"{ncl} clearance warning" + ("s" if ncl != 1 else ""))
     if nw:
         lines.append(f"{nw} part" + ("s" if nw != 1 else "") + " close to a wall")
+    if status['refining'] and status['clearance_on']:
+        # collisions are settled; some gaps are still being measured exactly
+        lines.append("measuring clearances...")
     return ('WARN' if ncl or nw else 'OK'), "Build OK", lines
 
 
@@ -877,14 +878,27 @@ def _draw_markers(mon, st, p, shaders, ui, persp_matrix, width, height):
             continue
         flat.uniform_float("color", colors[kind])
         batch_for_shader(flat, 'TRIS', {"pos": _rings(px[m], py[m], radius[m])}).draw(flat)
+    # Distances are worth reading for the parts in hand; in a crowded build a
+    # label on every near pair is only clutter (the rings and the list remain).
+    measured = [i for i in range(n) if problems[i]['kind'] in ('CLEAR', 'WALL')]
+    if len(measured) > MAX_LABELS:
+        w = mon.world
+        hot = mon.hot
+        measured = [i for i in measured
+                    if i == active or any(w.slot(u) in hot for u in problems[i]['key'][1:])]
+    measured = set(measured)
     _text_shadow(True)
     for i in range(n):
         if not ok[i]:
             continue
         pr = problems[i]
         if pr['kind'] == 'CLEAR':
+            if i not in measured:
+                continue
             label = f"{pr['dist_mm']:.2f} mm"
         elif pr['kind'] == 'WALL':
+            if i not in measured:
+                continue
             label = f"{pr['dist_mm']:.2f} mm to wall"
         elif i == active:
             label = {'COLLIDE': "collision", 'PARTIAL': "outside volume",
