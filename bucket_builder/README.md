@@ -29,7 +29,9 @@ Open the sidebar in the 3D viewport (N) and the **Bucket** tab.
 | Amber diagonal hatching, a line and a distance | Parts are closer than the clearance. The line joins the two closest points. |
 | Magenta hatching | The part of a mesh that is outside the build volume. |
 | Magenta box | A part that is entirely outside the build volume. |
-| Badge at the bottom of the viewport | Green tick: no collisions and every part inside the volume. Red cross: something to fix. Three dots: still analysing. |
+| Amber hatching next to a wall, and a distance "to wall" | A part inside the volume but closer to a side wall than the wall gap you asked for. |
+| Thin inner box | The limit set by the wall gap. It turns amber when a part crosses it. |
+| Badge at the bottom of the viewport | Green tick: no collisions and every part inside the volume. A small amber mark on it: warnings only. Red cross: something to fix. Three dots: still analysing. |
 
 **Problems** lists everything that needs attention, worst first. Click an entry,
 or use Previous / Next, to frame it in the viewport and select the parts
@@ -52,6 +54,11 @@ size as a new printer, the tick button stores it in the selected printer, the
 minus button deletes the printer. Printers are stored in the add-on
 preferences, so they are available in every file. **Origin** places the volume
 with a corner on the scene origin or centred on it; **Offset** shifts it.
+
+**Wall Gap (mm)** is optional. When ticked, a part that sits closer than this
+to a side wall (X and Y; the floor and the top are not counted) gets a
+warning. Like the part-to-part clearance it does not fail the build: the
+badge stays green. A part that actually crosses a wall is still an error.
 
 ### Leaving objects out
 

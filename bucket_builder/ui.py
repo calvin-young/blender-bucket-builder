@@ -8,7 +8,7 @@ from . import monitor, overlay, props
 
 LIST_ROWS = 10
 
-_KIND_ICON = {'COLLIDE': 'CANCEL', 'CLEAR': 'ERROR', 'PARTIAL': 'SHADING_BBOX',
+_KIND_ICON = {'COLLIDE': 'CANCEL', 'CLEAR': 'ERROR', 'WALL': 'ERROR', 'PARTIAL': 'SHADING_BBOX',
               'OUTSIDE': 'SHADING_BBOX'}
 _STATE_ICON = {'OK': 'CHECKMARK', 'WARN': 'CHECKMARK', 'FAIL': 'CANCEL', 'BUSY': 'TIME'}
 
@@ -112,6 +112,8 @@ class BUCKETBUILDER_PT_problems(_Base, Panel):
                     text = f"{pr['b']}  inside  {pr['a']}"
                 else:
                     text = f"{pr['a']}  x  {pr['b']}"
+            elif pr['kind'] == 'WALL':
+                text = f"{pr['a']}   {pr['dist_mm']:.2f} mm to wall"
             elif pr['kind'] == 'PARTIAL':
                 text = f"{pr['a']}   partly outside"
             else:
@@ -151,6 +153,16 @@ class BUCKETBUILDER_PT_volume(_Base, Panel):
         col = layout.column(align=True)
         col.prop(st, "show_volume")
         col.prop(st, "use_volume", text="Warn When Parts Exceed Volume")
+
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.active = st.use_volume
+        row = col.row(align=True, heading="Wall Gap (mm)")
+        row.prop(st, "use_wall_clearance", text="")
+        sub = row.row(align=True)
+        sub.active = st.use_wall_clearance
+        sub.prop(st, "wall_clearance_mm", text="")
         layout.operator("bucketbuilder.frame_volume", icon='VIEWZOOM')
 
 

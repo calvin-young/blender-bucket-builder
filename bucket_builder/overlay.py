@@ -199,12 +199,13 @@ def _box_faces(lo, hi):
     return np.ascontiguousarray(c[f])
 
 
-def _build_group(mon, pairs, oobs, vol, shaders):
+def _build_group(mon, pairs, oobs, walls, vol, shaders):
     """Create the batches for the given problems."""
     w = mon.world
     g = _Group()
-    tri_parts = {'collide': [], 'clear': [], 'outside': []}
-    line_parts = {'collide': [], 'clear': [], 'outside': []}
+    tri_parts = {'collide': [], 'clear': [], 'outside': [], 'wall': []}
+    line_parts = {'collide': [], 'clear': [], 'outside': [], 'wall': []}
+    inner = w.inner_box()
     for (a, b), pr in pairs:
         off = w.O_T[a]
         kind = 'collide' if pr.state == COLLIDE else 'clear'
@@ -223,6 +224,12 @@ def _build_group(mon, pairs, oobs, vol, shaders):
             tri_parts['outside'].append((r.tris, zero, vol[0], vol[1]))
         if r.state == OUTSIDE or r.band_only:
             line_parts['outside'].append((_box_edges(r.lo, r.hi), zero))
+    for slot, r in walls:
+        # drawn where it lies outside the inner box, i.e. inside the margin
+        if r.tris is not None and len(r.tris) and inner is not None:
+            tri_parts['wall'].append((r.tris, zero, inner[0], inner[1]))
+        if r.band_only:
+            line_parts['wall'].append((_box_edges(r.lo, r.hi), zero))
 
     hatch = shaders['hatch']
     for kind, parts in tri_parts.items():
@@ -254,8 +261,8 @@ def _groups(mon, st, shaders):
     w = mon.world
     hot_slots = mon.hot
     vol = w.volume
-    stat_pairs, hot_pairs, stat_oob, hot_oob = [], [], [], []
-    skey = [len(hot_slots), mon.cold_serial]
+    stat_pairs, hot_pairs, stat_oob, hot_oob, stat_wall, hot_wall = [], [], [], [], [], []
+    skey = [len(hot_slots), mon.cold_serial, w.wall_margin]
     for key, pr in w.viol.items():
         if key[0] in hot_slots or key[1] in hot_slots:
             hot_pairs.append((key, pr))
@@ -270,13 +277,20 @@ def _groups(mon, st, shaders):
             stat_oob.append((slot, r))
             skey.append(slot)
             skey.append(r.serial)
+    for slot, r in w.wall.items():
+        if slot in hot_slots:
+            hot_wall.append((slot, r))
+        else:
+            stat_wall.append((slot, r))
+            skey.append(-1 - slot)
+            skey.append(r.serial)
     skey = hash(tuple(skey))
     if entry['static'].key != skey:
-        entry['static'] = _build_group(mon, stat_pairs, stat_oob, vol, shaders)
+        entry['static'] = _build_group(mon, stat_pairs, stat_oob, stat_wall, vol, shaders)
         entry['static'].key = skey
-    hkey = (w.version, mon.move_serial, len(hot_pairs), len(hot_oob))
+    hkey = (w.version, mon.move_serial, len(hot_pairs), len(hot_oob), len(hot_wall))
     if entry['hot'].key != hkey:
-        entry['hot'] = _build_group(mon, hot_pairs, hot_oob, vol, shaders)
+        entry['hot'] = _build_group(mon, hot_pairs, hot_oob, hot_wall, vol, shaders)
         entry['hot'].key = hkey
     return entry['static'], entry['hot']
 
@@ -331,21 +345,28 @@ def _draw_lines(shaders, batch, color, width, viewport, xray=True):
 
 
 def _volume_batches(mon, st, shaders):
+    """(edges, faces, floor, margin edges or None) of the build volume."""
     lo, hi = mon.volume_box(st)
-    key = (tuple(lo), tuple(hi))
+    margin = mon.margin_box(st)
+    key = (tuple(lo), tuple(hi), None if margin is None else (tuple(margin[0]), tuple(margin[1])))
     cache = _state.setdefault('volume', {})
     entry = cache.get(mon.scene_uid)
     if entry is None or entry[0] != key:
         edges = batch_for_shader(shaders['line'], 'LINES',
                                  {"pos": np.ascontiguousarray(_box_edges(lo, hi).reshape(24, 3))})
+        inner = None
+        if margin is not None:
+            inner = batch_for_shader(
+                shaders['line'], 'LINES',
+                {"pos": np.ascontiguousarray(_box_edges(margin[0], margin[1]).reshape(24, 3))})
         faces = batch_for_shader(shaders['flat'], 'TRIS', {"pos": _box_faces(lo, hi)})
         floor = np.array([[lo[0], lo[1], lo[2]], [hi[0], lo[1], lo[2]], [hi[0], hi[1], lo[2]],
                           [lo[0], lo[1], lo[2]], [hi[0], hi[1], lo[2]], [lo[0], hi[1], lo[2]]],
                          dtype=np.float32)
         floor_b = batch_for_shader(shaders['flat'], 'TRIS', {"pos": floor})
-        entry = (key, edges, faces, floor_b)
+        entry = (key, edges, faces, floor_b, inner)
         cache[mon.scene_uid] = entry
-    return entry[1], entry[2], entry[3]
+    return entry[1], entry[2], entry[3], entry[4]
 
 
 def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport, ui,
@@ -372,7 +393,7 @@ def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport,
         w = mon.world
         counts = w.counts()
         if st.show_volume:
-            edges, faces, floor = _volume_batches(mon, st, shaders)
+            edges, faces, floor, margin = _volume_batches(mon, st, shaders)
             bad = st.use_volume and (counts[2] or counts[3])
             vc = col_o if bad else col_v
             gpu.state.depth_test_set('LESS_EQUAL')
@@ -389,6 +410,13 @@ def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport,
                 floor.draw(flat)
             _draw_lines(shaders, edges, (vc[0], vc[1], vc[2], 0.25), 1.0 * ui, viewport, xray=True)
             _draw_lines(shaders, edges, (vc[0], vc[1], vc[2], 0.9), 1.6 * ui, viewport, xray=False)
+            if margin is not None:
+                # the limit parts should stay inside of: amber once something crosses it
+                mc = col_w if counts[4] else col_v
+                _draw_lines(shaders, margin, (mc[0], mc[1], mc[2], 0.16), 1.0 * ui, viewport,
+                            xray=True)
+                _draw_lines(shaders, margin, (mc[0], mc[1], mc[2], 0.5), 1.0 * ui, viewport,
+                            xray=False)
 
         if st.show_overlay:
             persp = 1.0 if window_matrix[3][3] == 0.0 else 0.0
@@ -401,6 +429,10 @@ def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport,
                 b = g.tri.get('clear')
                 if b is not None:
                     _draw_tris(shaders, b, col_w, STYLE_DIAG, spacing, lw, False, 0.10,
+                               persp_matrix, bias, xray, srgb)
+                b = g.tri.get('wall')
+                if b is not None:
+                    _draw_tris(shaders, b, col_w, STYLE_BACK, spacing, lw, True, 0.10,
                                persp_matrix, bias, xray, srgb)
                 b = g.tri.get('outside')
                 if b is not None:
@@ -416,6 +448,9 @@ def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport,
                 b = g.line.get('outside')
                 if b is not None:
                     _draw_lines(shaders, b, _rgba(col_o, 0.8), 1.5 * ui, viewport)
+                b = g.line.get('wall')
+                if b is not None:
+                    _draw_lines(shaders, b, _rgba(col_w, 0.8), 1.5 * ui, viewport)
                 b = g.line.get('clear')
                 if b is not None:
                     _draw_lines(shaders, b, col_w, 2.2 * ui, viewport)
@@ -540,6 +575,7 @@ def badge_text(status):
     nc = status['collisions']
     nout = status['partly_out'] + status['outside']
     ncl = status['clearance']
+    nw = status['near_wall']
     lines = []
     if status['preparing']:
         done, total = status['preparing']
@@ -551,6 +587,8 @@ def badge_text(status):
             lines.append(f"{nout} part" + ("s" if nout != 1 else "") + " outside the volume")
         if ncl:
             lines.append(f"{ncl} clearance warning" + ("s" if ncl != 1 else ""))
+        if nw:
+            lines.append(f"{nw} part" + ("s" if nw != 1 else "") + " close to a wall")
         if status['busy']:
             lines.append("still checking...")
         return 'FAIL', "Build has problems", lines
@@ -565,8 +603,9 @@ def badge_text(status):
         lines.append("all inside the build volume")
     if ncl:
         lines.append(f"{ncl} clearance warning" + ("s" if ncl != 1 else ""))
-        return 'WARN', "Build OK", lines
-    return 'OK', "Build OK", lines
+    if nw:
+        lines.append(f"{nw} part" + ("s" if nw != 1 else "") + " close to a wall")
+    return ('WARN' if ncl or nw else 'OK'), "Build OK", lines
 
 
 def _badge_shapes(state, cx, cy, r, flat):
@@ -652,7 +691,7 @@ def _draw_badge(mon, st, p, shaders, ui, cx):
     y -= 3.0 * k
     for line in lines:
         y -= line_h
-        lc = amber if 'clearance' in line else (0.92, 0.92, 0.92, 1.0)
+        lc = amber if ('clearance' in line or 'wall' in line) else (0.92, 0.92, 0.92, 1.0)
         _text(tx, y, line, body_size, lc)
     _text_shadow(False)
 
@@ -674,7 +713,7 @@ def _draw_markers(mon, st, p, shaders, ui, persp_matrix, width, height):
     red = tuple(p.color_collision) if p else (1.0, 0.08, 0.05, 1.0)
     amber = tuple(p.color_clearance) if p else (1.0, 0.72, 0.0, 1.0)
     mag = tuple(p.color_outside) if p else (0.95, 0.1, 0.85, 1.0)
-    colors = {'COLLIDE': red, 'CLEAR': amber, 'PARTIAL': mag, 'OUTSIDE': mag}
+    colors = {'COLLIDE': red, 'CLEAR': amber, 'WALL': amber, 'PARTIAL': mag, 'OUTSIDE': mag}
     flat = shaders['flat']
     gpu.state.blend_set('ALPHA')
     active = st.problem_index
@@ -683,7 +722,7 @@ def _draw_markers(mon, st, p, shaders, ui, persp_matrix, width, height):
     if 0 <= active < n:
         radius[active] = 11.0 * ui
     flat.bind()
-    for kind in ('CLEAR', 'OUTSIDE', 'PARTIAL', 'COLLIDE'):
+    for kind in ('WALL', 'CLEAR', 'OUTSIDE', 'PARTIAL', 'COLLIDE'):
         m = ok & (kinds == kind)
         if not m.any():
             continue
@@ -696,6 +735,8 @@ def _draw_markers(mon, st, p, shaders, ui, persp_matrix, width, height):
         pr = problems[i]
         if pr['kind'] == 'CLEAR':
             label = f"{pr['dist_mm']:.2f} mm"
+        elif pr['kind'] == 'WALL':
+            label = f"{pr['dist_mm']:.2f} mm to wall"
         elif i == active:
             label = {'COLLIDE': "collision", 'PARTIAL': "outside volume",
                      'OUTSIDE': "outside volume"}[pr['kind']]

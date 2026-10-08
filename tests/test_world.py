@@ -344,6 +344,105 @@ def volume_tests(rng):
     print('build volume: ok')
 
 
+def wall_tests(rng):
+    """Parts inside the volume but closer to a side wall than the margin."""
+    w = World()
+    w.set_scale(400.0, 0.5)
+    w.set_thresholds(0.0, 0.0)
+    vlo = np.array([0.0, 0.0, 0.0])
+    vhi = np.array([380.0, 284.0, 380.0])
+    w.set_volume(vlo, vhi, 5.0)
+    v, f = meshes.uv_sphere(20.0, 32, 16)          # reaches exactly +-20 along x, y and z
+    w.add_geom('s', v, f)
+    cases = {                                       # position, gap to the nearest side wall or None
+        'safe': ((190.0, 142.0, 190.0), None),
+        'x_lo': ((23.0, 142.0, 190.0), 3.0),
+        'x_hi': ((358.0, 142.0, 190.0), 2.0),
+        'y_lo': ((190.0, 24.5, 190.0), 4.5),
+        'y_hi': ((190.0, 263.0, 190.0), 1.0),
+        'corner': ((22.0, 23.0, 190.0), 2.0),
+        'floor': ((190.0, 142.0, 20.5), None),      # the floor and the top are not walls
+        'top': ((190.0, 142.0, 359.5), None),
+        'just_clear': ((25.01, 142.0, 190.0), None),
+        'touching': ((20.0, 142.0, 190.0), 0.0),
+        'through': ((15.0, 142.0, 190.0), None),    # crosses the wall: an error, not this warning
+    }
+    for uid, (t, _) in cases.items():
+        w.add_object(uid, 's', meshes.matrix(None, t))
+    while w.step():
+        pass
+    ilo, ihi = w.inner_box()
+    assert np.allclose(ilo, (5, 5, 0)) and np.allclose(ihi, (375, 279, 380)), (ilo, ihi)
+    for uid, (t, want) in cases.items():
+        r = w.wall.get(w.slot(uid))
+        got = None if r is None else r.dist
+        assert (got is None) == (want is None), (uid, got, want)
+        if want is not None:
+            assert abs(got - want) < 1e-3, (uid, got, want)
+            P = posed_tris(w, uid)
+            band = ((P < ilo - w.eps_len) | (P > ihi + w.eps_len)).any(axis=(1, 2))
+            assert len(r.tris) == int(band.sum()) > 0, (uid, len(r.tris), int(band.sum()))
+            rt = r.tris.astype(np.float64)
+            assert ((rt < ilo + 1e-3) | (rt > ihi - 1e-3)).any(axis=(1, 2)).all(), uid
+            # the marker sits in the margin, not in the middle of the part
+            assert ((r.center < ilo) | (r.center > ihi)).any(), (uid, r.center)
+    assert w.oob[w.slot('through')].state == PARTIAL and w.slot('through') not in w.wall
+    assert w.counts()[4] == 6, w.counts()
+
+    # moving a part in and out of the margin, and changing the margin
+    w.set_matrix('x_lo', meshes.matrix(None, (40.0, 142.0, 190.0)))
+    w.step()
+    assert w.slot('x_lo') not in w.wall
+    w.set_matrix('x_lo', meshes.matrix(None, (24.0, 142.0, 190.0)))
+    w.step()
+    assert abs(w.wall[w.slot('x_lo')].dist - 4.0) < 1e-3
+    w.set_volume(vlo, vhi, 1.5)
+    w.step()
+    near = {w.uid(s) for s in w.wall}
+    assert near == {'y_hi', 'touching'}, near
+    w.set_volume(vlo, vhi, 0.0)
+    w.step()
+    assert not w.wall and w.inner_box() is None
+    w.set_volume(vlo, vhi, 5.0)
+    w.step()
+    assert len(w.wall) == 6
+    w.remove_object('corner')
+    assert len(w.wall) == 5
+    w.set_volume(None, None)
+    w.step()
+    assert not w.wall and not w.oob
+
+    # rotated parts: the gap is taken from the real extents of the mesh
+    w = World()
+    w.set_scale(400.0, 0.5)
+    w.set_thresholds(0.0, 0.0)
+    w.set_volume(vlo, vhi, 5.0)
+    bv, bf = meshes.blob(rng, 20.0, 24, 12, 0.3)
+    w.add_geom('b', bv, bf)
+    n = 0
+    count = 240
+    for i in range(count):
+        t = rng.uniform((15.0, 15.0, 30.0), (365.0, 269.0, 350.0))
+        w.add_object(i, 'b', meshes.matrix(meshes.rot(rng), t))
+    while w.step():
+        pass
+    for i in range(count):
+        P = posed_tris(w, i)
+        lo = P.min(axis=(0, 1))
+        hi = P.max(axis=(0, 1))
+        inside = (lo >= vlo).all() and (hi <= vhi).all()
+        gap = min(lo[0] - vlo[0], lo[1] - vlo[1], vhi[0] - hi[0], vhi[1] - hi[1])
+        r = w.wall.get(w.slot(i))
+        want = inside and gap < 5.0 - 1e-3
+        if abs(gap - 5.0) > 1e-3:
+            assert (r is not None) == want, (i, gap, inside, r)
+        if r is not None:
+            assert abs(r.dist - max(gap, 0.0)) < 1e-3, (i, r.dist, gap)
+            n += 1
+    assert n >= 8, n
+    print(f'wall clearance: ok ({n} of {count} rotated parts inside the margin)')
+
+
 def winding(P, pts):
     """Generalised winding number of triangles P (m, 3, 3) around points (n, 3)."""
     out = np.empty(len(pts))
@@ -595,6 +694,7 @@ def main():
     enclosure_tests(rng)
     random_pair_tests(rng)
     volume_tests(rng)
+    wall_tests(rng)
     odd_input_tests()
     scale_tests(rng)
     quick_mode_tests(rng)

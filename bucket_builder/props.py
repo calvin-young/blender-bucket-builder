@@ -121,6 +121,14 @@ class BucketBuilderSettings(PropertyGroup):
     use_volume: BoolProperty(
         name="Check Build Volume", description="Warn when parts reach outside the build volume",
         default=True, update=_poke)
+    use_wall_clearance: BoolProperty(
+        name="Wall Clearance",
+        description="Warn when a part inside the build volume is closer than this to a side "
+                    "wall (X and Y). The top and the bottom are not checked",
+        default=False, update=_poke)
+    wall_clearance_mm: FloatProperty(
+        name="Wall Clearance", description="Distance parts should keep from the side walls",
+        default=5.0, min=0.0, soft_max=50.0, precision=2, step=50, update=_poke)
     show_volume: BoolProperty(
         name="Show Build Volume", description="Draw the build volume in the viewport",
         default=True, update=_poke_redraw)

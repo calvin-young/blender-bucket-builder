@@ -94,6 +94,8 @@ def describe(pr):
     if pr['kind'] == 'CLEAR':
         approx = "~" if pr['approx'] else ""
         return f"{pr['a']} / {pr['b']}: {approx}{pr['dist_mm']:.2f} mm apart"
+    if pr['kind'] == 'WALL':
+        return f"{pr['a']} is {pr['dist_mm']:.2f} mm from a side wall"
     if pr['kind'] == 'PARTIAL':
         return f"{pr['a']} reaches outside the build volume"
     return f"{pr['a']} is outside the build volume"
