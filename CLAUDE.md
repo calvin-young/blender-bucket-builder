@@ -134,18 +134,52 @@ Last updated: 2026-10-08 (session 2, afternoon).
 
 ## Next
 
-1. Package: rebuild `dist/bucket_builder-1.0.0.zip`, install it into a clean
-   profile, run the tests against that, send the zip to the owner.
-2. Things the owner may want (asked, no answer yet): wall gap on by default?
-   amber shading for warning-only parts? a built-in profile for his 580 with
-   custom firmware (needs the dimensions)? an "import beside the bucket"
-   helper (probably unnecessary now)?
-3. If memory matters more: smaller poses (quantised boxes for the two lowest
-   levels would halve them; the fit is memory bound, so it would get faster).
-4. Extents of a rotating part are an O(vertices) pass per step (5 ms for
-   1.5 M triangles); a support query on the borrowed tree would make it
-   logarithmic. The fixed cost of a live solve is 3 - 6 ms of Python overhead
-   over about 20 tree levels.
-5. Non-mesh objects could be checked instead of warned about (`to_mesh`
-   works on them).
-6. Throttle viewport redraws during the first analysis of a scene.
+The owner read the "Large builds" table (2026-10-08, 16:02) and objected to
+the cold start: 15 s for 30 M triangles where Netfabb takes 2 - 3 s. His
+habit is to arrange first and tick the box to check. Answered; the plan below
+was promised to him, in this order. Tick items off here as they land.
+
+Measured now (2-core VM, one worker thread): 3.6 M triangles 2.0 s, 10 M
+5.1 s, 30 M 15 s. About 90 % is `bvh.sort_mesh` (480 ns per triangle; the
+four lowest levels are 260 of that, mostly row extents of tiny rows; see
+`scratchpad/sort_prof.py` for the per-level profile). Two sorts in two
+threads take the time of one, so the owner's laptop (4 workers) should be
+about 4 x quicker already. Checking itself is 1.6 s for 30 M.
+
+1. [ ] Verdict first: objects enter the world with unsorted geometry (extents
+   known), pairs wait only for the meshes they need, worker jobs are ordered
+   by need. A rough arrangement then gets its answer at once.
+2. [ ] Faster preparation: cheaper row extents for small rows, cache blocking,
+   several threads for one big mesh, more workers than 4.
+3. [ ] Keep prepared meshes when Monitor Build is unticked (pause instead of
+   discard) and when parts are hidden (unused meshes stay cached within the
+   memory limit).
+4. [ ] Background slices back to back while there is work (today 12 ms of
+   work, 20 ms of pause), redraws at a limited rate during analysis.
+5. [ ] Group moves (found in review): the pair stamp rounds the relative
+   translation to 1e-6 units, Blender's float32 positions jitter by more, so
+   moving parts together re-solves all pairs among them on every step
+   (`scratchpad/group_move.py`: 28 ms per step for 120 parts instead of 4).
+   Compare with a tolerance of about 1e-6 x the larger coordinate.
+6. [ ] Independent review of the integration code and an audit of the Blender
+   API calls against the 4.2 source in `/home/claude/build/blender-42-src`.
+7. [ ] Package: rebuild `dist/bucket_builder-1.0.0.zip`, install it into a
+   clean profile, run the tests against that, send the zip to the owner
+   (last verified build: commit 0e33db7, 80 + 38 checks in a clean profile).
+
+Offered to the owner, no answer yet: a disk cache of sorted meshes so that
+reopening a saved build is quick; an explicit fast / accurate switch; wall
+gap on by default; amber shading for warning-only parts; a built-in profile
+for his 580 with custom firmware (needs the dimensions).
+
+Later, if wanted:
+* Smaller poses (quantised boxes for the two lowest levels would halve them;
+  the fit is memory bound, so it would get faster).
+* Extents of a rotating part are an O(vertices) pass per step (5 ms for
+  1.5 M triangles); a support query on the borrowed tree would make it
+  logarithmic. The fixed cost of a live solve is 3 - 6 ms of Python overhead
+  over about 20 tree levels.
+* Rotating a group of parts together re-solves the pairs among them (their
+  relation is unchanged; results would have to be rotated instead).
+* Non-mesh objects could be checked instead of warned about (`to_mesh`
+  works on them).
