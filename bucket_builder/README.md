@@ -24,7 +24,8 @@ Open the sidebar in the 3D viewport (N) and the **Bucket** tab.
 
 | What you see | Meaning |
 | --- | --- |
-| Red cross-hatching and a red curve | Parts intersect. The curve is where the two surfaces cross. |
+| Red cross-hatching and a red curve | Parts intersect. The curve is where the two surfaces cross; the hatching covers both surfaces around it. |
+| A part shaded light red | It collides with at least one other part. In a crowded build this is how you tell the parts at fault from their neighbours. |
 | Red box around a part | The part is completely inside another part. |
 | Amber diagonal hatching, a line and a distance | Parts are closer than the clearance. The line joins the two closest points. |
 | Magenta hatching | The part of a mesh that is outside the build volume. |

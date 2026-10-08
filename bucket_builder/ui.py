@@ -181,6 +181,7 @@ class BUCKETBUILDER_PT_display(_Base, Panel):
         sub = col.column(align=True)
         sub.active = st.show_overlay
         sub.prop(st, "show_labels")
+        sub.prop(st, "show_tint")
         col.prop(st, "show_hud")
         if p is not None:
             col = layout.column(align=True)
@@ -190,6 +191,7 @@ class BUCKETBUILDER_PT_display(_Base, Panel):
             col.prop(p, "color_clearance")
             col.prop(p, "color_outside")
             col.prop(p, "color_volume")
+            col.prop(p, "tint_strength")
             col.prop(p, "volume_fill")
             col.prop(p, "hatch_spacing")
             col.prop(p, "xray")

@@ -21,6 +21,7 @@ import bpy
 import gpu
 import numpy as np
 from gpu_extras.batch import batch_for_shader
+from mathutils import Matrix
 
 from . import monitor, props
 from .core import COLLIDE, PARTIAL, OUTSIDE
@@ -92,6 +93,51 @@ void main()
 """
 
 
+# Whole-part shading: the mesh is uploaded once per unique part and redrawn
+# with the object's current matrix, so nothing is rebuilt while a part moves.
+_TINT_VERT = """
+void main()
+{
+  vec4 p = u_mvp * vec4(pos, 1.0);
+  if (u_bias.x > 0.5) {
+    p.z = (p.z + u_bias.y * u_bias.z * p.w) / (1.0 - u_bias.z);
+  }
+  else {
+    p.z += u_bias.y * u_bias.w;
+  }
+  gl_Position = p;
+}
+"""
+
+_TINT_FRAG = """
+void main()
+{
+  vec3 c = u_color.rgb;
+  if (u_extra.y > 0.5) {
+    vec3 lin_lo = c / 12.92;
+    vec3 lin_hi = pow((c + vec3(0.055)) / 1.055, vec3(2.4));
+    c = mix(lin_lo, lin_hi, step(vec3(0.04045), c));
+  }
+  fragColor = vec4(c, u_color.a);
+}
+"""
+
+
+def _make_tint_shader():
+    info = gpu.types.GPUShaderCreateInfo()
+    info.push_constant('MAT4', "u_mvp")
+    info.push_constant('VEC4', "u_color")
+    info.push_constant('VEC4', "u_bias")
+    info.push_constant('VEC4', "u_extra")
+    info.vertex_in(0, 'VEC3', "pos")
+    info.fragment_out(0, 'VEC4', "fragColor")
+    info.vertex_source(_TINT_VERT)
+    info.fragment_source(_TINT_FRAG)
+    shader = gpu.shader.create_from_info(info)
+    del info
+    return shader
+
+
 def _make_hatch_shader():
     iface = gpu.types.GPUStageInterfaceInfo("bucket_builder_iface")
     iface.smooth('VEC3', "v_pos")
@@ -124,6 +170,11 @@ def _shaders():
         except Exception as ex:      # unusual GPU / backend: fall back to flat tinting
             print("Bucket Builder: hatch shader unavailable, using flat tint:", ex)
             sh['hatch'] = None
+        try:
+            sh['tint'] = _make_tint_shader()
+        except Exception as ex:      # colliding parts then get outline boxes
+            print("Bucket Builder: part shading unavailable, using outlines:", ex)
+            sh['tint'] = None
         sh['flat'] = gpu.shader.from_builtin('UNIFORM_COLOR')
         sh['line'] = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
         _state['shaders'] = sh
@@ -344,6 +395,67 @@ def _draw_lines(shaders, batch, color, width, viewport, xray=True):
     batch.draw(sh)
 
 
+def _colliding(mon):
+    """Parts that collide with something, lightest first (cached per result version)."""
+    cache = _state.setdefault('colliding', {})
+    w = mon.world
+    entry = cache.get(mon.scene_uid)
+    if entry is None or entry[0] is not mon or entry[1] != w.version:
+        slots = sorted(w.colliding_slots(), key=w.part_triangles)
+        entry = (mon, w.version, slots)
+        cache[mon.scene_uid] = entry
+    return entry[2]
+
+
+def _draw_tint(mon, p, shaders, persp_matrix, bias, srgb, viewport, ui, color):
+    """Shade every colliding part so the parts at fault stand out.
+
+    Parts are shaded lightest first until the triangle budget is used up; the
+    rest get an outline box, so this pass cannot be what slows a viewport down.
+    """
+    slots = _colliding(mon)
+    strength = p.tint_strength if p else 0.3
+    if not slots or strength <= 0.0:
+        return
+    w = mon.world
+    budget = int((p.tint_budget if p else 4.0) * 1e6)
+    sh = shaders.get('tint')
+    cache = _state.setdefault('tint', {})
+    frame = _state['frame'] = _state.get('frame', 0) + 1
+    boxed = []
+    used = 0
+    if sh is not None:
+        P = np.array(persp_matrix, dtype=np.float64)
+        sh.bind()
+        sh.uniform_float("u_color", (color[0], color[1], color[2], 0.5 * strength))
+        sh.uniform_float("u_bias", bias)
+        sh.uniform_float("u_extra", (0.0, srgb, 0.0, 0.0))
+        gpu.state.depth_test_set('LESS_EQUAL')
+    for slot in slots:
+        n = w.part_triangles(slot)
+        if sh is None or used + n > budget:
+            boxed.append(slot)
+            continue
+        used += n
+        key, verts, tris = w.part_mesh(slot)
+        entry = cache.get(key)
+        if entry is None:
+            batch = batch_for_shader(sh, 'TRIS', {"pos": verts}, indices=np.ascontiguousarray(tris))
+            entry = cache[key] = [batch, n, frame]
+        entry[2] = frame
+        sh.uniform_float("u_mvp", Matrix((P @ w.part_matrix(slot)).tolist()))
+        entry[0].draw(sh)
+    if boxed:
+        segs = np.concatenate([_box_edges(*w.part_bounds(s)) for s in boxed]).reshape(-1, 3)
+        batch = batch_for_shader(shaders['line'], 'LINES', {"pos": np.ascontiguousarray(segs)})
+        _draw_lines(shaders, batch, _rgba(color, 0.9), 1.5 * ui, viewport, xray=False)
+    # forget meshes that have not been needed for a while once the cache is large
+    if len(cache) > 8 and sum(e[1] for e in cache.values()) > 3 * budget:
+        for key in sorted(cache, key=lambda k: cache[k][2])[:len(cache) // 2]:
+            if cache[key][2] != frame:
+                del cache[key]
+
+
 def _volume_batches(mon, st, shaders):
     """(edges, faces, floor, margin edges or None) of the build volume."""
     lo, hi = mon.volume_box(st)
@@ -420,8 +532,21 @@ def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport,
 
         if st.show_overlay:
             persp = 1.0 if window_matrix[3][3] == 0.0 else 0.0
-            bias = (persp, window_matrix[2][2], 0.0015, 0.004 * max(view_distance, 1e-9))
+            # How far the overlay is pulled towards the viewer to sit on top of
+            # the surface it marks.  With a very small clip start the depth
+            # buffer is coarse at working distance, so the pull grows with it.
+            rel = 0.0015
+            if persp:
+                a, b = window_matrix[2][2], window_matrix[2][3]
+                near = abs(b / (a - 1.0)) if a != 1.0 else 0.0
+                if near > 0.0:
+                    rel = min(0.02, max(rel, 6.0 * view_distance / (near * 16777216.0)))
+            bias = (persp, window_matrix[2][2], rel, 0.004 * max(view_distance, 1e-9))
             lw = 1.3 * ui
+            if st.show_tint:
+                _draw_tint(mon, p, shaders, persp_matrix,
+                           (bias[0], bias[1], 0.4 * bias[2], 0.4 * bias[3]), srgb, viewport, ui,
+                           col_c)
             groups = _groups(mon, st, shaders)
             for g in groups:
                 if g.empty:

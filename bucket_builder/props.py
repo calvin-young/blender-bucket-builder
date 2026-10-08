@@ -153,6 +153,11 @@ class BucketBuilderSettings(PropertyGroup):
     show_overlay: BoolProperty(
         name="Problem Overlay", description="Draw collision, clearance and out-of-volume regions",
         default=True, update=_poke_redraw)
+    show_tint: BoolProperty(
+        name="Tint Colliding Parts",
+        description="Shade every part that collides with another one, so the parts at fault "
+                    "stand out in a crowded build",
+        default=True, update=_poke_redraw)
     show_hud: BoolProperty(
         name="Status Badge", description="Show the large pass / fail badge in the viewport",
         default=True, update=_poke_redraw)
@@ -187,6 +192,14 @@ class BucketBuilderPreferences(AddonPreferences):
         name="See-Through", description="How strongly problem regions hidden behind "
         "geometry still show through (0 hides them)",
         default=0.45, min=0.0, max=1.0, subtype='FACTOR', update=_poke_redraw)
+    tint_strength: FloatProperty(
+        name="Tint Strength", description="How strongly colliding parts are shaded",
+        default=0.3, min=0.0, max=1.0, subtype='FACTOR', update=_poke_redraw)
+    tint_budget: FloatProperty(
+        name="Tint Detail", description="Colliding parts are shaded until this many million "
+        "triangles are being drawn; parts beyond that get an outline box instead, so the "
+        "shading never slows the viewport down. 0 uses outline boxes only",
+        default=4.0, min=0.0, max=200.0, update=_poke_redraw)
     volume_fill: FloatProperty(
         name="Volume Fill", description="How strongly the faces of the build volume are tinted "
         "(0 draws the edges only)",
@@ -212,6 +225,8 @@ class BucketBuilderPreferences(AddonPreferences):
         col.prop(self, "color_outside")
         col.prop(self, "color_volume")
         col = layout.column()
+        col.prop(self, "tint_strength")
+        col.prop(self, "tint_budget")
         col.prop(self, "volume_fill")
         col.prop(self, "hatch_spacing")
         col.prop(self, "xray")
