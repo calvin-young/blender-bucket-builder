@@ -1,0 +1,238 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Sidebar panels (3D Viewport > Sidebar > Build)."""
+
+import bpy
+from bpy.types import Panel
+
+from . import monitor, overlay, props
+
+LIST_ROWS = 10
+
+_KIND_ICON = {'COLLIDE': 'CANCEL', 'CLEAR': 'ERROR', 'PARTIAL': 'SHADING_BBOX',
+              'OUTSIDE': 'SHADING_BBOX'}
+_STATE_ICON = {'OK': 'CHECKMARK', 'WARN': 'CHECKMARK', 'FAIL': 'CANCEL', 'BUSY': 'TIME'}
+
+
+class _Base:
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Build"
+
+
+class BUILDCHECK_PT_main(_Base, Panel):
+    bl_label = "Build Check"
+    bl_idname = "BUILDCHECK_PT_main"
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        st = props.settings(scene)
+        mon = monitor.get(scene)
+
+        row = layout.row()
+        row.scale_y = 1.5
+        row.prop(st, "enabled", toggle=True,
+                 text="Monitoring On" if st.enabled else "Enable Monitoring",
+                 icon='HIDE_OFF' if st.enabled else 'HIDE_ON')
+
+        if st.enabled and mon is not None:
+            state, head, lines = overlay.badge_text(mon.status())
+            box = layout.box()
+            col = box.column(align=True)
+            row = col.row()
+            row.alert = state == 'FAIL'
+            row.label(text=head, icon=_STATE_ICON[state])
+            for line in lines:
+                col.label(text=line, icon='BLANK1')
+            if mon.error:
+                col.label(text=mon.error[:60], icon='INFO')
+
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(st, "collision_mm", text="Collision (mm)")
+        row = col.row(align=True, heading="Clearance (mm)")
+        row.prop(st, "use_clearance", text="")
+        sub = row.row(align=True)
+        sub.active = st.use_clearance
+        sub.prop(st, "clearance_mm", text="")
+        layout.prop(st, "detect_enclosed")
+
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(st, "unit_mode")
+        if st.enabled and mon is not None and mon.unit_note:
+            row = col.row()
+            row.alignment = 'RIGHT'
+            row.label(text=mon.unit_note)
+
+
+class BUILDCHECK_PT_problems(_Base, Panel):
+    bl_label = "Problems"
+    bl_idname = "BUILDCHECK_PT_problems"
+    bl_parent_id = "BUILDCHECK_PT_main"
+
+    @classmethod
+    def poll(cls, context):
+        st = props.settings(context.scene)
+        return st is not None and st.enabled
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        st = props.settings(scene)
+        mon = monitor.get(scene)
+        problems = mon.problems() if mon is not None else []
+        n = len(problems)
+
+        row = layout.row(align=True)
+        row.enabled = n > 0
+        op = row.operator("buildcheck.step_problem", text="Previous", icon='TRIA_LEFT')
+        op.direction = -1
+        op = row.operator("buildcheck.step_problem", text="Next", icon='TRIA_RIGHT')
+        op.direction = 1
+        if n == 0:
+            layout.label(text="Nothing to fix", icon='CHECKMARK')
+            return
+
+        active = st.problem_index
+        first = 0
+        if active >= LIST_ROWS:
+            first = min(active - LIST_ROWS // 2, max(0, n - LIST_ROWS))
+        col = layout.column(align=True)
+        for i in range(first, min(n, first + LIST_ROWS)):
+            pr = problems[i]
+            if pr['kind'] == 'CLEAR':
+                text = f"{pr['a']}  |  {pr['b']}   {'~' if pr['approx'] else ''}{pr['dist_mm']:.2f} mm"
+            elif pr['kind'] == 'COLLIDE':
+                if pr['inside'] == 1:
+                    text = f"{pr['a']}  inside  {pr['b']}"
+                elif pr['inside'] == 2:
+                    text = f"{pr['b']}  inside  {pr['a']}"
+                else:
+                    text = f"{pr['a']}  x  {pr['b']}"
+            elif pr['kind'] == 'PARTIAL':
+                text = f"{pr['a']}   partly outside"
+            else:
+                text = f"{pr['a']}   outside"
+            op = col.operator("buildcheck.focus_problem", text=text, icon=_KIND_ICON[pr['kind']],
+                              depress=(i == active))
+            op.index = i
+        if n > LIST_ROWS:
+            layout.label(text=f"Showing {first + 1}-{min(n, first + LIST_ROWS)} of {n}")
+
+
+class BUILDCHECK_PT_volume(_Base, Panel):
+    bl_label = "Printer / Build Volume"
+    bl_idname = "BUILDCHECK_PT_volume"
+    bl_parent_id = "BUILDCHECK_PT_main"
+
+    def draw(self, context):
+        layout = self.layout
+        st = props.settings(context.scene)
+
+        row = layout.row(align=True)
+        row.menu("BUILDCHECK_MT_printers", text=st.printer or "Custom")
+        row.operator("buildcheck.profile_add", text="", icon='ADD')
+        row.operator("buildcheck.profile_update", text="", icon='FILE_TICK')
+        row.operator("buildcheck.profile_remove", text="", icon='REMOVE')
+
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(st, "volume_size", text="Size (mm)")
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(st, "volume_align")
+        col.prop(st, "volume_offset", text="Offset (mm)")
+
+        col = layout.column(align=True)
+        col.prop(st, "show_volume")
+        col.prop(st, "use_volume", text="Warn When Parts Exceed Volume")
+        layout.operator("buildcheck.frame_volume", icon='VIEWZOOM')
+
+
+class BUILDCHECK_PT_display(_Base, Panel):
+    bl_label = "Display"
+    bl_idname = "BUILDCHECK_PT_display"
+    bl_parent_id = "BUILDCHECK_PT_main"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        st = props.settings(context.scene)
+        p = props.prefs(context)
+        col = layout.column(align=True)
+        col.prop(st, "show_overlay")
+        sub = col.column(align=True)
+        sub.active = st.show_overlay
+        sub.prop(st, "show_labels")
+        col.prop(st, "show_hud")
+        if p is not None:
+            col = layout.column(align=True)
+            col.use_property_split = True
+            col.use_property_decorate = False
+            col.prop(p, "color_collision")
+            col.prop(p, "color_clearance")
+            col.prop(p, "color_outside")
+            col.prop(p, "color_volume")
+            col.prop(p, "hatch_spacing")
+            col.prop(p, "xray")
+            col.prop(p, "badge_scale")
+
+
+class BUILDCHECK_PT_parts(_Base, Panel):
+    bl_label = "Parts"
+    bl_idname = "BUILDCHECK_PT_parts"
+    bl_parent_id = "BUILDCHECK_PT_main"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        st = props.settings(scene)
+        mon = monitor.get(scene)
+        obj = context.active_object
+        if obj is not None and obj.type == 'MESH':
+            layout.prop(obj, "build_check_ignore", text=f"Ignore '{obj.name}'")
+        row = layout.row(align=True)
+        op = row.operator("buildcheck.ignore", text="Ignore Selected")
+        op.ignore = True
+        op = row.operator("buildcheck.ignore", text="Include Selected")
+        op.ignore = False
+
+        if st.enabled and mon is not None:
+            stats = mon.world.stats()
+            col = layout.column(align=True)
+            col.label(text=f"{stats['objects']} parts, {stats['triangles'] / 1e6:.2f} M triangles")
+            col.label(text=f"{stats['pairs']} neighbouring pairs tracked")
+            col.label(text=f"{stats['bytes'] / 1e6:.0f} MB of cached data")
+            col.label(text=f"Last update {mon.last_tick_ms:.1f} ms")
+            skipped = [o for o in mon.objs.values() if o.skipped]
+            if skipped:
+                box = layout.box()
+                box.label(text=f"{len(skipped)} not checked:", icon='INFO')
+                for o in skipped[:6]:
+                    box.label(text=f"{o.name}: {o.skipped}")
+        layout.operator("buildcheck.recheck", icon='FILE_REFRESH')
+
+
+CLASSES = (
+    BUILDCHECK_PT_main,
+    BUILDCHECK_PT_problems,
+    BUILDCHECK_PT_volume,
+    BUILDCHECK_PT_display,
+    BUILDCHECK_PT_parts,
+)
+
+
+def register():
+    for cls in CLASSES:
+        bpy.utils.register_class(cls)
+
+
+def unregister():
+    for cls in reversed(CLASSES):
+        bpy.utils.unregister_class(cls)
