@@ -45,7 +45,9 @@ BLOCK_ELEMS = 1 << 17        # box tests handled by one vectorised pass
 CAP_REGION = 12000           # coarse rows kept per pair
 CAP_FINE = 200000            # rows per pair before a pair is treated as "dense"
 CAP_OVERLAP = 120000         # box-overlapping triangle pairs tested per pair
-CAP_EXACT = 40000            # exact distance evaluations per pair
+CAP_EXACT = 12000            # exact distance evaluations per pair, first pass
+CAP_EXACT_MAX = 40000        # ... when the verdict depends on it
+CAP_SEARCH = 40000           # distance-search rows per pair, first pass (CAP_FINE in the second)
 CAP_SEARCH_QUICK = 2500      # distance-search rows per pair while something is moving
 CAP_EXACT_QUICK = 640        # exact distance evaluations per pair while moving
 BEAM = 8
@@ -477,7 +479,10 @@ def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=CAP_FINE, tru
     * ``truncate=True`` (used for the distance search): only its ``cap`` most
       promising rows continue, and the pair is flagged as cut short.
 
-    Returns (leaf rows, dense rows, flagged pairs, heights a, heights b).
+    Returns (leaf rows, dense rows, flagged pairs, heights a, heights b,
+    left2): ``left2`` is, per pair, the smallest squared box distance among
+    the rows that truncation left out (inf if none), i.e. a proven lower
+    bound for everything that was not followed.
     """
     npid = pose_a.shape[0]
     pid, ia, ib, lb2 = rows
@@ -487,6 +492,7 @@ def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=CAP_FINE, tru
     h_b = h_b.copy()
     live = np.ones(npid, dtype=bool)
     flagged = np.zeros(npid, dtype=bool)
+    left2 = np.full(npid, np.inf, dtype=np.float32)
     leaves = []
     dense_rows = []
     while pid.shape[0]:
@@ -499,6 +505,8 @@ def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=CAP_FINE, tru
             best = over[_top_k(np.take(pid, over), (np.take(lb2, over),), cap)]
             m = ~m_over
             m[best] = True
+            out = ~m
+            np.minimum.at(left2, pid[out], lb2[out])
             pid, ia, ib, lb2 = pid[m], ia[m], ib[m], lb2[m]
             flagged |= too_many
             too_many = np.zeros(npid, dtype=bool)
@@ -522,7 +530,7 @@ def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=CAP_FINE, tru
         h_b = h_b - sb
         pid, ia, ib, lb2 = _step(w, pid, ia, ib, sa, sb,
                                  w.LVL[pose_a, h_a], w.LVL[pose_b, h_b], relt, thr2, eps2, xf=xf)
-    return _cat(leaves), _cat(dense_rows), flagged, h_a, h_b
+    return _cat(leaves), _cat(dense_rows), flagged, h_a, h_b, left2
 
 
 class _Best:
@@ -869,7 +877,7 @@ def solve(w, keys, exact=True, detail=None):
             start = (pids, zs, zs, np.zeros(pids.shape[0], dtype=np.float32))
         else:
             start = (np.arange(npid), zero, zero, np.zeros(npid, dtype=np.float32))
-        leaf, dense_rows, dense, h_ad, h_bd = _fine(
+        leaf, dense_rows, dense, h_ad, h_bd, _ = _fine(
             w, start, w.PH[pose_a], w.PH[pose_b], pose_a, pose_b, relt,
             np.full(npid, -1.0, dtype=np.float32), eps2, xf=xf)
         l_pid, l_ia, l_ib, l_lb2 = leaf
@@ -972,16 +980,18 @@ def solve(w, keys, exact=True, detail=None):
                 # prove the minimum: only rows that could beat the bound are
                 # followed.  While something is moving the search is capped; a
                 # pair whose search was cut short is redone exactly later.
-                cap_rows = CAP_FINE if exact else CAP_SEARCH_QUICK
-                cap_eval = CAP_EXACT if exact else CAP_EXACT_QUICK
-                u = np.sqrt(np.minimum(best.d2, dlim2))
-                thr = u - np.maximum(eps, 1e-3 * u)
-                thr2 = np.where(thr > 0.0, thr * thr, -1.0).astype(np.float32)
-                cand, _, cut, _, _ = _fine(w, region, h_a1, h_b1, pose_a, pose_b, relt, thr2,
-                                           np.float32(-1.0), cap_rows, True, xf)
-                short |= cut
-                c_pid, c_ia, c_ib, c_lb2 = cand
-                if c_pid.shape[0]:
+                def prove(rows, cap_rows, cap_eval):
+                    """Returns, per pair, the squared lower bound of whatever
+                    was left out because of the caps (inf: nothing was)."""
+                    u = np.sqrt(np.minimum(best.d2, dlim2))
+                    thr = u - np.maximum(eps, 1e-3 * u)
+                    thr2 = np.where(thr > 0.0, thr * thr, -1.0).astype(np.float32)
+                    cand, _, _, _, _, left2 = _fine(w, rows, h_a1, h_b1, pose_a, pose_b, relt, thr2,
+                                                    np.float32(-1.0), cap_rows, True, xf)
+                    left2 = left2.astype(np.float64)
+                    c_pid, c_ia, c_ib, c_lb2 = cand
+                    if c_pid.shape[0] == 0:
+                        return left2
                     order = np.argsort(c_lb2, kind='stable')
                     done = np.zeros(npid, dtype=np.int64)
                     for s in range(0, order.shape[0], EXACT_CHUNK * 2):
@@ -998,7 +1008,7 @@ def solve(w, keys, exact=True, detail=None):
                             continue
                         over = m & (np.take(done, p) >= cap_eval)
                         if over.any():
-                            short[p[over]] = True
+                            np.minimum.at(left2, p[over], lbr[over])
                             m &= ~over
                             if not m.any():
                                 continue
@@ -1017,6 +1027,35 @@ def solve(w, keys, exact=True, detail=None):
                             Q = np.take(Q, sel, axis=2)
                         d2, cp, cq = tritri.tri_tri_distance(P, Q)
                         best.update(p, d2, cp, cq)
+                    return left2
+
+                if not exact:
+                    short |= np.isfinite(prove(region, CAP_SEARCH_QUICK, CAP_EXACT_QUICK))
+                else:
+                    # A first pass with moderate caps settles nearly every
+                    # pair.  Where it was cut short, what was left out has a
+                    # proven lower bound: only if that could still change the
+                    # verdict (touching or not, too close or not) is the
+                    # search repeated with large caps, which for two parts
+                    # with big areas at about the limit takes long.
+                    left2 = prove(region, CAP_SEARCH, CAP_EXACT)
+                    cut = np.isfinite(left2)
+                    if cut.any():
+                        u = np.sqrt(np.minimum(best.d2, dlim2))
+                        lo = np.sqrt(np.where(cut, left2, 0.0))
+                        open_ = cut & (((u > coll) & (lo <= coll))
+                                       | ((clear > 0.0) & (u >= clear) & (lo < clear)))
+                        if open_.any():
+                            w.proofs_repeated += int(open_.sum())
+                            m = np.take(open_, region[0])
+                            again = prove(tuple(x[m] for x in region), CAP_FINE, CAP_EXACT_MAX)
+                            left2 = np.where(open_, again, left2)
+                            cut = np.isfinite(left2)
+                            lo = np.sqrt(np.where(cut, left2, 0.0))
+                            u = np.sqrt(np.minimum(best.d2, dlim2))
+                        # the value is flagged approximate if it is not proven
+                        # to within a hundredth
+                        short |= cut & (lo < u - np.maximum(eps, 1e-2 * u))
 
         # enclosure: a part completely inside another one, surfaces apart
         enclosed = np.zeros(npid, dtype=np.int8)      # 1: A inside B, 2: B inside A

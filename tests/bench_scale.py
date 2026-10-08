@@ -93,14 +93,18 @@ def pcts(times):
 
 def first_check(w, budget=0.012):
     slices = []
+    solved = []
+    unsettled = []
     t0 = time.perf_counter()
     while True:
         t1 = time.perf_counter()
         more = w.step(budget=budget)
         slices.append(time.perf_counter() - t1)
+        solved.append(w.last_pairs)
+        unsettled.append(w.unsettled)
         if not more:
             break
-    return time.perf_counter() - t0, slices
+    return time.perf_counter() - t0, slices, solved, unsettled
 
 
 def exercise(w, mats, uid, rng, cell):
@@ -206,12 +210,18 @@ def run(n_parts, tris, n_unique, limit_gb, rng):
         for s in range(0, data.shape[0], 1 << 20):
             data[s:s + (1 << 20)] = 0.0
         del data
-    t_scan, slices = first_check(w)
+    t_scan, slices, solved, unsettled = first_check(w)
     nc, ncl, npart, nout, nwall = w.counts()
     sl = np.asarray(slices) * 1000
-    print(f'  first complete check: {t_scan:.1f} s in {len(slices)} slices, longest slice {sl.max():.0f} ms, '
-          f'median {np.median(sl):.0f} ms; {st["pairs"] if False else len(w.pairs)} neighbouring pairs, '
-          f'{nc} collisions, {ncl} too close, {npart} partly outside')
+    t_first = float(np.cumsum(sl)[next((i for i, n in enumerate(solved) if n), 0)]) / 1000.0
+    t_known = float(np.cumsum(sl)[next((i for i, u in enumerate(unsettled) if not u), len(sl) - 1)]) / 1000.0
+    print(f'  first complete check: {t_scan:.1f} s in {len(slices)} slices (median {np.median(sl):.0f} ms, '
+          f'95 % under {np.percentile(sl, 95):.0f} ms, longest {sl.max():.0f} ms)')
+    print(f'    first results after {t_first:.1f} s, every collision known after {t_known:.1f} s, the rest '
+          f'is exact distances and regions')
+    approx = sum(1 for pr in w.viol.values() if pr.approx)
+    print(f'    {len(w.pairs)} neighbouring pairs: {nc} collisions, {ncl} too close '
+          f'({approx} with the distance not proven to 1 %), {npart} partly outside')
     report_memory(w)
     # the part with the most neighbours near the middle of the volume
     mid = 0.5 * VOLUME

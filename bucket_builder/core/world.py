@@ -26,9 +26,11 @@ fitted in pieces of a millisecond or two, and its results are refreshed.
 Poses are the bulk of the memory (about 55 bytes per triangle each) and they
 are a cache: one is built when a pair involving the object is first solved,
 never for a part that has no neighbours, and the least recently used ones
-are dropped when ``cache_limit`` is reached.  When memory is short, copies of
-a mesh with different rotations borrow one pose instead of each having its
-own.  The extents of an object do not need its pose.
+are dropped when ``cache_limit`` is reached.  A live edit never waits for a
+fit if there is any pose of the mesh to borrow.  Exact results, on the other
+hand, are always worked out with fitted poses: proving a clearance with the
+looser boxes of a borrowed one can take ten times as long as fitting.  The
+extents of an object do not need its pose.
 
 Results are kept per object pair and are only recomputed for pairs that involve
 an object that changed.
@@ -47,6 +49,7 @@ MAX_BATCH = 96
 OOB_TRI_CAP = 60000
 LIVE_TARGET = 0.012       # seconds a live solve should take
 LIVE_FULL = 0.024         # ... and may take when that gives every pair its full detail
+LIVE_FULL_PAIRS = 8       # ... which is only promised for this many pairs
 REGION_BUDGET = 400000    # triangles of hatched regions kept for the whole scene
 VERT_CHUNK = 1 << 16      # vertices posed in one piece
 FIT_BLOCK = 15            # log2 of the triangles whose boxes are fitted in one piece
@@ -168,9 +171,8 @@ class World:
         self._obj = []            # slot -> [uid, Geom, L (3x3 float32), Pose or None] or None
         self._slot_of = {}
         self._slot_free = []
-        self._virt_todo = set()   # borrowing slots that should get their own pose
-        self._borrowing = set()   # borrowing slots that stay so for want of memory
-        self._fitting = set()     # poses being fitted in the background
+        self._virt_todo = set()   # borrowing slots whose results are still to be redone
+        self._borrowing = set()   # the other borrowing slots
 
         self.coll_thr = 0.0
         self.clear_thr = 0.0      # 0 disables the clearance check
@@ -208,6 +210,7 @@ class World:
         self.tri_cap = narrow.TRI_CAP     # region triangles per part and pair
         self.last_step_ms = 0.0
         self.last_pairs = 0
+        self.proofs_repeated = 0  # clearance searches redone with large caps (see narrow)
 
     # ------------------------------------------------------------------ setup
     def set_scale(self, scene_size, viz_pad):
@@ -326,9 +329,14 @@ class World:
     # ------------------------------------------------------------------ poses
     @staticmethod
     def _pose_rows(nv, box_rows):
-        """(rows the posed vertices take, rows of the whole block)."""
+        """(rows the posed vertices take, rows of the whole block).  Blocks
+        come in size classes an eighth of a power of two apart, so that the
+        block a dropped pose leaves behind fits the pose of any mesh of about
+        that size, not only of the very same one."""
         vrows = -(-((int(nv) + 1) // 2) // bvh.PAD) * bvh.PAD
-        return vrows, vrows + int(box_rows)
+        rows = vrows + int(box_rows)
+        step = max(bvh.PAD, 1 << max(rows.bit_length() - 4, 0))
+        return vrows, -(-rows // step) * step
 
     @staticmethod
     def pose_size(nv, nt):
@@ -384,9 +392,11 @@ class World:
         if room is None:
             return True
         rows = self._pose_rows(g.nv, g.rows)[1]
-        # in what is in use, and in what the storage would have to grow to
-        return (self.pose_bytes + rows * 24 <= room
-                and self.BOX.nbytes + self.BOX.growth(rows) * 24 <= room)
+        if self.pose_bytes + rows * 24 > room:
+            return False
+        # ... and if the storage has to grow for it, that must fit too
+        grow = self.BOX.growth(rows)
+        return grow == 0 or self.BOX.nbytes + grow * 24 <= room
 
     def _make_room(self, g):
         """Drop least recently used poses until one more of ``g`` fits the limit.
@@ -397,8 +407,16 @@ class World:
         caller builds the ones it needs again."""
         if self._room_for(g):
             return
-        for p in sorted((q for q in self._poses.values() if q.used != self._clock),
-                        key=lambda q: q.used):
+        # least recently used first; a pose that others borrow, or the only
+        # one of its mesh, is worth more than its age says
+        virt = self.O_VIRT
+        clock = self._clock
+
+        def rank(q):
+            lent = len(q.geom.poses) == 1 or any(virt[s] for s in q.slots)
+            return (lent, q.used)
+
+        for p in sorted((q for q in self._poses.values() if q.used != clock), key=rank):
             self._pose_drop(p)
             self.evictions += 1
             if self._room_for(g):
@@ -465,17 +483,12 @@ class World:
             self._unborrow(slot)
         p.slots.clear()
         p.job = None
-        self._fitting.discard(p)
         p.geom.poses.remove(p)
         del self._poses[p.key]
         self.BOX.release(p.base, p.rows)
         self._pose_slots[p.index] = None
         self._pose_free.append(p.index)
         self.pose_bytes -= p.rows * 24
-        if self._borrowing:
-            # memory came free: those waiting for a pose of their own may try again
-            self._virt_todo |= self._borrowing
-            self._borrowing.clear()
 
     def _rekey(self, p, L32, key):
         """Reuse the storage of a pose for another rotation/scale of its mesh."""
@@ -549,15 +562,16 @@ class World:
         self._obj[slot][3] = p
         self.O_POSE[slot] = p.index
 
-    def _attach(self, slot, live):
-        """Give the object in ``slot`` a pose: its own, or a borrowed one."""
+    def _attach(self, slot, borrow):
+        """Give the object in ``slot`` a pose: the one fitted for it or, if
+        ``borrow`` is allowed and there is one to borrow, another one of its
+        mesh (no fit to wait for, no memory taken)."""
         o = self._obj[slot]
         g, L32 = o[1], o[2]
         key = (g.key, L32.tobytes())
         p = self._poses.get(key)
         if p is None:
-            if g.nt > self.fit_now and g.poses and (live or not self._room_for(g)):
-                # no time to fit while something is being edited, or no memory
+            if borrow and g.nt > self.fit_now and g.poses:
                 base = self._base_for(g, L32)
                 if base is not None:
                     self._link(slot, base[0])
@@ -568,6 +582,28 @@ class World:
         self._link(slot, p)
         p.used = self._clock
         return p
+
+    def _own(self, slot):
+        """Give a borrowing object the pose fitted for it (fitted later)."""
+        o = self._obj[slot]
+        p = o[3]
+        g, L32 = o[1], o[2]
+        key = (g.key, L32.tobytes())
+        q = self._poses.get(key)
+        self._unborrow(slot)
+        if q is None and len(p.slots) == 1:
+            self._rekey(p, L32, key)          # nobody else uses it: fit again in place
+            p.used = self._clock
+            return
+        p.slots.discard(slot)
+        o[3] = None
+        self.O_POSE[slot] = -1
+        if not p.slots:
+            self._pose_drop(p)
+        if q is None:
+            q = self._pose_new(g, L32, key)
+        self._link(slot, q)
+        q.used = self._clock
 
     def _detach(self, slot):
         o = self._obj[slot]
@@ -580,21 +616,18 @@ class World:
         p.slots.discard(slot)
         if not p.slots:
             self._pose_drop(p)
-        elif self._borrowing:
-            # a borrower that is now alone with the pose can have it re-fitted
-            for other in p.slots:
-                if other in self._borrowing:
-                    self._borrowing.discard(other)
-                    self._virt_todo.add(other)
 
     def _pose_cost(self, slot):
         g = self._obj[slot][1]
         return self._pose_rows(g.nv, g.rows)[1] * 24
 
     def _pose_ident(self, slot):
-        """Something that is equal for objects that share a pose."""
+        """Something that is equal for objects that share the pose fitted for
+        them (an object that borrows one may need its own)."""
         o = self._obj[slot]
-        return o[3] if o[3] is not None else (o[1].key, o[2].tobytes())
+        if o[3] is not None and not self.O_VIRT[slot]:
+            return o[3]
+        return (o[1].key, o[2].tobytes())
 
     def _advance(self, p, deadline):
         """Continue fitting a pose until it is done (True) or time is up."""
@@ -613,24 +646,29 @@ class World:
             if deadline is not None and time.perf_counter() >= deadline:
                 return False
 
-    def _prepare(self, slots, deadline, live):
+    def _prepare(self, slots, deadline, borrow):
         """The poses of the given objects are about to be used.  Whatever is
         missing is attached (keeping the others of the same request alive)
-        and fitted until ``deadline``; returns True once all are usable."""
+        and fitted until ``deadline``; returns True once all are usable.
+        With ``borrow`` false every object ends up with the pose fitted for
+        it, as exact work needs."""
         self._clock += 1
         clock = self._clock
         slots = list(slots)
         obj = self._obj
+        virt = self.O_VIRT
         for slot in slots:
             p = obj[slot][3]
-            if p is not None:
+            if p is not None and (borrow or not virt[slot]):
                 p.used = clock
         again = 0
         while True:
             flushes = self.flushes
             for slot in slots:
                 if obj[slot][3] is None:
-                    self._attach(slot, live)
+                    self._attach(slot, borrow)
+                elif virt[slot] and not borrow:
+                    self._own(slot)
             if flushes == self.flushes:
                 break
             again += 1
@@ -640,7 +678,9 @@ class World:
                 limit, self.cache_limit = self.cache_limit, None
                 for slot in slots:
                     if obj[slot][3] is None:
-                        self._attach(slot, live)
+                        self._attach(slot, borrow)
+                    elif virt[slot] and not borrow:
+                        self._own(slot)
                 self.cache_limit = limit
                 break
         for slot in slots:
@@ -650,7 +690,8 @@ class World:
         return True
 
     def need_poses(self, slots):
-        """Build the poses of the given objects now, however long it takes."""
+        """Build the fitted poses of the given objects now, however long it
+        takes."""
         self._prepare(slots, None, False)
 
     def reserve(self):
@@ -660,7 +701,7 @@ class World:
         room = self.pose_room()
         if room is not None:
             want = min(want, room // 24)
-        want = -(-want // self.BOX.align) * self.BOX.align
+        want = want // self.BOX.align * self.BOX.align
         if want > self.BOX.data.shape[0]:
             self.BOX._resize(want)
 
@@ -674,9 +715,6 @@ class World:
             for p in list(self._poses.values()):
                 self._pose_drop(p)
             self.BOX.shrink(1 << 14)
-        if self._borrowing:
-            self._virt_todo |= self._borrowing
-            self._borrowing.clear()
 
     def _fit(self, p):
         """(Re)compute posed vertices and every node box of a pose."""
@@ -1057,7 +1095,7 @@ class World:
     @property
     def busy(self):
         return bool(self._dirty or self._pend_hot or self._pend_cold or self._pend_refine
-                    or self._fitting or self._virt_todo or self._oob_geom)
+                    or self._virt_todo or self._oob_geom)
 
     @property
     def unsettled(self):
@@ -1069,7 +1107,7 @@ class World:
     def pending(self):
         return len(self._pend_hot) + len(self._pend_cold) + len(self._pend_refine)
 
-    def _batch(self, src, size):
+    def _batch(self, src, size, borrow):
         """The next pairs of a queue to solve together (they stay queued).
 
         Pairs whose poses are fitted go first.  Only when there are none does
@@ -1079,6 +1117,7 @@ class World:
         room = self.pose_room()
         pairs = self.pairs
         obj = self._obj
+        virt = self.O_VIRT
         dead = []
         ready = []
         late = []                     # (key, poses it still needs fitted)
@@ -1093,7 +1132,7 @@ class World:
             wait = None
             for slot in key:
                 p = obj[slot][3]
-                if p is None or p.unfit:
+                if p is None or p.unfit or (virt[slot] and not borrow):
                     ident = self._pose_ident(slot)
                     wait = [ident] if wait is None else wait + [ident]
             if wait is not None:
@@ -1110,7 +1149,7 @@ class World:
                 extra = 0
                 idents = []
                 for slot in key:
-                    ident = obj[slot][3]
+                    ident = self._pose_ident(slot)
                     if ident not in held and ident not in idents:
                         idents.append(ident)
                         extra += self._pose_cost(slot)
@@ -1171,9 +1210,8 @@ class World:
                 src, exact, limit = self._pend_hot, False, hot_budget
             elif self._pend_cold:
                 src, exact, limit = self._pend_cold, True, budget
-            elif idle and (self._fitting or self._virt_todo):
-                if not self._upgrade(t0 + budget):
-                    break
+            elif idle and self._virt_todo:
+                self._upgrade()
                 continue
             elif idle and self._pend_refine:
                 src, exact, limit = self._pend_refine, True, budget
@@ -1197,9 +1235,11 @@ class World:
                 else:
                     size = max(8.0, (max(limit - elapsed, 0.5 * limit) - c0) / c1)
                 size = int(min(MAX_BATCH, size))
-            keys = self._batch(src, size)
+            keys = self._batch(src, size, not exact)
             if not keys:
                 continue
+            # (a live solve borrows poses rather than wait for fits; exact
+            # work always gets fitted ones)
             if not self._prepare({slot for key in keys for slot in key}, t0 + limit, not exact):
                 break                 # still fitting: the pairs stay where they are
             for key in keys:
@@ -1235,77 +1275,36 @@ class World:
         if self._oob_dirty or self._oob_all:
             self._update_oob()
         if self._oob_geom:
-            self._oob_fill(t0 + max(budget, hot_budget), not idle)
+            self._oob_fill(t0 + max(budget, hot_budget))
         self.last_step_ms = (time.perf_counter() - t0) * 1000.0
         self.last_pairs = solved
         return self.busy
 
-    def _upgrade(self, deadline):
-        """Give objects that borrow a pose one of their own, a piece at a
-        time.  Returns True when nothing is left that can be done."""
-        for p in list(self._fitting):
-            if p not in self._fitting:
-                continue
-            if not self._advance(p, deadline):
-                return False
-            self._fitting.discard(p)
-            self._refresh(p)
-        for slot in list(self._virt_todo):
-            if slot not in self._virt_todo:
-                continue                          # changed by what happened to another
-            o = self._obj[slot]
-            p = o[3]
-            g, L32 = o[1], o[2]
-            key = (g.key, L32.tobytes())
-            q = self._poses.get(key)
-            if q is None:
-                if len(p.slots) == 1:
-                    self._rekey(p, L32, key)      # nobody else uses it: fit again in place
-                    q = p
-                elif self._room_for(g):
-                    self._clock += 1
-                    p.used = self._clock
-                    q = self._pose_new(g, L32, key)
-                else:
-                    # no memory to spare: keep borrowing until some comes free
-                    self._virt_todo.discard(slot)
-                    self._borrowing.add(slot)
-                    continue
-            self._unborrow(slot)
-            if q is not p:
-                p.slots.discard(slot)
-                self._link(slot, q)
-                if not p.slots:
-                    self._pose_drop(p)
-            self._fitting.add(q)
-            if not self._advance(q, deadline):
-                return False
-            self._fitting.discard(q)
-            self._refresh(q)
-        return True
-
-    def _refresh(self, p):
-        """A pose was fitted in the background: results that were worked out
-        with borrowed boxes are redone, so that what is on screen at rest does
-        not depend on how the parts got where they are."""
+    def _upgrade(self):
+        """Things are quiet: whatever was worked out with borrowed boxes is
+        queued to be redone with fitted poses, so that what is on screen at
+        rest does not depend on how the parts got where they are.  (An object
+        without such results simply keeps borrowing; that costs nothing.)"""
         virt = self.O_VIRT
-        for slot in p.slots:
-            if virt[slot]:
-                continue
+        for slot in self._virt_todo:
             for o in self.adj[slot]:
                 key = (slot, o) if slot < o else (o, slot)
                 pr = self.pairs.get(key)
-                if (pr is None or pr.stale or not pr.loose or virt[o]
+                if (pr is None or pr.stale or not pr.loose
                         or key in self._pend_hot or key in self._pend_cold):
                     continue
                 self._pend_refine[key] = None
+        self._borrowing |= self._virt_todo
+        self._virt_todo.clear()
 
     def _choose_detail(self, keys):
         """Which pairs of a live solve get the full treatment (the complete
         intersection curve, the hatched region, the proven distance): None
         for all, else a boolean per pair.
 
-        All of them when that fits ``LIVE_FULL``; otherwise as many as fit
+        All of them when they are few and that fits ``LIVE_FULL`` (the cost of
+        a pair varies too much to promise that for dozens: a part dropped onto
+        thirty others would stall for a moment); otherwise as many as fit
         ``LIVE_TARGET`` next to a sketch of the others, and one at least if
         that still fits ``LIVE_FULL``.  Pairs that already show detail keep
         it, so the picture does not flicker; then known problems, then the
@@ -1316,7 +1315,7 @@ class World:
             nd = self.live_detail                    # set from outside (tests)
         elif cost <= 0.0:
             nd = 4                                   # nothing measured yet
-        elif n * cost <= LIVE_FULL:
+        elif n <= LIVE_FULL_PAIRS and n * cost <= LIVE_FULL:
             return None
         else:
             sketch = self._lite_c0 + self._lite_c1 * n
@@ -1442,7 +1441,7 @@ class World:
         if changed:
             self.version += 1
 
-    def _oob_fill(self, deadline, live):
+    def _oob_fill(self, deadline):
         """Collect what the overlay draws for parts that reach out of the
         volume or into the wall margin.  This needs their poses, so it can
         take several calls; returns True when nothing is left."""
@@ -1465,7 +1464,7 @@ class World:
                     held.add(ident)
                     held_bytes += extra
                 group.append(slot)
-            if not self._prepare(group, deadline, live):
+            if not self._prepare(group, deadline, True):
                 return False
             for slot in group:
                 del todo[slot]
