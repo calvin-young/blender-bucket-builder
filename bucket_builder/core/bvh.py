@@ -84,3 +84,47 @@ def build_order(cx, cy, cz):
             cz[end:] = np.take(tz, part)
         size = half
     return order
+
+
+def sort_mesh(verts, tris):
+    """Bring a triangle mesh into the form the collision world stores.
+
+    Returns (float32 vertices (nv, 3), int32 triangles (nt, 3) in tree order).
+    Vertices no triangle uses are dropped, so that the extents of the mesh can
+    be taken from its vertices alone; non-finite coordinates become zero.
+
+    This is the expensive part of taking in a mesh (a few hundred nanoseconds
+    per triangle).  It touches nothing but its arguments, so it can run in a
+    worker thread; NumPy releases the interpreter lock for most of it.
+    """
+    verts = np.array(verts, dtype=np.float32).reshape(-1, 3)
+    tris = np.ascontiguousarray(tris, dtype=np.int32).reshape(-1, 3)
+    nt = tris.shape[0]
+    if nt == 0:
+        raise ValueError('mesh has no triangles')
+    if not np.isfinite(verts).all():
+        verts = np.nan_to_num(verts, nan=0.0, posinf=0.0, neginf=0.0)
+    used = np.zeros(verts.shape[0], dtype=bool)
+    used[tris.ravel()] = True
+    if not used.all():
+        remap = np.cumsum(used, dtype=np.int64) - 1
+        verts = np.ascontiguousarray(verts[used])
+        tris = np.ascontiguousarray(remap[tris], dtype=np.int32)
+    cen = []
+    idx = [np.ascontiguousarray(tris[:, k]) for k in range(3)]
+    for c in range(3):
+        col = np.ascontiguousarray(verts[:, c])
+        a = np.take(col, idx[0])
+        b = np.take(col, idx[1])
+        d = np.take(col, idx[2])
+        lo = np.minimum(a, b)
+        np.minimum(lo, d, out=lo)
+        np.maximum(a, b, out=a)
+        np.maximum(a, d, out=a)
+        lo += a
+        lo *= 0.5
+        cen.append(lo)
+    del idx
+    order = build_order(cen[0], cen[1], cen[2])
+    del cen
+    return verts, np.take(tris, order, axis=0)
