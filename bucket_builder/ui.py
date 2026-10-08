@@ -210,7 +210,10 @@ class BUCKETBUILDER_PT_parts(_Base, Panel):
             col.label(text=f"{stats['objects']} parts, {stats['triangles'] / 1e6:.2f} M triangles")
             col.label(text=f"{stats['pairs']} neighbouring pairs tracked")
             col.label(text=f"{stats['bytes'] / 1e6:.0f} MB of cached data")
-            col.label(text=f"Last update {mon.last_tick_ms:.1f} ms")
+            if mon.live_ms:
+                col.label(text=f"Live update {max(mon.live_ms):.1f} ms at most recently")
+            if mon.draw_ms:
+                col.label(text=f"Overlay drawing {max(mon.draw_ms):.1f} ms at most")
             skipped = [o for o in mon.objs.values() if o.skipped]
             if skipped:
                 box = layout.box()

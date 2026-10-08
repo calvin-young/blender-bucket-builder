@@ -14,6 +14,7 @@ involving a part that is being moved; rebuilt every update, but small).
 """
 
 import math
+import time
 
 import blf
 import bpy
@@ -438,6 +439,7 @@ def draw_view():
     rv3d = context.region_data
     if mon is None or rv3d is None:
         return
+    t0 = time.perf_counter()
     try:
         draw_scene(mon, st, props.prefs(context), rv3d.perspective_matrix, rv3d.window_matrix,
                    rv3d.view_distance, gpu.state.viewport_get()[2:],
@@ -445,6 +447,7 @@ def draw_view():
     except Exception:
         import traceback
         traceback.print_exc()
+    mon.draw_ms.append((time.perf_counter() - t0) * 1000.0)
 
 
 # ---------------------------------------------------------------------------

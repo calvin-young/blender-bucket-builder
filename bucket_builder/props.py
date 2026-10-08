@@ -9,11 +9,14 @@ from bpy.types import AddonPreferences, PropertyGroup
 
 ADDON_ID = __package__
 
-# Effective build volumes in millimetres (X, Y, Z).  These only seed the
-# editable profile list; nothing else in the add-on depends on them.
+# Build volumes in millimetres (X, Y, Z) as published by HP.  These only seed
+# the editable profile list; nothing else in the add-on depends on them.
 DEFAULT_PROFILES = (
-    ("HP Jet Fusion 5200 Series", (380.0, 284.0, 380.0)),
+    ("HP Jet Fusion 5600", (380.0, 284.0, 380.0)),
+    ("HP Jet Fusion 5200", (380.0, 284.0, 380.0)),
+    ("HP Jet Fusion 5000", (380.0, 284.0, 250.0)),
     ("HP Jet Fusion 4200", (380.0, 284.0, 380.0)),
+    ("HP Multi Jet Fusion 1200", (320.0, 165.0, 230.0)),
     ("HP Jet Fusion 580 / 540", (332.0, 190.0, 248.0)),
 )
 

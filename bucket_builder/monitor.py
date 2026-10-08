@@ -16,6 +16,7 @@ Blender data is only ever read here; the scene is never modified.
 
 import hashlib
 import time
+from collections import deque
 
 import bpy
 import numpy as np
@@ -122,6 +123,10 @@ class Monitor:
         self.cold_serial = 0      # transform changes found by polling (not live edits)
         self.error = ''
         self.last_tick_ms = 0.0
+        # recent cost of live updates and of drawing, in milliseconds (shown in
+        # the Parts panel so slow scenes can be diagnosed)
+        self.live_ms = deque(maxlen=240)
+        self.draw_ms = deque(maxlen=240)
         self._problems = (None, [])
         self._auto_mm = None
 
@@ -530,6 +535,8 @@ def _on_depsgraph_update(scene, depsgraph):
             tag_redraw_all()
         if mon.busy:
             _ensure_timer()
+        if mon.hot:
+            mon.live_ms.append((time.perf_counter() - now) * 1000.0)
     except Exception as ex:          # a handler must never raise into Blender
         mon.error = str(ex)
         import traceback
