@@ -1248,6 +1248,149 @@ def dense_clearance_tests(rng):
     print('dense clearance: ok')
 
 
+def group_move_tests(rng):
+    """Parts that are moved together keep their results: nothing between them
+    is solved again, although their positions arrive rounded to single
+    precision, each on its own (that is what Blender delivers).  A part that
+    really moves against the others is noticed, however slowly it creeps."""
+    from core.world import POS_TOL
+    parts = {
+        'gbox': meshes.grid_box((0.9, 0.6, 0.6), 5),
+        'sph': meshes.uv_sphere(0.5, 16, 8),
+        'tor': meshes.torus(0.5, 0.18, 16, 8),
+        'cyl': meshes.cylinder(0.25, 1.2, 16),
+    }
+    names = list(parts)
+    f32 = np.float32
+    thr = 0.2
+
+    def build(objs):
+        w = World()
+        w.set_scale(8.0, 0.01)
+        w.set_thresholds(0.0, thr)
+        for k, (v, f) in parts.items():
+            w.add_geom(k, v, f)
+        for uid, (g, R, t) in objs.items():
+            w.add_object(uid, g, meshes.matrix(R, np.asarray(t, dtype=np.float64)))
+        while w.step(budget=10.0):
+            pass
+        return w
+
+    def snapshot(w):
+        out = {}
+        for (a, b), pr in w.pairs.items():
+            if pr.state > OK:
+                out[(w.uid(a), w.uid(b))] = (pr.state, pr.dist, 0 if pr.segs is None else len(pr.segs))
+        return out
+
+    def offsets_hold(w, label):
+        """No result is for an offset further from the present one than the
+        slack allows, unless the pair is waiting to be solved again."""
+        worst = 0.0
+        for (a, b), pr in w.pairs.items():
+            want = w.solved_for((a, b))
+            if want is None or pr.stale:
+                continue
+            tol = POS_TOL * max(np.abs(w.O_T[a]).max(), np.abs(w.O_T[b]).max())
+            err = np.abs(w.O_T[b] - w.O_T[a] - want).max()
+            assert err <= tol, (label, w.uid(a), w.uid(b), err, tol)
+            worst = max(worst, err / tol if tol else 0.0)
+        return worst
+
+    moves = kept = redone = crept = 0
+    for origin in (0.0, 300.0):       # around the origin, and where a millimetre scene has its parts
+        n_obj = 26
+        objs = {}
+        for i in range(n_obj):
+            t = (origin + rng.uniform(-1.9, 1.9, 3)).astype(f32)
+            objs[f'o{i}'] = [names[rng.integers(len(names))], meshes.rot(rng), t]
+        w = build(objs)
+        uids = list(objs)
+        for trial in range(9):
+            k = [2, 3, 5, 9, n_obj // 2, n_obj - 1, n_obj, 4, n_obj][trial]
+            group = [uids[i] for i in rng.permutation(n_obj)[:k]]
+            inside = set(w.slot(u) for u in group)
+            home = {u: objs[u][2].copy() for u in group}
+            serial = {key: pr.serial for key, pr in w.pairs.items()
+                      if key[0] in inside and key[1] in inside and not pr.stale}
+            for step in range(4):
+                # a drag: every position is its start plus the same offset,
+                # rounded to single precision on its own
+                d = rng.normal(0.0, 1.5, 3).astype(f32)
+                if trial == 8 and step == 3:
+                    d[:] = 0.0                    # ... and exactly back where they were
+                for u in group:
+                    objs[u][2] = home[u] + d
+                    assert objs[u][2].dtype == f32
+                    w.set_matrix(u, meshes.matrix(objs[u][1], objs[u][2].astype(np.float64)))
+                w.step(idle=False)
+                for key, ser in serial.items():
+                    pr = w.pairs.get(key)
+                    assert pr is not None and pr.serial == ser and not pr.stale, (
+                        'solved again', origin, trial, step, key)
+                offsets_hold(w, (origin, trial, step))
+                moves += 1
+            kept += len(serial)
+            while w.step():
+                pass
+            got = snapshot(w)
+            want = snapshot(build(objs))
+            assert set(got) == set(want), (origin, trial, set(got) ^ set(want))
+            for key, (state, dist, nseg) in want.items():
+                if (key[0] in group) != (key[1] in group):
+                    # one part moved against the other: solved for exactly
+                    # where they are now
+                    assert got[key][0] == state and got[key][2] == nseg, (origin, trial, key)
+                    assert abs(got[key][1] - dist) <= 1e-9, (origin, trial, key, got[key], dist)
+                    redone += 1
+                else:
+                    # moved together, now or earlier: worked out for positions
+                    # that differ in the last digits
+                    slack = 4.0 * POS_TOL * (abs(origin) + 6.0)
+                    assert got[key][0] == state or abs(dist - thr) < slack, (origin, trial, key)
+                    assert abs(got[key][1] - dist) <= slack, (origin, trial, key, got[key], dist)
+
+        # one part of a group creeps against the others, a third of the slack
+        # per step: the pair must be solved again before the slack is used up
+        near = [key for key, pr in w.pairs.items() if pr.state == CLEAR and not pr.stale]
+        assert near
+        a, b = near[0]
+        ua, ub = w.uid(a), w.uid(b)
+        tol = POS_TOL * max(np.abs(w.O_T[a]).max(), np.abs(w.O_T[b]).max())
+        home_a = objs[ua][2].astype(np.float64)
+        home_b = objs[ub][2].astype(np.float64)
+        e = rng.normal(size=3)
+        e /= np.abs(e).max()
+        solves = 0
+        last = w.pairs[(a, b)].serial
+        for step in range(1, 31):
+            d = rng.normal(0.0, 0.5, 3)
+            w.set_matrix(ua, meshes.matrix(objs[ua][1], home_a + d))
+            w.set_matrix(ub, meshes.matrix(objs[ub][1], home_b + d + step * 0.34 * tol * e))
+            w.step(idle=False)
+            while w.step():
+                pass
+            offsets_hold(w, ('creep', origin, step))
+            if w.pairs[(a, b)].serial != last:
+                last = w.pairs[(a, b)].serial
+                solves += 1
+        assert 6 <= solves <= 16, solves
+        crept += solves
+        # ... and the slack is no more than a millionth of the coordinates:
+        # a shift of two and a half millionths is a move
+        t = w.O_T[b].copy()
+        last = w.pairs[(a, b)].serial
+        big = 2.5e-6 * max(np.abs(w.O_T[a]).max(), np.abs(t).max())
+        w.set_matrix(ub, meshes.matrix(objs[ub][1], t + big * e))
+        while w.step():
+            pass
+        assert w.pairs[(a, b)].serial != last, 'a real move went unnoticed'
+    assert kept > 60 and redone > 15, (kept, redone)
+    print(f'parts moved together: {moves} moves of 2 to 26 parts, results of {kept} pairs among them '
+          f'kept without solving, {redone} results against the other parts identical to a fresh '
+          f'world; a creeping part was caught {crept} times in 60 steps')
+
+
 def main():
     rng = np.random.default_rng(11)
     special_pair_tests()
@@ -1262,6 +1405,7 @@ def main():
     dense_clearance_tests(rng)
     cache_tests(rng)
     borrow_tests(rng)
+    group_move_tests(rng)
     incremental_tests(rng)
     incremental_tests(rng, borrow=True)
     incremental_tests(rng, borrow=True, room=3)

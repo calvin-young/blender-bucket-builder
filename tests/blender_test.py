@@ -381,6 +381,44 @@ def main():
     check(r1 == {'FINISHED'} and st.problem_index == 0, 'next-problem operator runs', (r1, st.problem_index))
     check(a.select_get() and b.select_get(), 'navigation selects the parts involved')
 
+    # ------------------------------------------------------ moving a selection
+    # (A and B collide here.)  Parts that are moved together keep their
+    # result.  Blender rounds every position to single precision on its own,
+    # so the offset between two parts jitters in the last digits while they
+    # are dragged together; that must not count as a move.
+    pr = pair(mon, a, b)
+    serial = pr.serial
+    bpy.ops.object.select_all(action='DESELECT')
+    for o in (a, b, c):
+        o.select_set(True)
+    how = 'the Move tool'
+    solved = 0
+    jitter = 0.0
+    w = mon.world
+    sa, sb = w.slot(a.session_uid), w.slot(b.session_uid)
+    off0 = w.O_T[sb] - w.O_T[sa]
+    for delta in ((12.345, -3.21, 7.77), (131.7, 60.1, 93.3), (-0.001, 0.002, 0.0005),
+                  (-144.044, -56.892, -101.0705)):
+        try:
+            bpy.ops.transform.translate(value=delta)
+        except RuntimeError:                      # no viewport to run the tool in
+            how = 'their locations'
+            for o in (a, b, c):
+                o.location = [float(np.float32(x) + np.float32(d)) for x, d in zip(o.location, delta)]
+            update()
+        solved += w.last_pairs
+        jitter = max(jitter, float(np.abs(w.O_T[sb] - w.O_T[sa] - off0).max()))
+        check(pair(mon, a, b) is pr and pr.serial == serial and not pr.stale and pr.state == COLLIDE,
+              f'three parts moved together by {delta}: their result is kept', (pr.serial, serial, pr.stale))
+    check(solved == 0, f'nothing was solved again while they moved (through {how})', solved)
+    print(f'       (their offset jittered by up to {jitter:.1e} units on the way)')
+    a.location = (100.0, 100.0, 100.0)
+    b.location = (135.0, 100.0, 100.0)
+    c.location = (100.0, 200.0, 100.0)
+    update()
+    mon = settle()
+    check(mon.status()['collisions'] == 1, 'and the build is as it was', mon.status())
+
     # ---------------------------------------------------------- save / reload
     path = os.path.join(tempfile.mkdtemp(), 'build.blend')
     bpy.ops.wm.save_as_mainfile(filepath=path)
