@@ -70,29 +70,39 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
 
 ## State
 
-Last updated: 2026-10-08 (session 2).
+Last updated: 2026-10-08 (session 2, mid-morning).
 
 * Engine, monitor, overlay, panels, printer profiles: working and tested on
   Blender 5.2.2 (Linux, software OpenGL), headless and in a real window on a
   virtual display with simulated mouse input.
-* In the window, 60 parts / 2 M triangles: about 17 ms of checking per drag
-  step on a 2-core machine without a GPU, overlay drawing about 40 ms per
-  redraw there (software rasteriser; the Python side of it still needs
-  measuring and trimming).
+* Added this session at the owner's request: wall gap (side walls only,
+  warning), light red shading of every colliding part, printers 5600 / 1200 /
+  580, fewer labels in crowded builds.
+* Load control: a live step has a time budget. Pairs are *sketched* (collision
+  yes/no, exact) or fully treated depending on measured cost; see
+  `World._choose_detail`, `World._learn_cost`, `narrow.solve(detail=...)`.
+  `tests/bench.py --storm` and `tests/blender_gui_stress.py ... storm` are the
+  owner's "import a part into the middle of 50" scenario: 159 -> 24 ms per
+  step with 20+ parts in contact.
+* Window test numbers on the 2-core, no-GPU sandbox: 60 parts / 2 M triangles,
+  about 5 ms of checking per drag step; overlay data preparation about 2 ms
+  per redraw (the rest of the overlay time there is the software rasteriser).
 * Not tested: a real GPU, Blender 4.2 - 5.1, Windows, macOS, a human at the
-  mouse.
+  mouse. The owner works on an HP ZBook Firefly 14 G11 with 32 GB RAM.
 
 ## Next
 
-1. Wall clearance (requested): optional distance to the side walls (X and Y
-   only), 5 mm default, shown as a warning, never an error.
-2. Measure and tune at the owner's sizes: 30 M triangles in 2 - 50 parts, and
-   600 instanced parts. Memory per pose is the limit; ideas: do not store the
-   two lowest box levels, 16-bit boxes, a memory cap that skips parts instead
-   of exhausting RAM, sorting big meshes off the main thread.
-3. Overlay cost: clip boxes as uniforms instead of per-vertex attributes,
-   smaller caps, fewer labels when there are many problems.
-4. Find out what "instanced" means in the owner's files. Linked duplicates
-   (Alt+D) are supported; collection and geometry-nodes instances are not
-   checked at all.
-5. Throttle viewport redraws during the first analysis of a scene.
+1. Memory. Each pose (unique mesh + rotation) costs about 55 bytes per
+   triangle; fine for tens of millions of triangles, too much for the
+   600-part builds. Plan: poses become a cache with a byte budget (default
+   about 6 GB on the owner's machine) and least-recently-used eviction; a
+   part's extents are computed without building its pose, so poses are only
+   built for parts that actually have neighbours. Then, if needed, shrink the
+   pose itself (do not store the two lowest box levels, 16-bit boxes).
+2. Measure at the owner's sizes: 30 M triangles in 2 - 50 parts, and 600
+   instanced parts (Alt+D linked duplicates; that is what "instanced" means
+   in his files). Sorting very large meshes off the main thread if the
+   first analysis stalls the interface.
+3. Throttle viewport redraws during the first analysis of a scene.
+4. Possibly: an "import beside the bucket" helper, amber shading for
+   warning-only parts (offered, not requested).
