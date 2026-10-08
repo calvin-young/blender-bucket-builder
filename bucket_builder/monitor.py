@@ -58,7 +58,7 @@ def _matrix(obj):
 
 
 def _eligible(obj, view_layer):
-    if obj.type != 'MESH' or obj.build_check_ignore:
+    if obj.type != 'MESH' or obj.bucket_builder_ignore:
         return False
     try:
         return obj.visible_get(view_layer=view_layer)

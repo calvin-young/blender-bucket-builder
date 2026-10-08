@@ -1,9 +1,9 @@
 # Blender Bucket Builder
 
-Build preparation for 3D printing inside Blender, aimed at dense HP Multi Jet
-Fusion (MJF) builds.
+**Bucket Builder** is a Blender add-on for preparing 3D-print builds, aimed at
+dense HP Multi Jet Fusion (MJF) builds.
 
-The first tool is **Build Check**, a live monitor. Turn it on once, then move,
+Its first tool is a live build check. Turn monitoring on once, then move,
 rotate and scale parts as usual. While you drag, the viewport shows:
 
 * where parts **collide** (red cross-hatching and the exact intersection curve),
@@ -16,8 +16,7 @@ rotate and scale parts as usual. While you drag, the viewport shows:
 
 Nothing in the scene is modified; everything is drawn on top of it.
 
-The add-on currently installs under the name *Build Check* (`build_check`).
-The user guide is in [build_check/README.md](build_check/README.md).
+The user guide is in [bucket_builder/README.md](bucket_builder/README.md).
 
 ## Status
 
@@ -31,20 +30,23 @@ on **Blender 5.2.2** (Linux, software OpenGL), where:
   (live updates on move / rotate / scale, mesh edits, modifiers, linked
   duplicates, hiding, the build volume, printer profiles, units, undo, save
   and reload),
-* the overlay has been rendered off-screen and inspected.
+* the overlay has been rendered off-screen and inspected,
+* in an interactive Blender window on a virtual display, a part dragged with
+  simulated mouse input updates the overlay on every step of the drag
+  (`tests/gui_on_xvfb.sh`).
 
-It has not yet been exercised in an interactive Blender window, and not on
-Blender 4.2 - 5.1, Windows or macOS.
+Not yet tried: a real GPU, a person at the mouse, Blender 4.2 - 5.1, Windows
+or macOS.
 
 ## Install
 
-Download or build `build_check-1.0.0.zip`, then in Blender:
+Download or build `bucket_builder-1.0.0.zip`, then in Blender:
 Edit > Preferences > Get Extensions > the arrow in the top right >
 *Install from Disk*.
 
 To build the zip from this repository:
 
-    blender --command extension build --source-dir build_check --output-dir dist
+    blender --command extension build --source-dir bucket_builder --output-dir dist
 
 ## How it works
 
@@ -110,7 +112,7 @@ With the add-on installed and enabled in Blender:
 
 ## Layout
 
-    build_check/          the add-on (this folder is what gets zipped)
+    bucket_builder/       the add-on (this folder is what gets zipped)
       core/               NumPy engine, no Blender imports
         tritri.py         exact triangle / triangle intersection and distance
         bvh.py            implicit bounding-volume tree layout and build order

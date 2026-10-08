@@ -21,7 +21,7 @@ import numpy as np
 from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
 
-PKG = next(m for m in bpy.context.preferences.addons.keys() if m.endswith("build_check"))
+PKG = next(m for m in bpy.context.preferences.addons.keys() if m.endswith("bucket_builder"))
 bc = importlib.import_module(PKG)
 monitor, overlay, props = bc.monitor, bc.overlay, bc.props
 
@@ -184,7 +184,7 @@ def main():
     bpy.context.view_layer.update()
 
     sc = bpy.context.scene
-    st = sc.build_check
+    st = sc.bucket_builder
     st.enabled = True
     mon = settle()
     s = mon.status()

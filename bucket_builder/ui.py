@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Sidebar panels (3D Viewport > Sidebar > Build)."""
+"""Sidebar panels (3D Viewport > Sidebar > Bucket)."""
 
 import bpy
 from bpy.types import Panel
@@ -16,12 +16,12 @@ _STATE_ICON = {'OK': 'CHECKMARK', 'WARN': 'CHECKMARK', 'FAIL': 'CANCEL', 'BUSY':
 class _Base:
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "Build"
+    bl_category = "Bucket"
 
 
-class BUILDCHECK_PT_main(_Base, Panel):
-    bl_label = "Build Check"
-    bl_idname = "BUILDCHECK_PT_main"
+class BUCKETBUILDER_PT_main(_Base, Panel):
+    bl_label = "Bucket Builder"
+    bl_idname = "BUCKETBUILDER_PT_main"
 
     def draw(self, context):
         layout = self.layout
@@ -68,10 +68,10 @@ class BUILDCHECK_PT_main(_Base, Panel):
             row.label(text=mon.unit_note)
 
 
-class BUILDCHECK_PT_problems(_Base, Panel):
+class BUCKETBUILDER_PT_problems(_Base, Panel):
     bl_label = "Problems"
-    bl_idname = "BUILDCHECK_PT_problems"
-    bl_parent_id = "BUILDCHECK_PT_main"
+    bl_idname = "BUCKETBUILDER_PT_problems"
+    bl_parent_id = "BUCKETBUILDER_PT_main"
 
     @classmethod
     def poll(cls, context):
@@ -88,9 +88,9 @@ class BUILDCHECK_PT_problems(_Base, Panel):
 
         row = layout.row(align=True)
         row.enabled = n > 0
-        op = row.operator("buildcheck.step_problem", text="Previous", icon='TRIA_LEFT')
+        op = row.operator("bucketbuilder.step_problem", text="Previous", icon='TRIA_LEFT')
         op.direction = -1
-        op = row.operator("buildcheck.step_problem", text="Next", icon='TRIA_RIGHT')
+        op = row.operator("bucketbuilder.step_problem", text="Next", icon='TRIA_RIGHT')
         op.direction = 1
         if n == 0:
             layout.label(text="Nothing to fix", icon='CHECKMARK')
@@ -116,27 +116,27 @@ class BUILDCHECK_PT_problems(_Base, Panel):
                 text = f"{pr['a']}   partly outside"
             else:
                 text = f"{pr['a']}   outside"
-            op = col.operator("buildcheck.focus_problem", text=text, icon=_KIND_ICON[pr['kind']],
+            op = col.operator("bucketbuilder.focus_problem", text=text, icon=_KIND_ICON[pr['kind']],
                               depress=(i == active))
             op.index = i
         if n > LIST_ROWS:
             layout.label(text=f"Showing {first + 1}-{min(n, first + LIST_ROWS)} of {n}")
 
 
-class BUILDCHECK_PT_volume(_Base, Panel):
+class BUCKETBUILDER_PT_volume(_Base, Panel):
     bl_label = "Printer / Build Volume"
-    bl_idname = "BUILDCHECK_PT_volume"
-    bl_parent_id = "BUILDCHECK_PT_main"
+    bl_idname = "BUCKETBUILDER_PT_volume"
+    bl_parent_id = "BUCKETBUILDER_PT_main"
 
     def draw(self, context):
         layout = self.layout
         st = props.settings(context.scene)
 
         row = layout.row(align=True)
-        row.menu("BUILDCHECK_MT_printers", text=st.printer or "Custom")
-        row.operator("buildcheck.profile_add", text="", icon='ADD')
-        row.operator("buildcheck.profile_update", text="", icon='FILE_TICK')
-        row.operator("buildcheck.profile_remove", text="", icon='REMOVE')
+        row.menu("BUCKETBUILDER_MT_printers", text=st.printer or "Custom")
+        row.operator("bucketbuilder.profile_add", text="", icon='ADD')
+        row.operator("bucketbuilder.profile_update", text="", icon='FILE_TICK')
+        row.operator("bucketbuilder.profile_remove", text="", icon='REMOVE')
 
         col = layout.column(align=True)
         col.use_property_split = True
@@ -151,13 +151,13 @@ class BUILDCHECK_PT_volume(_Base, Panel):
         col = layout.column(align=True)
         col.prop(st, "show_volume")
         col.prop(st, "use_volume", text="Warn When Parts Exceed Volume")
-        layout.operator("buildcheck.frame_volume", icon='VIEWZOOM')
+        layout.operator("bucketbuilder.frame_volume", icon='VIEWZOOM')
 
 
-class BUILDCHECK_PT_display(_Base, Panel):
+class BUCKETBUILDER_PT_display(_Base, Panel):
     bl_label = "Display"
-    bl_idname = "BUILDCHECK_PT_display"
-    bl_parent_id = "BUILDCHECK_PT_main"
+    bl_idname = "BUCKETBUILDER_PT_display"
+    bl_parent_id = "BUCKETBUILDER_PT_main"
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
@@ -184,10 +184,10 @@ class BUILDCHECK_PT_display(_Base, Panel):
             col.prop(p, "badge_scale")
 
 
-class BUILDCHECK_PT_parts(_Base, Panel):
+class BUCKETBUILDER_PT_parts(_Base, Panel):
     bl_label = "Parts"
-    bl_idname = "BUILDCHECK_PT_parts"
-    bl_parent_id = "BUILDCHECK_PT_main"
+    bl_idname = "BUCKETBUILDER_PT_parts"
+    bl_parent_id = "BUCKETBUILDER_PT_main"
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
@@ -197,11 +197,11 @@ class BUILDCHECK_PT_parts(_Base, Panel):
         mon = monitor.get(scene)
         obj = context.active_object
         if obj is not None and obj.type == 'MESH':
-            layout.prop(obj, "build_check_ignore", text=f"Ignore '{obj.name}'")
+            layout.prop(obj, "bucket_builder_ignore", text=f"Ignore '{obj.name}'")
         row = layout.row(align=True)
-        op = row.operator("buildcheck.ignore", text="Ignore Selected")
+        op = row.operator("bucketbuilder.ignore", text="Ignore Selected")
         op.ignore = True
-        op = row.operator("buildcheck.ignore", text="Include Selected")
+        op = row.operator("bucketbuilder.ignore", text="Include Selected")
         op.ignore = False
 
         if st.enabled and mon is not None:
@@ -217,15 +217,15 @@ class BUILDCHECK_PT_parts(_Base, Panel):
                 box.label(text=f"{len(skipped)} not checked:", icon='INFO')
                 for o in skipped[:6]:
                     box.label(text=f"{o.name}: {o.skipped}")
-        layout.operator("buildcheck.recheck", icon='FILE_REFRESH')
+        layout.operator("bucketbuilder.recheck", icon='FILE_REFRESH')
 
 
 CLASSES = (
-    BUILDCHECK_PT_main,
-    BUILDCHECK_PT_problems,
-    BUILDCHECK_PT_volume,
-    BUILDCHECK_PT_display,
-    BUILDCHECK_PT_parts,
+    BUCKETBUILDER_PT_main,
+    BUCKETBUILDER_PT_problems,
+    BUCKETBUILDER_PT_volume,
+    BUCKETBUILDER_PT_display,
+    BUCKETBUILDER_PT_parts,
 )
 
 

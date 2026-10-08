@@ -20,7 +20,7 @@ import bpy
 import numpy as np
 from mathutils.bvhtree import BVHTree
 
-PKG = next(m for m in bpy.context.preferences.addons.keys() if m.endswith("build_check"))
+PKG = next(m for m in bpy.context.preferences.addons.keys() if m.endswith("bucket_builder"))
 bc = importlib.import_module(PKG)
 monitor = bc.monitor
 core = importlib.import_module(PKG + ".core")
@@ -63,7 +63,7 @@ def main():
                                          rotation=(0.4, 0.2, 0.1))
         b = bpy.context.active_object
         bpy.context.view_layer.update()
-        st = bpy.context.scene.build_check
+        st = bpy.context.scene.bucket_builder
         st.enabled = False
         st.enabled = True
         mon = settle()

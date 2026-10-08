@@ -1,7 +1,7 @@
 import os, sys, time, cProfile, pstats
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, '..', 'build_check')); sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, '..', 'bucket_builder')); sys.path.insert(0, HERE)
 from core import World, narrow
 import bench, meshes
 rng = np.random.default_rng(5)

@@ -18,7 +18,7 @@ import traceback
 import bpy
 from mathutils import Quaternion, Vector
 
-PKG = next(m for m in bpy.context.preferences.addons.keys() if m.endswith("build_check"))
+PKG = next(m for m in bpy.context.preferences.addons.keys() if m.endswith("bucket_builder"))
 bc = importlib.import_module(PKG)
 monitor = bc.monitor
 core = importlib.import_module(PKG + ".core")
@@ -69,7 +69,7 @@ def view_region():
 # buffer back (the screenshot operator returns black).  When the display is an
 # Xvfb started with -fbdir, its framebuffer file is read instead: that is
 # exactly what a monitor would show.
-XVFB_FB = os.environ.get('BUILD_CHECK_XVFB_FB', '')
+XVFB_FB = os.environ.get('BUCKET_BUILDER_XVFB_FB', '')
 
 
 def _xwd_to_png(src, dst):
@@ -168,11 +168,11 @@ def step_setup():
 
 
 def step_enable():
-    win().scene.build_check.enabled = True
+    win().scene.bucket_builder.enabled = True
     for region in view_area().regions:
         if region.type == 'UI':
             try:
-                region.active_panel_category = 'Build'
+                region.active_panel_category = 'Bucket'
             except Exception as ex:
                 log('could not switch sidebar tab:', ex)
     log('monitoring enabled; waiting for the add-on timer')

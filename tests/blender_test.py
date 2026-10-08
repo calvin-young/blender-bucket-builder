@@ -15,7 +15,7 @@ import time
 import bpy
 import numpy as np
 
-PKG = next(m for m in bpy.context.preferences.addons.keys() if m.endswith("build_check"))
+PKG = next(m for m in bpy.context.preferences.addons.keys() if m.endswith("bucket_builder"))
 bc = importlib.import_module(PKG)
 monitor = bc.monitor
 props = bc.props
@@ -96,9 +96,9 @@ def main():
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
     sc = scene()
-    st = sc.build_check
+    st = sc.bucket_builder
     check(st is not None, 'scene settings registered')
-    check(hasattr(bpy.types.Object, 'build_check_ignore'), 'per-object ignore flag registered')
+    check(hasattr(bpy.types.Object, 'bucket_builder_ignore'), 'per-object ignore flag registered')
 
     a = add_sphere('PartA', (100, 100, 100))
     b = add_sphere('PartB', (160, 100, 100))
@@ -232,11 +232,11 @@ def main():
     update()
     mon = settle()
     check(mon.world.stats()['objects'] == 5, 'unhidden object returns')
-    e.build_check_ignore = True
+    e.bucket_builder_ignore = True
     update()
     mon = settle()
     check(mon.world.stats()['objects'] == 4, 'ignored object leaves the check')
-    e.build_check_ignore = False
+    e.bucket_builder_ignore = False
     mon = settle()
     bpy.data.objects.remove(e)
     bpy.data.objects.remove(d)
@@ -281,21 +281,21 @@ def main():
           None if p is None else len(p.profiles))
     names = [x.name for x in p.profiles]
     idx = next(i for i, x in enumerate(p.profiles) if '580' in x.name)
-    check(bpy.ops.buildcheck.profile_apply(index=idx) == {'FINISHED'}, 'profile applied')
+    check(bpy.ops.bucketbuilder.profile_apply(index=idx) == {'FINISHED'}, 'profile applied')
     check(tuple(st.volume_size) == (332.0, 190.0, 248.0) and st.printer == names[idx],
           'volume and name follow the profile', (tuple(st.volume_size), st.printer))
     st.volume_size = (300.0, 200.0, 250.0)
-    check(bpy.ops.buildcheck.profile_add('EXEC_DEFAULT', name='My Printer') == {'FINISHED'}, 'profile saved')
+    check(bpy.ops.bucketbuilder.profile_add('EXEC_DEFAULT', name='My Printer') == {'FINISHED'}, 'profile saved')
     check(any(x.name == 'My Printer' and tuple(x.size) == (300.0, 200.0, 250.0) for x in p.profiles),
           'new profile stored in the library')
     st.volume_size = (310.0, 200.0, 250.0)
     st.printer = 'My Printer'
-    check(bpy.ops.buildcheck.profile_update() == {'FINISHED'}, 'profile updated')
+    check(bpy.ops.bucketbuilder.profile_update() == {'FINISHED'}, 'profile updated')
     check(any(x.name == 'My Printer' and tuple(x.size) == (310.0, 200.0, 250.0) for x in p.profiles),
           'updated size stored')
-    check(bpy.ops.buildcheck.profile_remove('EXEC_DEFAULT') == {'FINISHED'}, 'profile removed')
+    check(bpy.ops.bucketbuilder.profile_remove('EXEC_DEFAULT') == {'FINISHED'}, 'profile removed')
     check(not any(x.name == 'My Printer' for x in p.profiles), 'profile gone from the library')
-    bpy.ops.buildcheck.profile_apply(index=0)
+    bpy.ops.bucketbuilder.profile_apply(index=0)
     mon = settle()
 
     # ----------------------------------------------------------------- units
@@ -336,7 +336,7 @@ def main():
     probs = mon.problems()
     check(len(probs) >= 1 and probs[0]['kind'] == 'COLLIDE', 'problem list leads with the collision', probs[:1])
     check(abs(float(probs[0]['center'][0]) - 117.5) < 1.0, 'problem centre is at the interference')
-    r1 = bpy.ops.buildcheck.step_problem(direction=1)
+    r1 = bpy.ops.bucketbuilder.step_problem(direction=1)
     check(r1 == {'FINISHED'} and st.problem_index == 0, 'next-problem operator runs', (r1, st.problem_index))
     check(a.select_get() and b.select_get(), 'navigation selects the parts involved')
 
@@ -345,7 +345,7 @@ def main():
     bpy.ops.wm.save_as_mainfile(filepath=path)
     bpy.ops.wm.open_mainfile(filepath=path)
     sc = scene()
-    st = sc.build_check
+    st = sc.bucket_builder
     check(st.enabled, 'monitoring stays on in the saved file')
     mon = settle()
     s = mon.status()
@@ -370,7 +370,7 @@ def main():
         print('       (undo not available in this mode:', str(ex).strip()[:80], ')')
 
     # ------------------------------------------------------- off / on / reload
-    st = scene().build_check
+    st = scene().bucket_builder
     st.enabled = False
     check(monitor.get(scene()) is None, 'switching off frees the monitor')
     st.enabled = True
@@ -379,9 +379,9 @@ def main():
 
     import addon_utils
     addon_utils.disable(PKG)
-    check(not hasattr(bpy.types.Scene, 'build_check'), 'add-on unregisters cleanly')
+    check(not hasattr(bpy.types.Scene, 'bucket_builder'), 'add-on unregisters cleanly')
     addon_utils.enable(PKG)
-    check(hasattr(bpy.types.Scene, 'build_check'), 'add-on registers again')
+    check(hasattr(bpy.types.Scene, 'bucket_builder'), 'add-on registers again')
 
     print(f'\n{sum(1 for ok, _ in CHECKS if ok)} of {len(CHECKS)} checks passed')
     print('BLENDER TEST OK')

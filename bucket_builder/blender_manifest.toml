@@ -1,11 +1,12 @@
 schema_version = "1.0.0"
 
-id = "build_check"
+id = "bucket_builder"
 version = "1.0.0"
-name = "Build Check"
+name = "Bucket Builder"
 tagline = "Live collision, clearance and build-volume monitor"
-maintainer = "Build Check contributors"
+maintainer = "Bucket Builder contributors"
 type = "add-on"
+website = "https://github.com/calvin-young/blender-bucket-builder"
 
 blender_version_min = "4.2.0"
 

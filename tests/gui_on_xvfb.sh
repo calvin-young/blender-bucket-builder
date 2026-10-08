@@ -17,7 +17,7 @@ mkdir -p "$OUT"
 Xvfb $DISP -screen 0 1600x1000x24 -fbdir "$FB" -nolisten tcp > "$FB/xvfb.log" 2>&1 &
 XPID=$!
 sleep 2
-DISPLAY=$DISP BUILD_CHECK_XVFB_FB="$FB/Xvfb_screen0" \
+DISPLAY=$DISP BUCKET_BUILDER_XVFB_FB="$FB/Xvfb_screen0" \
     "$BLENDER" --enable-event-simulate --python "$HERE/blender_gui_test.py" -- "$OUT"
 STATUS=$?
 kill $XPID 2>/dev/null

@@ -11,7 +11,7 @@ import time
 
 import bpy
 
-PKG = next(m for m in bpy.context.preferences.addons.keys() if m.endswith("build_check"))
+PKG = next(m for m in bpy.context.preferences.addons.keys() if m.endswith("bucket_builder"))
 bc = importlib.import_module(PKG)
 monitor, ui, ops, props = bc.monitor, bc.ui, bc.ops, bc.props
 
@@ -130,7 +130,7 @@ def settle():
 def main():
     ctx = bpy.context
     sc = ctx.scene
-    st = sc.build_check
+    st = sc.bucket_builder
     props.seed_profiles(props.prefs())
 
     draw_all(ctx, 'monitoring off')

@@ -6,7 +6,7 @@ import time
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, '..', 'build_check'))   # import the core without bpy
+sys.path.insert(0, os.path.join(HERE, '..', 'bucket_builder'))   # import the core without bpy
 sys.path.insert(0, HERE)
 
 from core import World, OK, CLEAR, COLLIDE, PARTIAL, OUTSIDE  # noqa: E402
