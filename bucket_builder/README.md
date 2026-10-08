@@ -77,9 +77,11 @@ Fixtures, a build-plate model or reference geometry: select them and use
   its own pairs are looked at again.
 * All pairs that need work are traversed together in vectorised NumPy passes;
   nothing loops over triangles in Python.
-* While you drag, intersections are computed completely on every step. The
-  clearance search is capped so a frame never stalls; a pair whose search was
-  cut short is finished exactly a moment after you stop.
+* While you drag, every step has a time budget. Whether parts collide is
+  always decided, and the colliding parts are shaded at once. The curve, the
+  hatching and the exact clearance are worked out for as many neighbours as
+  fit in the budget and for all of them a moment after you stop. So a part
+  dropped into the middle of a full build can still be dragged out smoothly.
 * The first analysis of a large scene, and anything else that is not a live
   edit, runs in small slices in the background. The badge shows progress.
 

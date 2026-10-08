@@ -30,6 +30,8 @@ INSIDE, PARTIAL, OUTSIDE = 0, 1, 2
 
 MAX_BATCH = 96
 OOB_TRI_CAP = 60000
+LIVE_TARGET = 0.012       # seconds a live solve should take
+REGION_BUDGET = 400000    # triangles of hatched regions kept for the whole scene
 
 
 class Geom:
@@ -42,11 +44,17 @@ class Pose:
 
 
 class PairResult:
-    """Outcome for one pair of objects.  Geometry is stored in the frame of the
-    pair's first object (add that object's translation to get world space)."""
+    """Outcome for one pair of objects.
+
+    ``segs``, ``pa``, ``pb`` and ``center`` are in the frame of the pair's
+    first object (add that object's translation to get world space).  The
+    surface patches ``tri_a`` / ``tri_b`` are each in the frame of their own
+    object, so a patch keeps sticking to its part while the result is waiting
+    to be recomputed.  ``clip_a`` / ``clip_b`` are None, or a box (in the
+    first object's frame) the patch should be trimmed to when drawn."""
     __slots__ = ('state', 'dist', 'pa', 'pb', 'segs', 'nseg', 'tri_a', 'tri_b', 'clip_a',
-                 'clip_b', 'approx', 'refine', 'enclosed', 'center', 'radius', 'stale', 'stamp',
-                 'serial')
+                 'clip_b', 'approx', 'refine', 'lite', 'enclosed', 'center', 'radius', 'stale',
+                 'stamp', 'serial')
 
     def __init__(self):
         self.state = PENDING
@@ -58,6 +66,7 @@ class PairResult:
         self.clip_a = self.clip_b = None
         self.approx = False
         self.refine = False
+        self.lite = False         # only sketched: the state is known, the details are not
         self.enclosed = 0         # 1: first part inside the second, 2: the reverse
         self.center = None
         self.radius = 0.0
@@ -127,6 +136,15 @@ class World:
         self._param_stamp = 0
         self.version = 0          # bumps whenever any result changes
         self._serial = 0
+        # Load control, following the measured cost.  ``live_detail`` is how
+        # many pairs get the full treatment in one live solve; the rest are
+        # sketched and completed when idle.  ``_bg_batch`` is how many pairs a
+        # background solve takes at once.
+        self.live_detail = 8
+        self._detail_cost = 0.0   # seconds one fully treated pair costs (running estimate)
+        self._lite_cost = 0.0     # seconds one sketched pair costs
+        self._bg_batch = 8
+        self.tri_cap = narrow.TRI_CAP     # region triangles per part and pair
         self.last_step_ms = 0.0
         self.last_pairs = 0
 
@@ -564,7 +582,9 @@ class World:
                 continue
             if not pr.stale:
                 pr.stale = True
-                if self.viol.pop(key, None) is not None:
+                # A live edit is answered within a frame or two; until then
+                # the old result stays on screen instead of blinking off.
+                if not hot and self.viol.pop(key, None) is not None:
                     self.version += 1
             self._pend_refine.pop(key, None)
             if hot:
@@ -588,13 +608,15 @@ class World:
     def pending(self):
         return len(self._pend_hot) + len(self._pend_cold) + len(self._pend_refine)
 
-    def step(self, budget=0.010, hot_budget=0.060, idle=True):
+    def step(self, budget=0.010, hot_budget=0.016, idle=True):
         """Bring results up to date.  Returns True while work remains.
 
         Three queues, in order:
-          hot     pairs touched by a live edit.  Always handled (up to the
-                  larger ``hot_budget``) with the quick solve: intersections
-                  are complete, the clearance distance is a close upper bound.
+          hot     pairs touched by a live edit, handled with the quick solve
+                  until ``hot_budget`` is used up.  Whether parts collide is
+                  always decided; how much detail each pair gets follows the
+                  measured cost (see ``_choose_detail``).  Pairs that do not
+                  fit are taken up again in the next step.
           cold    background work such as the first scan; solved exactly
                   within what is left of ``budget``.
           refine  quick results waiting for their exact pass; only handled
@@ -616,7 +638,14 @@ class World:
             if solved and time.perf_counter() - t0 > limit:
                 break
             keys = []
-            while src and len(keys) < MAX_BATCH:
+            if exact:
+                size = self._bg_batch
+            else:
+                # as many pairs as a sketch of each fits into one live solve;
+                # with more than that pending, the rest wait for the next step
+                # (their previous result stays on screen meanwhile)
+                size = int(min(MAX_BATCH, max(8, LIVE_TARGET / max(self._lite_cost, 1e-5))))
+            while src and len(keys) < size:
                 key = next(iter(src))
                 del src[key]
                 pr = self.pairs.get(key)
@@ -626,7 +655,19 @@ class World:
                 keys.append(key)
             if not keys:
                 continue
-            narrow.solve(self, keys, exact)
+            detail = None if exact else self._choose_detail(keys)
+            if exact:
+                n = len(self.viol)
+                self.tri_cap = int(min(narrow.TRI_CAP, max(2000, REGION_BUDGET // (2 * max(n, 1)))))
+            t1 = time.perf_counter()
+            narrow.solve(self, keys, exact, detail)
+            dt = time.perf_counter() - t1
+            if exact:
+                # background slices should fit the budget they are given
+                fit = budget * len(keys) / max(dt, 1e-6)
+                self._bg_batch = int(min(MAX_BATCH, max(2, 0.5 * self._bg_batch + 0.5 * fit)))
+            else:
+                self._learn_cost(len(keys), detail, dt)
             self._serial += 1
             for key in keys:
                 pr = self.pairs[key]
@@ -644,6 +685,38 @@ class World:
         self.last_step_ms = (time.perf_counter() - t0) * 1000.0
         self.last_pairs = solved
         return self.busy
+
+    def _choose_detail(self, keys):
+        """Which pairs of a live solve get the full treatment: None for all,
+        else a boolean per pair.  Pairs that already show detail keep it, so
+        the picture does not flicker; then known problems, then the rest."""
+        n = len(keys)
+        if n <= self.live_detail:
+            return None
+        detail = np.zeros(n, dtype=bool)
+        if self.live_detail > 0:
+            rank = np.empty(n, dtype=np.int64)
+            size = np.empty(n, dtype=np.int64)
+            for i, key in enumerate(keys):
+                pr = self.pairs[key]
+                rank[i] = 2 if pr.state <= OK else (1 if pr.lite else 0)
+                size[i] = self.PNT[self.O_POSE[key[0]]] + self.PNT[self.O_POSE[key[1]]]
+            detail[np.lexsort((size, rank))[:self.live_detail]] = True
+        return detail
+
+    def _learn_cost(self, n, detail, dt):
+        """Update how many pairs a live solve can afford to treat fully."""
+        nd = n if detail is None else int(detail.sum())
+        if nd:
+            per = max(dt - self._lite_cost * (n - nd), 0.25 * dt) / nd
+            self._detail_cost = per if self._detail_cost <= 0.0 else (
+                0.6 * self._detail_cost + 0.4 * per)
+        else:
+            per = dt / n
+            self._lite_cost = per if self._lite_cost <= 0.0 else 0.6 * self._lite_cost + 0.4 * per
+            self._detail_cost *= 0.99        # so that detail is tried again now and then
+        spare = LIVE_TARGET - self._lite_cost * n
+        self.live_detail = int(min(64, max(0, spare / max(self._detail_cost, 1e-5))))
 
     # ----------------------------------------------------------- build volume
     def _update_oob(self):

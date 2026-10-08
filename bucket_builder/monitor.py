@@ -358,7 +358,7 @@ class Monitor:
             if had == 0 and self.world._slot_of:
                 self.apply_params(scene, st)        # units may now be detectable
         idle = (not live) and (time.perf_counter() - self.last_hot) > IDLE_SECONDS
-        self.world.step(budget=budget, hot_budget=max(0.05, 4.0 * budget), idle=idle)
+        self.world.step(budget=budget, hot_budget=max(0.016, budget), idle=idle)
         self.last_tick_ms = (time.perf_counter() - t0) * 1000.0
         cutoff = now - HOT_SECONDS
         if self.hot:

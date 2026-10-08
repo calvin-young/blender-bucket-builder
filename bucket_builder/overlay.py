@@ -38,8 +38,6 @@ _VERT = """
 void main()
 {
   v_pos = pos;
-  v_lo = clipLo;
-  v_hi = clipHi;
   vec4 p = u_viewProj * vec4(pos, 1.0);
   /* Pull the surface slightly towards the viewer so it does not z-fight with
    * the mesh it lies on: u_bias = (perspective?, winmat[2][2], relative, absolute). */
@@ -53,12 +51,16 @@ void main()
 }
 """
 
+# u_params = (hatch spacing, line width, clip mode, style)
+# clip mode 0: draw everything, 1: only inside the clip box, 2: only outside it
 _FRAG = """
 void main()
 {
-  bool inside = all(greaterThanEqual(v_pos, v_lo)) && all(lessThanEqual(v_pos, v_hi));
-  if (inside == (u_params.z > 0.5)) {
-    discard;
+  if (u_params.z > 0.5) {
+    bool inside = all(greaterThanEqual(v_pos, u_clipLo.xyz)) && all(lessThanEqual(v_pos, u_clipHi.xyz));
+    if (inside == (u_params.z > 1.5)) {
+      discard;
+    }
   }
   float s = u_params.x;
   float w = u_params.y;
@@ -141,17 +143,15 @@ def _make_tint_shader():
 def _make_hatch_shader():
     iface = gpu.types.GPUStageInterfaceInfo("bucket_builder_iface")
     iface.smooth('VEC3', "v_pos")
-    iface.flat('VEC3', "v_lo")
-    iface.flat('VEC3', "v_hi")
     info = gpu.types.GPUShaderCreateInfo()
     info.push_constant('MAT4', "u_viewProj")
     info.push_constant('VEC4', "u_color")
     info.push_constant('VEC4', "u_params")
     info.push_constant('VEC4', "u_bias")
     info.push_constant('VEC4', "u_extra")
+    info.push_constant('VEC4', "u_clipLo")
+    info.push_constant('VEC4', "u_clipHi")
     info.vertex_in(0, 'VEC3', "pos")
-    info.vertex_in(1, 'VEC3', "clipLo")
-    info.vertex_in(2, 'VEC3', "clipHi")
     info.vertex_out(iface)
     info.fragment_out(0, 'VEC4', "fragColor")
     info.vertex_source(_VERT)
@@ -191,30 +191,28 @@ class _Group:
     def __init__(self):
         self.key = None
         self.tri = {}        # kind -> batch
+        self.clipped = {}    # kind -> [(batch, box lo, box hi), ...] patches to trim
         self.line = {}       # kind -> batch
+        self.ntri = 0
         self.empty = True
 
 
-def _tri_arrays(parts):
-    """parts: list of (tris (n,3,3) f32, offset (3,), clip lo, clip hi) -> pos, lo, hi."""
+def _tri_array(parts):
+    """parts: list of (tris (n, 3, 3) f32, offset (3,)) -> positions (3n, 3) f32."""
     if not parts:
         return None
     n = sum(p[0].shape[0] for p in parts)
     if n == 0:
         return None
     pos = np.empty((n * 3, 3), dtype=np.float32)
-    lo = np.empty((n * 3, 3), dtype=np.float32)
-    hi = np.empty((n * 3, 3), dtype=np.float32)
     i = 0
-    for tris, off, clo, chi in parts:
+    for tris, off in parts:
         m = tris.shape[0] * 3
         if m == 0:
             continue
         np.add(tris.reshape(m, 3), off, out=pos[i:i + m], casting='unsafe')
-        lo[i:i + m] = clo
-        hi[i:i + m] = chi
         i += m
-    return pos, lo, hi
+    return pos
 
 
 def _line_array(parts):
@@ -255,15 +253,21 @@ def _build_group(mon, pairs, oobs, walls, vol, shaders):
     w = mon.world
     g = _Group()
     tri_parts = {'collide': [], 'clear': [], 'outside': [], 'wall': []}
+    clip_parts = {'collide': [], 'clear': []}
     line_parts = {'collide': [], 'clear': [], 'outside': [], 'wall': []}
     inner = w.inner_box()
     for (a, b), pr in pairs:
         off = w.O_T[a]
         kind = 'collide' if pr.state == COLLIDE else 'clear'
-        if pr.tri_a is not None and pr.clip_a is not None:
-            tri_parts[kind].append((pr.tri_a, off, pr.clip_a[0] + off, pr.clip_a[1] + off))
-        if pr.tri_b is not None and pr.clip_b is not None:
-            tri_parts[kind].append((pr.tri_b, off, pr.clip_b[0] + off, pr.clip_b[1] + off))
+        # each patch travels with its own part; most are drawn as they are,
+        # one made of long triangles is trimmed to a box around the contact
+        for tris, own, clip in ((pr.tri_a, off, pr.clip_a), (pr.tri_b, w.O_T[b], pr.clip_b)):
+            if tris is None or len(tris) == 0:
+                continue
+            if clip is None:
+                tri_parts[kind].append((tris, own))
+            else:
+                clip_parts[kind].append((tris, own, clip[0] + off, clip[1] + off))
         if pr.segs is not None and len(pr.segs):
             line_parts['collide'].append((pr.segs, off))
         elif pr.pa is not None and pr.pb is not None and pr.dist > 0.0:
@@ -272,27 +276,33 @@ def _build_group(mon, pairs, oobs, walls, vol, shaders):
     zero = np.zeros(3)
     for slot, r in oobs:
         if r.tris is not None and len(r.tris) and vol is not None:
-            tri_parts['outside'].append((r.tris, zero, vol[0], vol[1]))
+            tri_parts['outside'].append((r.tris, zero))
         if r.state == OUTSIDE or r.band_only:
             line_parts['outside'].append((_box_edges(r.lo, r.hi), zero))
     for slot, r in walls:
         # drawn where it lies outside the inner box, i.e. inside the margin
         if r.tris is not None and len(r.tris) and inner is not None:
-            tri_parts['wall'].append((r.tris, zero, inner[0], inner[1]))
+            tri_parts['wall'].append((r.tris, zero))
         if r.band_only:
             line_parts['wall'].append((_box_edges(r.lo, r.hi), zero))
 
     hatch = shaders['hatch']
     for kind, parts in tri_parts.items():
-        arr = _tri_arrays(parts)
-        if arr is None:
+        pos = _tri_array(parts)
+        if pos is None:
             continue
-        pos, lo, hi = arr
-        if hatch is not None:
-            g.tri[kind] = batch_for_shader(hatch, 'TRIS', {"pos": pos, "clipLo": lo, "clipHi": hi})
-        else:
-            g.tri[kind] = batch_for_shader(shaders['flat'], 'TRIS', {"pos": pos})
+        g.tri[kind] = batch_for_shader(hatch if hatch is not None else shaders['flat'], 'TRIS',
+                                       {"pos": pos})
+        g.ntri += pos.shape[0] // 3
         g.empty = False
+    for kind, parts in clip_parts.items():
+        for tris, own, lo, hi in parts:
+            pos = _tri_array([(tris, own)])
+            batch = batch_for_shader(hatch if hatch is not None else shaders['flat'], 'TRIS',
+                                     {"pos": pos})
+            g.clipped.setdefault(kind, []).append((batch, lo, hi))
+            g.ntri += pos.shape[0] // 3
+            g.empty = False
     for kind, parts in line_parts.items():
         pos = _line_array(parts)
         if pos is None:
@@ -354,8 +364,10 @@ def _rgba(color, alpha_scale=1.0):
     return (color[0], color[1], color[2], color[3] * alpha_scale)
 
 
-def _draw_tris(shaders, batch, color, style, spacing, width, invert, fill, vp, bias, xray,
-               srgb):
+def _draw_tris(shaders, batch, color, style, spacing, width, fill, vp, bias, xray, srgb,
+               clip=None, outside=False):
+    """Draw hatched triangles.  ``clip`` is an optional box (lo, hi): only the
+    part inside it is drawn, or with ``outside`` only the part beyond it."""
     hatch = shaders['hatch']
     if hatch is None:
         sh = shaders['flat']
@@ -370,7 +382,11 @@ def _draw_tris(shaders, batch, color, style, spacing, width, invert, fill, vp, b
         return
     hatch.bind()
     hatch.uniform_float("u_viewProj", vp)
-    hatch.uniform_float("u_params", (spacing, width, 1.0 if invert else 0.0, style))
+    mode = 0.0 if clip is None else (2.0 if outside else 1.0)
+    hatch.uniform_float("u_params", (spacing, width, mode, style))
+    if clip is not None:
+        hatch.uniform_float("u_clipLo", (clip[0][0], clip[0][1], clip[0][2], 0.0))
+        hatch.uniform_float("u_clipHi", (clip[1][0], clip[1][1], clip[1][2], 0.0))
     if xray > 0.0:
         # hidden parts of the region: dimmer, drawn through everything
         gpu.state.depth_test_set('NONE')
@@ -553,20 +569,28 @@ def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport,
                     continue
                 b = g.tri.get('clear')
                 if b is not None:
-                    _draw_tris(shaders, b, col_w, STYLE_DIAG, spacing, lw, False, 0.10,
+                    _draw_tris(shaders, b, col_w, STYLE_DIAG, spacing, lw, 0.10,
                                persp_matrix, bias, xray, srgb)
+                for b, lo, hi in g.clipped.get('clear', ()):
+                    _draw_tris(shaders, b, col_w, STYLE_DIAG, spacing, lw, 0.10,
+                               persp_matrix, bias, xray, srgb, (lo, hi))
                 b = g.tri.get('wall')
                 if b is not None:
-                    _draw_tris(shaders, b, col_w, STYLE_BACK, spacing, lw, True, 0.10,
-                               persp_matrix, bias, xray, srgb)
+                    # only what lies beyond the inner box, i.e. inside the margin
+                    _draw_tris(shaders, b, col_w, STYLE_BACK, spacing, lw, 0.10,
+                               persp_matrix, bias, xray, srgb, w.inner_box(), True)
                 b = g.tri.get('outside')
                 if b is not None:
-                    _draw_tris(shaders, b, col_o, STYLE_BACK, spacing * 0.8, lw, True, 0.16,
-                               persp_matrix, bias, xray, srgb)
+                    # only what lies beyond the walls
+                    _draw_tris(shaders, b, col_o, STYLE_BACK, spacing * 0.8, lw, 0.16,
+                               persp_matrix, bias, xray, srgb, w.volume, True)
                 b = g.tri.get('collide')
                 if b is not None:
-                    _draw_tris(shaders, b, col_c, STYLE_CROSS, spacing, lw, False, 0.16,
+                    _draw_tris(shaders, b, col_c, STYLE_CROSS, spacing, lw, 0.16,
                                persp_matrix, bias, xray, srgb)
+                for b, lo, hi in g.clipped.get('collide', ()):
+                    _draw_tris(shaders, b, col_c, STYLE_CROSS, spacing, lw, 0.16,
+                               persp_matrix, bias, xray, srgb, (lo, hi))
             for g in groups:
                 if g.empty:
                     continue

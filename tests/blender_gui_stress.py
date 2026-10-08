@@ -271,6 +271,31 @@ def step_end():
     return 0.1
 
 
+# what part of the overlay's time is spent preparing data (CPU, the same on any
+# machine) as opposed to handing it to the graphics driver
+PREP = {'t': 0.0, 'n': 0, 'tris': 0}
+_groups_orig = bc.overlay._groups
+
+
+def _groups_timed(mon_, st_, shaders_):
+    t = time.perf_counter()
+    r = _groups_orig(mon_, st_, shaders_)
+    PREP['t'] += time.perf_counter() - t
+    PREP['n'] += 1
+    PREP['tris'] = max(PREP['tris'], r[0].ntri + r[1].ntri)
+    return r
+
+
+bc.overlay._groups = _groups_timed
+
+
+def step_prep_report():
+    if PREP['n']:
+        log(f'overlay data preparation: {PREP["t"] / PREP["n"] * 1000:.2f} ms per redraw on average '
+            f'over {PREP["n"]} redraws; at most {PREP["tris"] // 1000}k region triangles on screen')
+    return 0.05
+
+
 STEPS = [step_setup, step_enable, step_wait_ready, step_overview, step_pick]
 STEPS += begin('move (G)', 'G')
 for i in range(36):
@@ -285,7 +310,7 @@ STEPS += begin('scale (S)', 'S', offset=(120, 0))
 for i in range(14):
     STEPS += move('scale (S)', 6 if i < 9 else -8, 0)
 STEPS += finish('scale (S)')
-STEPS += [step_end]
+STEPS += [step_prep_report, step_end]
 
 
 def runner():
