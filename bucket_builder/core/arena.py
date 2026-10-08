@@ -82,10 +82,11 @@ class Arena:
         # large; never by more than ``room`` bytes beyond what is needed.
         have = int(self.data.shape[0])
         cap = max(have + min(int(have * 0.6) + 1024, self.max_step), int(self.want))
-        if room is not None:
-            cap = min(cap, have + max(0, int(room)) // (self.width * self.dtype.itemsize))
-        cap = max(int(need), cap)
         cap = -(-cap // self.align) * self.align
+        if room is not None:
+            top = have + max(0, int(room)) // (self.width * self.dtype.itemsize)
+            cap = min(cap, top // self.align * self.align)
+        cap = max(-(-int(need) // self.align) * self.align, cap)
         self._resize(cap)
 
     def _resize(self, cap):

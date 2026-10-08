@@ -235,7 +235,7 @@ def main():
     mon = settle()
     want = {k: (pr.state, pr.nseg) for k, pr in mon.world.viol.items()}
     names = {mon.world.uid(s_): s_ for s_ in mon.world._slot_of.values()}
-    check(mon.world.stats()['borrowing'] == 0 and len(want) >= 3, 'with memory to spare nothing is shared',
+    check(mon.world.evictions == 0 and len(want) >= 3, 'with memory to spare nothing is dropped',
           len(want))
     one = core.World.pose_size(len(a.data.vertices), len(a.data.polygons))
     st_w = mon.world.stats()
@@ -251,9 +251,9 @@ def main():
     for (sa_, sb_), pr in w.viol.items():
         ka, kb = names[w.uid(sa_)], names[w.uid(sb_)]
         got[(min(ka, kb), max(ka, kb))] = (pr.state, pr.nseg)
-    check(w.stats()['borrowing'] >= 1 and got == want,
-          'copies in other rotations then share a pose, with the same results',
-          (w.stats()['borrowing'], len(got)))
+    check(w.evictions >= 1 and got == want,
+          'poses then take turns in the memory there is, with the same results',
+          (w.evictions, len(got)))
     # far too little: the large parts cannot be checked, and that is said
     p.memory_gb = 0.004
     mon = settle()

@@ -284,8 +284,9 @@ class BucketBuilderPreferences(AddonPreferences):
     memory_gb: FloatProperty(
         name="Memory (GB)", description="Most memory the checker may use for the data that "
         "makes it fast. 0 is automatic: a fifth of the installed memory. When it runs short, "
-        "copies of a part in different rotations share data, which makes checking them slower "
-        "but not less exact; a part too large for it is listed as not checked",
+        "the data of the parts that were not looked at for longest is dropped and built again "
+        "when needed, which makes checking slower but not less exact; a part too large for it "
+        "is listed as not checked",
         default=0.0, min=0.0, soft_max=64.0, step=100, precision=1, update=_poke_prefs)
 
     def draw(self, context):

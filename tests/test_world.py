@@ -895,7 +895,7 @@ def borrow_tests(rng):
         return L
 
     stats = {}
-    n_borrow = n_quick = n_vol = n_small_angle = 0
+    n_borrow = n_quick = n_vol = n_small_angle = n_exact = 0
     for trial in range(360):
         w = World()
         w.fit_now = 0                                 # every mesh may borrow, however small
@@ -923,7 +923,7 @@ def borrow_tests(rng):
             c, s_ = np.cos(a), np.sin(a)
             Mb[:3, :3] = np.array([[c, -s_, 0], [s_, c, 0], [0, 0, 1]]) @ w.part_matrix(sb)[:3, :3]
             n_small_angle += 1
-        hot = trial % 2 == 0
+        hot = True
         both = trial % 3 == 1
         w.set_matrix('B', Mb, hot=hot)
         if trial % 3 == 2:                            # turned again before anything was solved
@@ -935,43 +935,38 @@ def borrow_tests(rng):
         w.set_matrix('A', Ma, hot=hot)
         assert w.O_VIRT[sb] and (w.O_VIRT[sa] or not both), (trial, w.O_VIRT[sa], w.O_VIRT[sb])
         key = (sa, sb)
-        if hot:
-            # one frame of a drag: the quick answer, from borrowed boxes
-            w.step(idle=False)
-            assert w.O_VIRT[sb]
-            pr = w.pairs.get(key)
-            assert pr is None or not pr.stale
-            quick = (OK if pr is None else pr.state, None if pr is None else pr.dist)
-            n_quick += 1
-        else:
-            # background work while something else is being edited: the
-            # complete answer, still from borrowed boxes
-            # (step() keeps reporting work: the parts still want poses of their own)
-            steps = 0
-            while w.unsettled or w._oob_geom:
-                w.step(idle=False, budget=0.0005)
-                steps += 1
-                assert steps < 10000
-            assert w.O_VIRT[sb]
+        # one frame of a drag: the quick answer, from borrowed boxes
+        w.step(idle=False)
+        assert w.O_VIRT[sb]
+        pr = w.pairs.get(key)
+        assert pr is None or (not pr.stale and pr.loose)
+        quick = (OK if pr is None else pr.state, None if pr is None else pr.dist)
+        n_quick += 1
+        n_vol += check_volume(w, 'A', trial) + check_volume(w, 'B', trial)
+        if trial % 2 and pr is not None:
+            # The complete answer straight from borrowed boxes.  The world
+            # never asks for that (it fits poses for exact work, see below),
+            # but it is the sharpest test of the moved boxes there is.
+            narrow.solve(w, [key], True, None)
             check_pair(w, 'A', 'B', f'borrow trial {trial} (borrowing)', {})
-            n_vol += check_volume(w, 'A', trial) + check_volume(w, 'B', trial)
-            pr = w.pairs.get(key)
-            assert pr is None or pr.loose, trial
+            pr.refine = True
+            w._pend_refine[key] = None
+            n_exact += 1
         n_borrow += 1 + both
-        while w.step():                               # quiet: fitted poses, results refreshed
+        while w.step():                               # quiet: results redone with fitted poses
             pass
-        assert not w.O_VIRT[sa] and not w.O_VIRT[sb] and w.stats()['borrowing'] == 0
         pr = w.pairs.get(key)
         assert pr is None or not (pr.loose or pr.stale or pr.refine), (trial, pr.loose, pr.stale)
+        # (a part with nothing near it may go on borrowing: that costs nothing)
+        assert pr is None or not (w.O_VIRT[sa] or w.O_VIRT[sb]), trial
         check_pair(w, 'A', 'B', f'borrow trial {trial} (settled)', stats)
         n_vol += check_volume(w, 'A', trial) + check_volume(w, 'B', trial)
         e_state = OK if pr is None else pr.state
-        if hot:
-            q_state, q_dist = quick
-            if COLLIDE in (q_state, e_state):
-                assert q_state == e_state, ('collision differs with borrowed boxes', trial)
-            elif q_state == CLEAR:
-                assert e_state == CLEAR and q_dist >= pr.dist * (1 - 2e-3) - 1e-9, (trial, q_dist)
+        q_state, q_dist = quick
+        if COLLIDE in (q_state, e_state):
+            assert q_state == e_state, ('collision differs with borrowed boxes', trial)
+        elif q_state == CLEAR:
+            assert e_state == CLEAR and q_dist >= pr.dist * (1 - 2e-3) - 1e-9, (trial, q_dist)
         # and exactly what a world built from scratch says
         f = World()
         f.set_scale(2.0, 0.01)
@@ -991,7 +986,7 @@ def borrow_tests(rng):
     print(f'borrowed poses: {n_borrow} turned or scaled parts ({n_small_angle} only slightly), '
           f'states OK/CLEAR/COLLIDE = {stats.get(OK, 0)}/{stats.get(CLEAR, 0)}/{stats.get(COLLIDE, 0)} '
           f'(enclosed: {stats.get("enclosed", 0)}), {n_quick} quick answers consistent, '
-          f'{n_vol} build-volume reports exact')
+          f'{n_exact} complete answers from borrowed boxes right, {n_vol} build-volume reports exact')
 
     # a part inside another one that borrows its pose: the question "is this
     # point inside?" has to be asked in the frame of the borrowed pose
@@ -1016,14 +1011,14 @@ def borrow_tests(rng):
             while w.step():
                 pass
             # the bar now lies along y; the ball is put where the bar was, or is
-            w.set_matrix('bar', meshes.matrix(tilt @ quarter @ tilt.T @ tilt), hot=False)
+            w.set_matrix('bar', meshes.matrix(tilt @ quarter @ tilt.T @ tilt))
             w.set_matrix('ball', meshes.matrix(None, tilt @ quarter @ np.array(where) * 0 +
-                                               tilt @ quarter @ np.array([where[1], -where[0], 0.0])),
-                         hot=False)
-            while w.unsettled:
-                w.step(idle=False)
-            assert w.O_VIRT[w.slot('bar')]
+                                               tilt @ quarter @ np.array([where[1], -where[0], 0.0])))
+            w.step(idle=False)
+            assert w.O_VIRT[w.slot('bar')] and not w.unsettled
             pr = w.pairs.get((0, 1))
+            if pr is not None:
+                narrow.solve(w, [(0, 1)], True, None)      # the complete answer, still borrowing
             got = OK if pr is None else pr.state
             assert got == want, ('enclosed in a borrowing part', where, swap, got)
             if want == COLLIDE:
@@ -1074,7 +1069,8 @@ def borrow_tests(rng):
           f'they are {np.mean(grow):.2f} times as large on average)')
 
     # copies of one mesh in many rotations with memory for two poses only:
-    # the others borrow, and nothing is reported differently
+    # live answers come from borrowed poses, exact ones from fitted poses that
+    # take turns in the cache, and nothing is reported differently
     big = meshes.blob(rng, 0.5, 64, 32, 0.3)
     one = World.pose_size(len(big[0]), len(big[1]))
 
@@ -1111,11 +1107,13 @@ def borrow_tests(rng):
         for w in (ref, lim):
             if it % 2:
                 w.step(idle=False)
+                if w is lim:
+                    peak = max(peak, lim.stats()['borrowing'])
+                    assert len(lim._poses) <= 2
             while w.step(budget=0.002):
                 pass
         assert lim.pose_bytes + lim.geom_bytes <= lim.cache_limit and len(lim._poses) <= 2
         assert lim.BOX.nbytes + lim.geom_bytes <= lim.cache_limit
-        peak = max(peak, lim.stats()['borrowing'])
         assert set(lim.viol) == set(ref.viol), (it, set(lim.viol) ^ set(ref.viol))
         for k, pr in ref.viol.items():
             pl = lim.viol[k]
@@ -1126,9 +1124,9 @@ def borrow_tests(rng):
             assert (r.tris is None) == (lim.oob[s].tris is None)
             assert r.tris is None or len(r.tris) == len(lim.oob[s].tris), (it, s)
         assert set(lim.wall) == set(ref.wall)
-    assert peak >= count - 6 and ref.stats()['borrowing'] == 0, peak
-    assert lim.evictions == 0, lim.evictions          # borrowing instead of taking turns
-    print(f'  {count} copies of one mesh, memory for two poses: up to {peak} borrow, results the same')
+    assert peak >= 1 and lim.evictions > 20 and ref.evictions == 0, (peak, lim.evictions)
+    print(f'  {count} copies of one mesh, memory for two poses: results the same '
+          f'(up to {peak} borrowing during an edit, {lim.evictions} poses dropped and fitted again)')
 
     # a pose shared by two parts: the one that is turned gets its own beside it
     w = build(False)
@@ -1152,7 +1150,7 @@ def borrow_tests(rng):
     assert len(w._poses) == 1
     w.remove_object('q')
     w.drop_unused_geoms()
-    assert w.BOX.live == 0 and w.pose_bytes == 0 and not w._virt_todo and not w._fitting
+    assert w.BOX.live == 0 and w.pose_bytes == 0 and not w._virt_todo and not w._borrowing
 
     # a large mesh is fitted in pieces: no single step takes it all
     v, f = meshes.blob(rng, 0.5, 400, 200, 0.3)                 # about 160 000 triangles
@@ -1179,6 +1177,55 @@ def borrow_tests(rng):
     print(f'  fits are spread over steps ({steps} for a mesh of {len(f)} triangles)')
 
 
+def dense_clearance_tests(rng):
+    """Two plates with large, finely meshed faces a little apart: thousands of
+    triangle pairs are all about as close as the closest.  Proving the
+    smallest gap is then expensive, so the search is capped at first; it must
+    still never get the verdict wrong."""
+    n = 110
+    v, f = meshes.grid_box((1.0, 1.0, 0.1), n)
+    top = np.flatnonzero(np.isclose(v[:, 2], 0.05))
+    # one vertex of the lower plate's top face, away from the edges, raised a little
+    mid = top[np.argmin(np.abs(v[top, 0] - 0.2) + np.abs(v[top, 1] + 0.3))]
+    vb = v.copy()
+    vb[mid, 2] += 0.012
+    R = meshes.rot(rng)
+    repeated = 0
+    for name, lower, gap, clear, want, dist in (
+            ('just clear of the limit', v, 0.105, 0.1, OK, None),
+            ('a bump inside the limit', vb, 0.105, 0.1, CLEAR, 0.093),
+            ('just inside the limit', v, 0.099, 0.1, CLEAR, 0.099),
+            ('well inside the limit', v, 0.105, 0.2, CLEAR, 0.105)):
+        w = World()
+        w.set_scale(2.0, 0.01)
+        w.set_thresholds(0.0, clear)
+        w.add_geom('lower', lower, f)
+        w.add_geom('upper', v, f)
+        w.add_object('L', 'lower', meshes.matrix(R))
+        w.add_object('U', 'upper', meshes.matrix(R, R @ np.array([0.03, -0.02, 0.1 + gap])))
+        t0 = time.perf_counter()
+        while w.unsettled:
+            w.step(idle=False)                          # the answer while dragging
+        pr = w.pairs.get((0, 1))
+        q_state = OK if pr is None else pr.state
+        while w.step():
+            pass
+        ms = (time.perf_counter() - t0) * 1000
+        pr = w.pairs.get((0, 1))
+        got = OK if pr is None else pr.state
+        assert got == want, (name, got, None if pr is None else pr.dist)
+        assert q_state in (want, OK), (name, q_state)   # never a false alarm while dragging
+        if dist is not None:
+            assert abs(pr.dist - dist) <= 2e-3 * dist, (name, pr.dist, dist)
+            assert pr.tri_a is not None and len(pr.tri_a)
+        repeated += w.proofs_repeated
+        print(f'  plates of {len(f)} triangles, {name}: state {got}'
+              + (f', {pr.dist:.4f}' + (' (flagged approximate)' if pr.approx else '') if pr and want else '')
+              + f', {ms:.0f} ms, searched again with large caps: {w.proofs_repeated}')
+    assert repeated >= 1, repeated
+    print('dense clearance: ok')
+
+
 def main():
     rng = np.random.default_rng(11)
     special_pair_tests()
@@ -1190,6 +1237,7 @@ def main():
     scale_tests(rng)
     quick_mode_tests(rng)
     sketch_tests(rng)
+    dense_clearance_tests(rng)
     cache_tests(rng)
     borrow_tests(rng)
     incremental_tests(rng)

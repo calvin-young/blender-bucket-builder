@@ -226,9 +226,9 @@ class BUCKETBUILDER_PT_parts(_Base, Panel):
             limit = stats['cache_limit']
             used = f"{stats['bytes'] / 1e6:.0f} MB of cached data"
             col.label(text=used + (f" (limit {limit / 2 ** 30:.1f} GB)" if limit else ""))
-            if stats['borrowing']:
-                # copies of a part in other rotations using one set of boxes
-                col.label(text=f"{stats['borrowing']} parts share data (slower checks)")
+            if stats['evictions']:
+                # the limit is in the way: data is dropped and rebuilt
+                col.label(text="Memory limit reached (see Preferences)", icon='INFO')
             if mon.live_ms:
                 col.label(text=f"Live update {max(mon.live_ms):.1f} ms at most recently")
             if mon.draw_ms:
