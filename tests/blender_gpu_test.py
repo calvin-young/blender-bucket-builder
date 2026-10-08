@@ -205,6 +205,19 @@ def main():
     render(mon, st, 'ortho_top', (190, 142, 900), (190, 142, 0), is_ortho=True, ortho_scale=420.0,
            up=(0, 1, 0))
 
+    # whole-part shading of the colliding parts, and its fallback
+    pr = props.prefs()
+    st.show_tint = False
+    r0, _, _ = render(mon, st, 'tint_off', (150, -20, 150), (112, 110, 64))
+    st.show_tint = True
+    r1, _, _ = render(mon, st, 'tint_on', (150, -20, 150), (112, 110, 64))
+    assert len(overlay._state.get('tint', {})) == 2, 'one cached mesh per colliding part expected'
+    pr.tint_budget = 0.0                       # no triangle budget: outline boxes instead
+    r2, _, _ = render(mon, st, 'tint_boxes', (150, -20, 150), (112, 110, 64))
+    pr.tint_budget = 4.0
+    print(f'  red pixels: tint off {r0}, on {r1}, outline boxes {r2}')
+    assert r2 > r0, 'outline boxes of the colliding parts are missing'
+
     # a clean build: the badge must turn green
     bpy.data.objects['Ring'].location.z = 150
     bpy.data.objects['Pin'].location.z = 115

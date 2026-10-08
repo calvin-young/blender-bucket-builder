@@ -11,10 +11,21 @@ rotate and scale parts as usual. While you drag, the viewport shows:
   measured gap),
 * what reaches **outside the printer's build volume** (magenta hatching on just
   the geometry that is out),
+* which parts are at fault: every colliding part is **shaded light red**,
+* optionally, parts that sit too close to the **side walls** of the volume,
 * a large **green tick** when there are no collisions and every part is inside
   the volume.
 
 Nothing in the scene is modified; everything is drawn on top of it.
+
+![A part being dragged: the collision hatching follows it](docs/images/dragging.png)
+
+| | |
+| --- | --- |
+| ![Colliding parts are shaded, the overlap is hatched](docs/images/collision.png) | ![A clean build](docs/images/build-ok.png) |
+
+Screenshots are from the automated window test (`tests/blender_gui_test.py`),
+with test primitives sized in millimetres inside a 380 x 284 x 380 mm volume.
 
 The user guide is in [bucket_builder/README.md](bucket_builder/README.md).
 

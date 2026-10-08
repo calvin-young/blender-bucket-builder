@@ -475,6 +475,34 @@ class World:
     def object_count(self):
         return len(self._slot_of)
 
+    def colliding_slots(self):
+        """Slots of the parts that take part in at least one collision."""
+        out = set()
+        for key, pr in self.viol.items():
+            if pr.state == COLLIDE:
+                out.update(key)
+        return out
+
+    def part_mesh(self, slot):
+        """(geometry key, local vertices (nv, 3), triangles (nt, 3)) of a part.
+        The arrays are views: copy them if they are kept."""
+        g = self._obj[slot][1].geom
+        return g.key, g.verts, self.TIDX.data[g.tbase:g.tbase + g.nt]
+
+    def part_triangles(self, slot):
+        return self._obj[slot][1].geom.nt
+
+    def part_matrix(self, slot):
+        """World matrix of a part as float64 (4, 4)."""
+        M = np.eye(4)
+        M[:3, :3] = self._obj[slot][1].L
+        M[:3, 3] = self.O_T[slot]
+        return M
+
+    def part_bounds(self, slot):
+        """Exact world-space extents of a part: (lo, hi)."""
+        return self.O_LO[slot] + self.O_T[slot], self.O_HI[slot] + self.O_T[slot]
+
     # ------------------------------------------------------------ broad phase
     def _stamp(self, key):
         a, b = key
