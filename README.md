@@ -125,6 +125,8 @@ With the add-on installed and enabled in Blender:
       ops.py              operators: navigation, printer profiles
       ui.py               sidebar panels
     tests/
+    tools/test-blender/   building Blender from source where it cannot be downloaded
+    CLAUDE.md             working notes: state, decisions, what is next
 
 ## Licence
 
