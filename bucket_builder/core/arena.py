@@ -21,8 +21,11 @@ class Arena:
         self.top = 0
         self._free = []      # sorted list of (base, size)
         self.live = 0
+        self.max_step = max(1 << 16, (256 << 20) // (width * self.dtype.itemsize))
 
-    def alloc(self, n):
+    def alloc(self, n, room=None):
+        """Reserve ``n`` rows and return the first.  ``room`` (bytes, optional)
+        is the most the array may grow by beyond what this request needs."""
         n = -(-int(n) // self.align) * self.align
         free = self._free
         for i, (base, size) in enumerate(free):
@@ -34,11 +37,20 @@ class Arena:
                 self.live += n
                 return base
         if self.top + n > self.data.shape[0]:
-            self._grow(self.top + n)
+            self._grow(self.top + n, room)
         base = self.top
         self.top += n
         self.live += n
         return base
+
+    def growth(self, n):
+        """Rows the array would have to grow by to take ``n`` more rows (0 if
+        they fit in what is allocated already)."""
+        n = -(-int(n) // self.align) * self.align
+        for _, size in self._free:
+            if size >= n:
+                return 0
+        return max(0, self.top + n - self.data.shape[0])
 
     def release(self, base, n):
         base = int(base)
@@ -63,9 +75,18 @@ class Arena:
         else:
             free.insert(i, (base, n))
 
-    def _grow(self, need):
-        cap = max(int(need), int(self.data.shape[0] * 1.6) + 1024)
+    def _grow(self, need, room=None):
+        # grow geometrically while small, by at most ``max_step`` rows once
+        # large, and never by more than ``room`` bytes beyond what is needed
+        have = int(self.data.shape[0])
+        cap = have + min(int(have * 0.6) + 1024, self.max_step)
+        if room is not None:
+            cap = min(cap, have + max(0, int(room)) // (self.width * self.dtype.itemsize))
+        cap = max(int(need), cap)
         cap = -(-cap // self.align) * self.align
+        self._resize(cap)
+
+    def _resize(self, cap):
         try:
             # realloc: for large blocks the OS remaps the pages instead of
             # copying them.  Nothing keeps a view of ``data`` across an alloc.
@@ -74,6 +95,14 @@ class Arena:
             new = np.empty((cap, self.width), dtype=self.dtype)
             new[:self.top] = self.data[:self.top]
             self.data = new
+
+    def shrink(self, cap=0):
+        """Give memory back: cut the array down to what is in use (at least
+        ``cap`` rows).  Only the unused tail can be returned."""
+        cap = max(int(cap), self.top, self.align)
+        cap = -(-cap // self.align) * self.align
+        if cap < self.data.shape[0]:
+            self._resize(cap)
 
     @property
     def nbytes(self):

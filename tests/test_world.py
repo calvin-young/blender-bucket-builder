@@ -17,6 +17,7 @@ import meshes  # noqa: E402
 def posed_tris(w, uid):
     """World-space float64 triangles of an object exactly as the world stores them."""
     slot = w.slot(uid)
+    w.need_poses([slot])            # poses are built on demand
     pose = int(w.O_POSE[slot])
     nt = int(w.PNT[pose])
     P = narrow.corners(w, np.full(nt, pose), np.arange(nt)).astype(np.float64)
@@ -306,8 +307,8 @@ def incremental_tests(rng):
     for uid in list(objs):
         w.remove_object(uid)
     w.drop_unused_geoms()
-    assert w.BOX.live == 0 and w.VERT.live == 0 and w.TIDX.live == 0, (
-        w.BOX.live, w.VERT.live, w.TIDX.live)
+    assert w.BOX.live == 0 and w.TIDX.live == 0 and w.pose_bytes == 0, (
+        w.BOX.live, w.TIDX.live, w.pose_bytes)
     assert not w.pairs and not w.viol and not w.oob
     print(f'incremental edits checked against a fresh world: {edits} '
           f'(violating pairs seen: {nviol})')
@@ -476,8 +477,8 @@ def enclosure_tests(rng):
         w.set_scale(4.0, 0.01)
         w.add_geom(name, v, f)
         w.add_object('o', name, meshes.matrix(meshes.rot(rng) if name != 'box' else None))
-        pose = int(w.O_POSE[w.slot('o')])
         P = posed_tris(w, 'o')
+        pose = int(w.O_POSE[w.slot('o')])
         pts = rng.uniform(-1.6, 1.6, (400, 3))
         if name == 'box':
             # rays that run exactly along edges, through corners and along the
@@ -761,6 +762,92 @@ def odd_input_tests():
     print('odd inputs (single triangle, zero-area, unshared, non-finite, flat, zero scale): ok')
 
 
+def cache_tests(rng):
+    """Poses are a cache.  With a memory limit far too small for the scene
+    the least recently used ones are dropped and re-fitted on demand; the
+    results must be the same as without a limit."""
+    parts = {
+        'blob': meshes.blob(rng, 0.5, 96, 48, 0.3),
+        'tor': meshes.torus(0.5, 0.18, 96, 48),
+        'gbox': meshes.grid_box((0.9, 0.6, 0.6), 40),
+        'sph': meshes.uv_sphere(0.5, 96, 48),
+    }
+    names = list(parts)
+
+    def build(limit):
+        w = World()
+        w.set_scale(8.0, 0.01)
+        w.set_thresholds(0.0, 0.2)
+        w.set_volume((-1.6, -1.6, -1.6), (1.6, 1.6, 1.6), 0.1)
+        w.cache_limit = limit
+        for k, (v, f) in parts.items():
+            w.add_geom(k, v, f)
+        return w
+
+    def snapshot(w):
+        out = {}
+        for (a, b), pr in w.viol.items():
+            ua, ub = w.uid(a), w.uid(b)
+            # (how finely the hatched region is resolved depends on what else
+            # is solved in the same batch, so it is not compared)
+            out[(min(ua, ub), max(ua, ub))] = (pr.state, round(pr.dist, 6), pr.nseg,
+                                               pr.tri_a is not None and len(pr.tri_a) > 0)
+        oob = {w.uid(s): (r.state, None if r.tris is None else len(r.tris)) for s, r in w.oob.items()}
+        wall = {w.uid(s): (round(r.dist, 6), None if r.tris is None else len(r.tris))
+                for s, r in w.wall.items()}
+        return out, oob, wall
+
+    one = max(World.pose_size(len(v), len(f)) for v, f in parts.values())
+    ref = build(None)
+    lim = build(None)
+    lim.set_cache_limit(lim.geom_bytes + 5 * one)     # room for about five poses of twenty-six
+    worlds = (ref, lim)
+    n_obj = 26
+    mats = {}
+    for i in range(n_obj):
+        mats[i] = (names[i % len(names)], meshes.matrix(meshes.rot(rng), rng.uniform(-1.7, 1.7, 3)))
+        for w in worlds:
+            w.add_object(i, *mats[i])
+    peak = 0
+    for it in range(60):
+        if it:
+            uid = int(rng.integers(n_obj))
+            g, M = mats[uid]
+            M = M.copy()
+            if it % 4 == 0:
+                M[:3, :3] = meshes.rot(rng)
+            else:
+                M[:3, 3] += rng.normal(0, 0.3, 3)
+            mats[uid] = (g, M)
+            for w in worlds:
+                w.set_matrix(uid, M)
+        for w in worlds:
+            if it % 2:
+                w.step(idle=False)                 # a frame of a drag first
+            while w.step(budget=0.002):
+                pass
+        got, want = snapshot(lim), snapshot(ref)
+        for k in range(3):
+            assert got[k] == want[k], (it, k, sorted(set(got[k].items()) ^ set(want[k].items()))[:6])
+        peak = max(peak, lim.pose_bytes)
+        assert lim.pose_bytes + lim.geom_bytes <= lim.cache_limit, (it, lim.pose_bytes)
+        assert lim.BOX.live * 24 == lim.pose_bytes
+        # the storage itself stays within the limit too, not just what is in use
+        assert lim.BOX.nbytes + lim.geom_bytes <= lim.cache_limit, (it, lim.BOX.nbytes)
+    assert ref.evictions == 0 and lim.evictions > 20, lim.evictions
+    assert len(ref._poses) > 12 and len(lim._poses) < len(ref._poses) // 2, (len(ref._poses), len(lim._poses))
+    # a part without neighbours and inside the volume never needs a pose
+    w = build(None)
+    w.add_object('alone', 'blob', meshes.matrix(meshes.rot(rng)))
+    w.add_object('far', 'tor', meshes.matrix(meshes.rot(rng), (40.0, 0.0, 0.0)))
+    while w.step():
+        pass
+    assert w.pose_bytes == 0 and not w._poses and w.oob[w.slot('far')].state == OUTSIDE
+    print(f'pose cache: results identical with room for 5 of {len(ref._poses)} poses '
+          f'({lim.evictions} evictions, {lim.flushes} flushes, {ref.pose_bytes / 1e6:.1f} MB unlimited, '
+          f'{peak / 1e6:.1f} MB at most with the limit)')
+
+
 def main():
     rng = np.random.default_rng(11)
     special_pair_tests()
@@ -772,6 +859,7 @@ def main():
     scale_tests(rng)
     quick_mode_tests(rng)
     sketch_tests(rng)
+    cache_tests(rng)
     incremental_tests(rng)
     print('OK')
 
