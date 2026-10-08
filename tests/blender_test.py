@@ -1,0 +1,396 @@
+"""End-to-end test inside Blender (run with: blender --background --python this_file).
+
+Exercises the add-on exactly as installed: registration, the dependency-graph
+handler that drives live updates, geometry changes, visibility, the build
+volume, units, printer profiles, save / reload.
+"""
+
+import importlib
+import math
+import os
+import sys
+import tempfile
+import time
+
+import bpy
+import numpy as np
+
+PKG = next(m for m in bpy.context.preferences.addons.keys() if m.endswith("build_check"))
+bc = importlib.import_module(PKG)
+monitor = bc.monitor
+props = bc.props
+core = importlib.import_module(PKG + ".core")
+OK, CLEAR, COLLIDE, PARTIAL, OUTSIDE = core.OK, core.CLEAR, core.COLLIDE, core.PARTIAL, core.OUTSIDE
+
+CHECKS = []
+
+
+def check(cond, label, detail=''):
+    CHECKS.append((bool(cond), label))
+    print(('  ok   ' if cond else '  FAIL ') + label + (f'   [{detail}]' if detail else ''))
+    if not cond:
+        raise AssertionError(label + ' ' + str(detail))
+
+
+def scene():
+    return bpy.context.scene
+
+
+def settle(max_ticks=20000):
+    """Run background slices until nothing is pending (timers do not run in
+    background mode, so the test drives them)."""
+    sc = scene()
+    mon = monitor.get(sc, create=True)
+    vl = bpy.context.view_layer
+    time.sleep(monitor.IDLE_SECONDS + 0.05)
+    for _ in range(max_ticks):
+        mon.tick(sc, vl.depsgraph, vl, live=False)
+        if not mon.busy:
+            break
+    assert not mon.busy, 'monitor never settled'
+    return mon
+
+
+def update():
+    """What Blender does after every step of an interactive edit."""
+    bpy.context.view_layer.update()
+
+
+def pair(mon, a, b):
+    w = mon.world
+    sa, sb = w.slot(a.session_uid), w.slot(b.session_uid)
+    if sa is None or sb is None:
+        return None
+    return w.pairs.get((sa, sb) if sa < sb else (sb, sa))
+
+
+def state(mon, a, b):
+    pr = pair(mon, a, b)
+    return OK if pr is None or pr.stale else pr.state
+
+
+def oob(mon, a):
+    r = mon.world.oob.get(mon.world.slot(a.session_uid))
+    return None if r is None else r.state
+
+
+def add_sphere(name, loc, radius=20.0, segs=48):
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=segs, ring_count=segs // 2, radius=radius, location=loc)
+    o = bpy.context.active_object
+    o.name = name
+    return o
+
+
+def add_cube(name, loc, size=40.0):
+    bpy.ops.mesh.primitive_cube_add(size=size, location=loc)
+    o = bpy.context.active_object
+    o.name = name
+    return o
+
+
+def main():
+    print('Blender', bpy.app.version_string, '| numpy', np.__version__, '| python', sys.version.split()[0])
+    print('add-on module:', PKG)
+
+    # ---------------------------------------------------------------- setup
+    bpy.ops.object.select_all(action='SELECT')
+    bpy.ops.object.delete()
+    sc = scene()
+    st = sc.build_check
+    check(st is not None, 'scene settings registered')
+    check(hasattr(bpy.types.Object, 'build_check_ignore'), 'per-object ignore flag registered')
+
+    a = add_sphere('PartA', (100, 100, 100))
+    b = add_sphere('PartB', (160, 100, 100))
+    c = add_cube('PartC', (100, 200, 100))
+    update()
+
+    st.enabled = True
+    mon = settle()
+    s = mon.status()
+    check(s['objects'] == 3, 'three parts mirrored', s)
+    check(mon.mm_per_unit == 1.0, 'units auto-detected as 1 unit = 1 mm', mon.unit_note)
+    check(s['collisions'] == 0 and s['clearance'] == 0, 'clean scene has no problems', s)
+    check(s['partly_out'] == 0 and s['outside'] == 0, 'all parts inside the default volume', s)
+
+    # -------------------------------------------------- live updates (handler)
+    # No manual tick here: the dependency-graph handler alone must produce the
+    # result, as it does on every step of a drag in the viewport.
+    b.location.x = 135.0
+    update()
+    check(state(mon, a, b) == COLLIDE, 'translation -> collision seen by the live handler',
+          state(mon, a, b))
+    pr = pair(mon, a, b)
+    check(pr.nseg > 0 and pr.segs is not None, 'intersection curve available', pr.nseg)
+    seg_world = pr.segs.reshape(-1, 3) + mon.world.O_T[mon.world.slot(a.session_uid)]
+    # spheres r=20 centred x=100 and x=135 meet on the plane x=117.5
+    check(abs(float(seg_world[:, 0].mean()) - 117.5) < 0.5, 'curve lies where the spheres meet',
+          float(seg_world[:, 0].mean()))
+
+    b.location.x = 143.0
+    update()
+    check(state(mon, a, b) == CLEAR, 'translation -> clearance warning (live)', state(mon, a, b))
+    mon = settle()
+    pr = pair(mon, a, b)
+    check(abs(pr.dist - 3.0) < 0.15, 'clearance distance ~3 mm', pr.dist)
+
+    b.location.x = 160.0
+    update()
+    check(state(mon, a, b) == OK, 'translation away -> clear (live)')
+
+    # a long drag: many small steps, each handled by the handler
+    t0 = time.perf_counter()
+    n = 0
+    worst = 0.0
+    for x in np.linspace(160.0, 120.0, 81):
+        t1 = time.perf_counter()
+        b.location.x = float(x)
+        update()
+        worst = max(worst, time.perf_counter() - t1)
+        n += 1
+    dt = (time.perf_counter() - t0) / n * 1000
+    check(state(mon, a, b) == COLLIDE, 'state correct at the end of a simulated drag')
+    print(f'       simulated drag: {dt:.2f} ms per step on average, worst {worst * 1000:.2f} ms '
+          f'(includes Blender\'s own update)')
+    b.location.x = 160.0
+    update()
+
+    # ------------------------------------------------------ rotation / scale
+    c.location = (100.0, 147.0, 100.0)      # cube face 7 mm from sphere A
+    update()
+    check(state(mon, a, c) == OK, 'cube 7 mm away is fine')
+    c.rotation_euler = (0.0, 0.0, math.radians(45.0))   # corner now reaches the sphere
+    update()
+    check(state(mon, a, c) == COLLIDE, 'rotation -> collision (live)', state(mon, a, c))
+    c.rotation_euler = (0.0, 0.0, 0.0)
+    c.scale = (1.0, 1.25, 1.0)                           # face moves 5 mm closer: 2 mm gap
+    update()
+    check(state(mon, a, c) == CLEAR, 'scale -> clearance warning (live)', state(mon, a, c))
+    mon = settle()
+    check(abs(pair(mon, a, c).dist - 2.0) < 0.15, 'gap after scaling ~2 mm', pair(mon, a, c).dist)
+    c.scale = (1.0, 1.0, 1.0)
+    c.location = (100.0, 200.0, 100.0)
+    update()
+    mon = settle()
+    check(mon.status()['clearance'] == 0 and mon.status()['collisions'] == 0, 'back to clean')
+
+    # ------------------------------------------------------- geometry change
+    stats0 = mon.world.stats()
+    me = b.data
+    co = np.empty(len(me.vertices) * 3, dtype=np.float32)
+    me.vertices.foreach_get('co', co)
+    me.vertices.foreach_set('co', co * 2.1)          # radius 20 -> 42: reaches 2 mm into A
+    me.update()
+    update()
+    mon = settle()
+    check(state(mon, a, b) == COLLIDE, 'edited mesh picked up (bigger sphere now collides)',
+          state(mon, a, b))
+    me.vertices.foreach_set('co', co)
+    me.update()
+    update()
+    mon = settle()
+    check(state(mon, a, b) == OK, 'mesh edit reverted -> clear')
+
+    mod = c.modifiers.new('Arr', 'ARRAY')      # (works in every build, unlike Subdivision)
+    mod.count = 3
+    update()
+    mon = settle()
+    tri_c = mon.objs[c.session_uid].ntri
+    check(tri_c == 12 * 3, 'modifier result is what gets checked (evaluated mesh)', tri_c)
+    c.modifiers.remove(mod)
+    update()
+    mon = settle()
+    check(mon.objs[c.session_uid].ntri == 12, 'modifier removed -> original mesh again')
+
+    # ------------------------------------------------ shared data / instances
+    d = a.copy()                      # linked duplicate: same mesh data
+    d.name = 'PartA.linked'
+    d.location = (40.0, 100.0, 100.0)
+    bpy.context.collection.objects.link(d)
+    update()
+    mon = settle()
+    stats1 = mon.world.stats()
+    check(stats1['objects'] == 4, 'linked duplicate mirrored', stats1)
+    check(stats1['unique_triangles'] == stats0['unique_triangles'],
+          'linked duplicate shares the cached geometry', (stats0, stats1))
+    e = a.copy()
+    e.data = a.data.copy()            # full copy: separate but identical mesh
+    e.name = 'PartA.copy'
+    e.location = (40.0, 160.0, 100.0)
+    bpy.context.collection.objects.link(e)
+    update()
+    mon = settle()
+    check(mon.world.stats()['unique_triangles'] == stats0['unique_triangles'],
+          'identical copy is recognised and shares geometry too')
+
+    # ------------------------------------------------- visibility / ignoring
+    d.hide_set(True)
+    update()
+    mon = settle()
+    check(mon.world.stats()['objects'] == 4, 'hidden object leaves the check', mon.world.stats())
+    d.hide_set(False)
+    update()
+    mon = settle()
+    check(mon.world.stats()['objects'] == 5, 'unhidden object returns')
+    e.build_check_ignore = True
+    update()
+    mon = settle()
+    check(mon.world.stats()['objects'] == 4, 'ignored object leaves the check')
+    e.build_check_ignore = False
+    mon = settle()
+    bpy.data.objects.remove(e)
+    bpy.data.objects.remove(d)
+    update()
+    mon = settle()
+    check(mon.world.stats()['objects'] == 3, 'deleted objects are dropped', mon.world.stats())
+
+    # ---------------------------------------------------------- build volume
+    check(oob(mon, a) is None, 'part inside the volume')
+    a.location.x = 10.0               # sphere r=20 at x=10: sticks out through x=0
+    update()
+    check(oob(mon, a) == PARTIAL, 'part crossing a wall -> partly outside (live)', oob(mon, a))
+    r = mon.world.oob[mon.world.slot(a.session_uid)]
+    check(r.tris is not None and len(r.tris) > 0, 'out-of-volume triangles collected', len(r.tris))
+    check(float(r.tris[:, :, 0].min()) < 0.0, 'they really are beyond the wall')
+    a.location.x = -100.0
+    update()
+    check(oob(mon, a) == OUTSIDE, 'part fully outside (live)')
+    a.location.x = 100.0
+    update()
+    check(oob(mon, a) is None, 'moved back inside')
+    st.volume_size = (90.0, 284.0, 380.0)      # shrink X: A (80..120) now crosses x=90
+    mon = settle()
+    check(oob(mon, a) == PARTIAL, 'changing the volume re-evaluates the parts')
+    check(st.printer == 'Custom', 'hand-edited volume is labelled Custom', st.printer)
+    st.use_volume = False
+    mon = settle()
+    check(not mon.world.oob, 'volume check can be switched off')
+    st.use_volume = True
+    st.volume_align = 'CENTER_XY'
+    st.volume_size = (380.0, 284.0, 380.0)
+    mon = settle()
+    lo, hi = mon.volume_box(st)
+    check(np.allclose(lo, (-190, -142, 0)) and np.allclose(hi, (190, 142, 380)), 'centred origin', (lo, hi))
+    st.volume_align = 'CORNER'
+    mon = settle()
+
+    # -------------------------------------------------------- printer profiles
+    props.seed_profiles(props.prefs())
+    p = props.prefs()
+    check(p is not None and len(p.profiles) >= 3, 'default printer profiles present',
+          None if p is None else len(p.profiles))
+    names = [x.name for x in p.profiles]
+    idx = next(i for i, x in enumerate(p.profiles) if '580' in x.name)
+    check(bpy.ops.buildcheck.profile_apply(index=idx) == {'FINISHED'}, 'profile applied')
+    check(tuple(st.volume_size) == (332.0, 190.0, 248.0) and st.printer == names[idx],
+          'volume and name follow the profile', (tuple(st.volume_size), st.printer))
+    st.volume_size = (300.0, 200.0, 250.0)
+    check(bpy.ops.buildcheck.profile_add('EXEC_DEFAULT', name='My Printer') == {'FINISHED'}, 'profile saved')
+    check(any(x.name == 'My Printer' and tuple(x.size) == (300.0, 200.0, 250.0) for x in p.profiles),
+          'new profile stored in the library')
+    st.volume_size = (310.0, 200.0, 250.0)
+    st.printer = 'My Printer'
+    check(bpy.ops.buildcheck.profile_update() == {'FINISHED'}, 'profile updated')
+    check(any(x.name == 'My Printer' and tuple(x.size) == (310.0, 200.0, 250.0) for x in p.profiles),
+          'updated size stored')
+    check(bpy.ops.buildcheck.profile_remove('EXEC_DEFAULT') == {'FINISHED'}, 'profile removed')
+    check(not any(x.name == 'My Printer' for x in p.profiles), 'profile gone from the library')
+    bpy.ops.buildcheck.profile_apply(index=0)
+    mon = settle()
+
+    # ----------------------------------------------------------------- units
+    st.unit_mode = 'SCENE'
+    mon = settle()
+    check(abs(mon.mm_per_unit - 1000.0) < 1e-9, 'scene units: default scene is metres', mon.mm_per_unit)
+    sc.unit_settings.scale_length = 0.001
+    st.unit_mode = 'AUTO'
+    mon = settle()
+    check(abs(mon.mm_per_unit - 1.0) < 1e-9, 'unit scale 0.001 -> 1 unit = 1 mm', mon.mm_per_unit)
+    sc.unit_settings.scale_length = 1.0
+    st.unit_mode = 'AUTO'
+    mon = settle()
+
+    # ---------------------------------------------------- thresholds / ignore
+    b.location.x = 143.0              # 3 mm gap again
+    update()
+    mon = settle()
+    check(state(mon, a, b) == CLEAR, 'clearance warning at 3 mm with 5 mm threshold')
+    st.clearance_mm = 2.0
+    mon = settle()
+    check(state(mon, a, b) == OK, 'lowering the clearance threshold clears it')
+    st.collision_mm = 4.0
+    mon = settle()
+    check(state(mon, a, b) == COLLIDE, 'collision threshold 4 mm makes a 3 mm gap a collision')
+    st.collision_mm = 0.0
+    st.clearance_mm = 5.0
+    st.use_clearance = False
+    mon = settle()
+    check(state(mon, a, b) == OK, 'clearance check can be switched off')
+    st.use_clearance = True
+    mon = settle()
+
+    # ---------------------------------------------------- problems / navigation
+    b.location.x = 135.0
+    update()
+    mon = settle()
+    probs = mon.problems()
+    check(len(probs) >= 1 and probs[0]['kind'] == 'COLLIDE', 'problem list leads with the collision', probs[:1])
+    check(abs(float(probs[0]['center'][0]) - 117.5) < 1.0, 'problem centre is at the interference')
+    r1 = bpy.ops.buildcheck.step_problem(direction=1)
+    check(r1 == {'FINISHED'} and st.problem_index == 0, 'next-problem operator runs', (r1, st.problem_index))
+    check(a.select_get() and b.select_get(), 'navigation selects the parts involved')
+
+    # ---------------------------------------------------------- save / reload
+    path = os.path.join(tempfile.mkdtemp(), 'build.blend')
+    bpy.ops.wm.save_as_mainfile(filepath=path)
+    bpy.ops.wm.open_mainfile(filepath=path)
+    sc = scene()
+    st = sc.build_check
+    check(st.enabled, 'monitoring stays on in the saved file')
+    mon = settle()
+    s = mon.status()
+    check(s['objects'] == 3 and s['collisions'] == 1, 'results rebuilt after loading the file', s)
+    a = bpy.data.objects['PartA']
+    b = bpy.data.objects['PartB']
+
+    # ------------------------------------------------------------------- undo
+    try:
+        bpy.ops.ed.undo_push(message='before move')
+        b.location.x = 200.0
+        update()
+        bpy.ops.ed.undo_push(message='after move')
+        check(state(mon, a, b) == OK, 'moved away before undo')
+        bpy.ops.ed.undo()
+        sc = scene()
+        mon = settle()
+        a = bpy.data.objects['PartA']
+        b = bpy.data.objects['PartB']
+        check(state(mon, a, b) == COLLIDE, 'undo restores the collision', (b.location.x, state(mon, a, b)))
+    except RuntimeError as ex:
+        print('       (undo not available in this mode:', str(ex).strip()[:80], ')')
+
+    # ------------------------------------------------------- off / on / reload
+    st = scene().build_check
+    st.enabled = False
+    check(monitor.get(scene()) is None, 'switching off frees the monitor')
+    st.enabled = True
+    mon = settle()
+    check(mon.status()['objects'] == 3, 'switching on again works')
+
+    import addon_utils
+    addon_utils.disable(PKG)
+    check(not hasattr(bpy.types.Scene, 'build_check'), 'add-on unregisters cleanly')
+    addon_utils.enable(PKG)
+    check(hasattr(bpy.types.Scene, 'build_check'), 'add-on registers again')
+
+    print(f'\n{sum(1 for ok, _ in CHECKS if ok)} of {len(CHECKS)} checks passed')
+    print('BLENDER TEST OK')
+
+
+try:
+    main()
+except Exception:
+    import traceback
+    traceback.print_exc()
+    print('BLENDER TEST FAILED')
+    sys.exit(1)
