@@ -70,7 +70,7 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
 
 ## State
 
-Last updated: 2026-10-08 (session 2, mid-morning).
+Last updated: 2026-10-08 (session 2, early afternoon).
 
 * Engine, monitor, overlay, panels, printer profiles: working and tested on
   Blender 5.2.2 (Linux, software OpenGL), headless and in a real window on a
@@ -84,25 +84,78 @@ Last updated: 2026-10-08 (session 2, mid-morning).
   `tests/bench.py --storm` and `tests/blender_gui_stress.py ... storm` are the
   owner's "import a part into the middle of 50" scenario: 159 -> 24 ms per
   step with 20+ parts in contact.
-* Window test numbers on the 2-core, no-GPU sandbox: 60 parts / 2 M triangles,
-  about 5 ms of checking per drag step; overlay data preparation about 2 ms
-  per redraw (the rest of the overlay time there is the software rasteriser).
+* On `main` (commit 47fb638): poses are an on-demand cache with an optional
+  byte limit (`World.set_cache_limit`), least recently used first out. Nothing
+  sets a limit yet.
+* Live modifiers: the evaluated mesh is what is checked (verified with Array
+  and Shrinkwrap). Silent gaps the owner has been told about and wants a
+  warning for: geometry-node instances that are not realized are not checked,
+  and neither are non-mesh objects (text, curves).
 * Not tested: a real GPU, Blender 4.2 - 5.1, Windows, macOS, a human at the
   mouse. The owner works on an HP ZBook Firefly 14 G11 with 32 GB RAM.
 
-## Next
+### Measured at the owner's size (tests/bench_scale.py parts 20 1500000)
 
-1. Memory. Each pose (unique mesh + rotation) costs about 55 bytes per
-   triangle; fine for tens of millions of triangles, too much for the
-   600-part builds. Plan: poses become a cache with a byte budget (default
-   about 6 GB on the owner's machine) and least-recently-used eviction; a
-   part's extents are computed without building its pose, so poses are only
-   built for parts that actually have neighbours. Then, if needed, shrink the
-   pose itself (do not store the two lowest box levels, 16-bit boxes).
-2. Measure at the owner's sizes: 30 M triangles in 2 - 50 parts, and 600
-   instanced parts (Alt+D linked duplicates; that is what "instanced" means
-   in his files). Sorting very large meshes off the main thread if the
-   first analysis stalls the interface.
-3. Throttle viewport redraws during the first analysis of a scene.
+30 M triangles in 20 parts, 2-core sandbox, commit 47fb638:
+sorting 15 s (0.5 us per triangle, on the main thread, 0.8 s per mesh);
+first complete check 9 s in ONE slice (interface frozen); memory 2.3 GB;
+drag step 5 ms; rotating a 1.5 M triangle part 150 ms per step.
+In this virtual machine the first write to a page of memory is about twenty
+times slower than on real hardware, which is most of that 9 s; the benchmark
+now touches the pose storage once before timing (pass `cold` to see it raw).
+
+## In progress: branch `wip/borrowed-poses` (NOT finished, NOT verified)
+
+Goal: no freeze and no lag with large parts. Three pieces, in this order.
+
+1. **Borrowed poses** (engine). An object whose rotation/scale changes keeps
+   the pose it had and its boxes are transformed as they are looked at
+   (`O_VIRT`, `O_REL`, `O_PAD` in `World`; centre and half extent through
+   `rel` and `|rel|`, padded for rounding). Triangles of a borrowing object
+   are posed from the mesh's own vertices (`LVERT`) with exactly the
+   expression `World._posed` uses, so they are bit-identical to what a fitted
+   pose holds; only the boxes are looser (about 1.3 - 1.6 x per axis, measured).
+   When idle, `World._upgrade` gives the object a fitted pose again (in place
+   if nobody else uses the pose) and `_refresh` re-solves the pairs that were
+   solved with borrowed boxes (`PairResult.loose`). Under a memory limit,
+   copies of one mesh in different rotations borrow one pose instead of each
+   having their own (`_attach`, `_borrowing`).
+   Done: `core/world.py` rewritten for this (not run yet). To do:
+   `core/narrow.py` must honour it everywhere boxes or posed vertices are
+   read: `_test_block` (transform gathered boxes of borrowing sides),
+   `corners` / `_pair_tris` / `_node_tris` (pose from `LVERT` with `O_L`),
+   `_region_side` (bounds, proxy boxes), the enclosure test (move the query
+   point into the pose's frame with `O_RELI`), `oob_solve` (transformed
+   boxes, exact triangle boxes at the leaves). Then tests: force borrowing
+   with `w.fit_now = 0`; collisions must equal a world without borrowing,
+   distances within the usual 0.1 %, and after settling everything must
+   equal a freshly built world. `tests/test_world.py: posed_tris` should use
+   `World.part_corners`.
+2. **Fits in slices** (done in `world.py`, not run yet): `_fit_steps` is a
+   generator (blocks of 32768 triangles, about 1.5 ms each), `_prepare`
+   fits what a batch needs until the step's deadline, pairs wait in their
+   queue meanwhile, `_oob_fill` collects out-of-volume geometry the same way.
+   Also there: pose storage grows straight to what the scene needs
+   (`Arena.want`), new array + copy instead of `ndarray.resize` (which zero
+   fills and so really allocates everything); mesh vertices in a shared array
+   `LVERT`; extents 7x faster (never use `.min(axis=0)` on an (n, 3) array).
+3. **Sorting off the main thread** (to do, `monitor.py`): `bvh.sort_mesh` is
+   a pure function made for this; run it in a worker thread (a few in
+   parallel), poll from the timer, then `World.add_sorted`.
+
+Then: memory preference (automatic default about 20 % of installed RAM, so
+about 6 GB on the owner's machine) wired to `World.set_cache_limit`, cache
+use and "borrowing" count in the Parts panel, the warning for unrealized
+instances and non-mesh objects, benchmarks (`tests/bench_scale.py`, both
+modes), README and user guide.
+
+## Next (after the branch is merged)
+
+1. Measure and report: 30 M triangles in 20 parts, and 600 instanced parts
+   with a memory limit (`tests/bench_scale.py instances 600 300000 12 2`).
+2. Throttle viewport redraws during the first analysis of a scene.
+3. If memory still matters: smaller poses (quantised boxes for the two lowest
+   levels would halve them; the fit is memory bound, so it would get faster
+   too).
 4. Possibly: an "import beside the bucket" helper, amber shading for
    warning-only parts (offered, not requested).

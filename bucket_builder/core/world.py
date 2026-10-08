@@ -12,15 +12,23 @@ What is kept, from most to least expensive to rebuild
            have the same orientation)
     object a mesh, a rotation/scale and a translation
 
-Moving an object only changes its translation, so nothing is rebuilt.  Rotating
-or scaling re-fits the boxes of that one object (a few vectorised passes, no
-re-sorting).  Only a real geometry change rebuilds the triangle order.
+Moving an object only changes its translation, so nothing is rebuilt.  Only a
+real geometry change rebuilds the triangle order.
+
+Rotating or scaling an object needs boxes for the new orientation.  Fitting
+them costs about 45 ns per triangle, too long to do on every mouse step for a
+large mesh, so the object *borrows*: it keeps using the pose it had, whose
+boxes are moved into the new orientation as they are looked at.  Such boxes
+are looser (queries cost roughly twice as much) but nothing has to be
+recomputed.  Once things are quiet the object gets a pose of its own again,
+fitted in pieces of a millisecond or two, and its results are refreshed.
 
 Poses are the bulk of the memory (about 55 bytes per triangle each) and they
 are a cache: one is built when a pair involving the object is first solved,
 never for a part that has no neighbours, and the least recently used ones
-are dropped when ``cache_limit`` is reached.  A dropped pose is simply re-fitted
-when it is needed again.  The extents of an object do not need its pose.
+are dropped when ``cache_limit`` is reached.  When memory is short, copies of
+a mesh with different rotations borrow one pose instead of each having its
+own.  The extents of an object do not need its pose.
 
 Results are kept per object pair and are only recomputed for pairs that involve
 an object that changed.
@@ -39,16 +47,20 @@ MAX_BATCH = 96
 OOB_TRI_CAP = 60000
 LIVE_TARGET = 0.012       # seconds a live solve should take
 REGION_BUDGET = 400000    # triangles of hatched regions kept for the whole scene
+VERT_CHUNK = 1 << 16      # vertices posed in one piece
+FIT_BLOCK = 15            # log2 of the triangles whose boxes are fitted in one piece
+FIT_NOW = 40000           # meshes up to this many triangles are re-fitted at once
+BORROW_MAX = 64.0         # largest stretch between a borrowed pose and its user
 
 
 class Geom:
-    __slots__ = ('key', 'nv', 'nt', 'verts', 'tbase', 'H', 'nreal', 'npad', 'off',
-                 'rows', 'refs', 'ext')
+    __slots__ = ('key', 'nv', 'nt', 'lbase', 'tbase', 'H', 'nreal', 'npad', 'off',
+                 'rows', 'refs', 'ext', 'poses', 'rad')
 
 
 class Pose:
     __slots__ = ('index', 'geom', 'key', 'L', 'base', 'rows', 'vbase', 'bbase', 'slots',
-                 'used', 'unfit')
+                 'used', 'unfit', 'job')
 
 
 class _VertView:
@@ -74,8 +86,8 @@ class PairResult:
     to be recomputed.  ``clip_a`` / ``clip_b`` are None, or a box (in the
     first object's frame) the patch should be trimmed to when drawn."""
     __slots__ = ('state', 'dist', 'pa', 'pb', 'segs', 'nseg', 'tri_a', 'tri_b', 'clip_a',
-                 'clip_b', 'approx', 'refine', 'lite', 'enclosed', 'center', 'radius', 'stale',
-                 'stamp', 'serial')
+                 'clip_b', 'approx', 'refine', 'lite', 'loose', 'enclosed', 'center', 'radius',
+                 'stale', 'stamp', 'serial')
 
     def __init__(self):
         self.state = PENDING
@@ -88,6 +100,7 @@ class PairResult:
         self.approx = False
         self.refine = False
         self.lite = False         # only sketched: the state is known, the details are not
+        self.loose = False        # solved while a part was borrowing a pose
         self.enclosed = 0         # 1: first part inside the second, 2: the reverse
         self.center = None
         self.radius = 0.0
@@ -104,7 +117,8 @@ class OobResult:
 class WallResult:
     """A part inside the build volume but closer to a side wall than allowed
     (geometry in world space; ``dist`` is the gap to the nearest side wall)."""
-    __slots__ = ('dist', 'tris', 'lo', 'hi', 'band_only', 'center', 'radius', 'serial')
+    __slots__ = ('dist', 'tris', 'lo', 'hi', 'band_only', 'center', 'radius', 'serial',
+                 'axis', 'high')
 
 
 class World:
@@ -113,6 +127,7 @@ class World:
         self.BOX = Arena(6, np.float32, 1 << 14, align=bvh.PAD)
         self.VERT = _VertView(self.BOX)
         self.TIDX = Arena(3, np.int32, 1 << 13)      # sorted triangles (vertex ids)
+        self.LVERT = Arena(3, np.float32, 1 << 13)   # vertices in mesh coordinates
 
         n = 16
         self.LVL = np.zeros((n, bvh.MAX_LEVELS), dtype=np.int64)   # row of each level
@@ -130,7 +145,9 @@ class World:
         self.geom_bytes = 0       # bytes of the unique meshes
         self.evictions = 0        # poses dropped to stay within the limit
         self.flushes = 0          # times every pose had to go (fragmented storage)
+        self.fit_now = FIT_NOW    # meshes up to this size never borrow a pose
         self._clock = 0           # advances with every use of poses (for eviction)
+        self._demand = 0          # rows the poses of all objects would take together
 
         m = 64
         self.O_T = np.zeros((m, 3), dtype=np.float64)
@@ -139,9 +156,19 @@ class World:
         self.O_POSE = np.full(m, -1, dtype=np.int64)
         self.O_ALIVE = np.zeros(m, dtype=bool)
         self.O_VER = np.zeros(m, dtype=np.int64)
+        # for objects that borrow a pose fitted for another rotation/scale
+        self.O_VIRT = np.zeros(m, dtype=bool)
+        self.O_REL = np.zeros((m, 3, 3), dtype=np.float32)    # pose frame -> object frame
+        self.O_RELI = np.zeros((m, 3, 3), dtype=np.float64)   # and back
+        self.O_PAD = np.zeros(m, dtype=np.float32)            # slack for rounding
+        self.O_L = np.zeros((m, 3, 3), dtype=np.float32)      # rotation/scale of the object
+        self.O_LB = np.zeros(m, dtype=np.int64)               # its mesh's first row in LVERT
         self._obj = []            # slot -> [uid, Geom, L (3x3 float32), Pose or None] or None
         self._slot_of = {}
         self._slot_free = []
+        self._virt_todo = set()   # borrowing slots that should get their own pose
+        self._borrowing = set()   # borrowing slots that stay so for want of memory
+        self._fitting = set()     # poses being fitted in the background
 
         self.coll_thr = 0.0
         self.clear_thr = 0.0      # 0 disables the clearance check
@@ -161,6 +188,7 @@ class World:
         self._pend_refine = {}    # quick results waiting for their exact pass
         self._oob_dirty = set()
         self._oob_all = False
+        self._oob_geom = {}       # slots whose out-of-volume geometry is still to be collected
         self._param_stamp = 0
         self.version = 0          # bumps whenever any result changes
         self._serial = 0
@@ -244,50 +272,29 @@ class World:
         g = self._geoms.get(key)
         if g is not None:
             return g
-        verts = np.array(verts, dtype=np.float32).reshape(-1, 3)
-        tris = np.ascontiguousarray(tris, dtype=np.int32).reshape(-1, 3)
-        nt = tris.shape[0]
-        if nt == 0:
-            raise ValueError('mesh has no triangles')
-        if not np.isfinite(verts).all():
-            verts = np.nan_to_num(verts, nan=0.0, posinf=0.0, neginf=0.0)
-        # Loose vertices are dropped, so that the extents of the mesh can be
-        # taken from its vertices alone.
-        used = np.zeros(verts.shape[0], dtype=bool)
-        used[tris.ravel()] = True
-        if not used.all():
-            remap = np.cumsum(used, dtype=np.int64) - 1
-            verts = np.ascontiguousarray(verts[used])
-            tris = np.ascontiguousarray(remap[tris], dtype=np.int32)
-        cen = []
-        idx = [np.ascontiguousarray(tris[:, k]) for k in range(3)]
-        for c in range(3):
-            col = np.ascontiguousarray(verts[:, c])
-            a = np.take(col, idx[0])
-            b = np.take(col, idx[1])
-            d = np.take(col, idx[2])
-            lo = np.minimum(a, b)
-            np.minimum(lo, d, out=lo)
-            np.maximum(a, b, out=a)
-            np.maximum(a, d, out=a)
-            lo += a
-            lo *= 0.5
-            cen.append(lo)
-        order = bvh.build_order(cen[0], cen[1], cen[2])
-        del cen, idx
+        return self.add_sorted(key, *bvh.sort_mesh(verts, tris))
 
+    def add_sorted(self, key, verts, tris):
+        """Register a mesh that ``bvh.sort_mesh`` has prepared."""
+        g = self._geoms.get(key)
+        if g is not None:
+            return g
+        nt = tris.shape[0]
         g = Geom()
         g.key = key
         g.nv = verts.shape[0]
         g.nt = nt
-        g.verts = verts
         g.H, g.nreal, g.npad, g.off, g.rows = bvh.level_layout(nt)
         g.tbase = self.TIDX.alloc(g.npad[0])
         t = self.TIDX.data[g.tbase:g.tbase + g.npad[0]]
-        t[:nt] = tris[order]
+        t[:nt] = tris
         t[nt:] = 0
+        g.lbase = self.LVERT.alloc(g.nv)
+        self.LVERT.data[g.lbase:g.lbase + g.nv] = verts
+        g.rad = float(np.abs(verts).max()) if g.nv else 0.0
         g.refs = 0                # objects using this mesh
         g.ext = {}                # rotation/scale bytes -> extents
+        g.poses = []
         self._geoms[key] = g
         self.geom_bytes += self._geom_size(g)
         return g
@@ -296,8 +303,14 @@ class World:
     def _geom_size(g):
         return g.npad[0] * 12 + g.nv * 12
 
+    @staticmethod
+    def geom_size(nv, nt):
+        """Bytes a mesh with ``nv`` vertices and ``nt`` triangles takes."""
+        return (-(-int(nt) // bvh.PAD) * bvh.PAD + int(nv)) * 12
+
     def _geom_drop(self, g):
         self.TIDX.release(g.tbase, g.npad[0])
+        self.LVERT.release(g.lbase, g.nv)
         if self._geoms.pop(g.key, None) is not None:
             self.geom_bytes -= self._geom_size(g)
 
@@ -317,19 +330,83 @@ class World:
         """Bytes one pose of a mesh with ``nv`` vertices and ``nt`` triangles takes."""
         return World._pose_rows(nv, bvh.level_layout(nt)[4])[1] * 24
 
+    def pose_room(self):
+        """Bytes available for poses, or None when there is no limit."""
+        if self.cache_limit is None:
+            return None
+        return max(0, self.cache_limit - self.geom_bytes)
+
+    def _posed(self, g, L32, s, e):
+        """Vertices ``s`` to ``e`` of a mesh under a rotation/scale, as three
+        contiguous float32 columns.  Every posed coordinate in the engine comes
+        from this one expression (``narrow`` repeats it for borrowed poses),
+        so the extents of an object, the boxes of its pose and its triangles
+        agree to the last bit."""
+        V = self.LVERT.data
+        b = g.lbase
+        x = np.ascontiguousarray(V[b + s:b + e, 0])
+        y = np.ascontiguousarray(V[b + s:b + e, 1])
+        z = np.ascontiguousarray(V[b + s:b + e, 2])
+        out = []
+        for c in range(3):
+            t = x * L32[c, 0]
+            t += y * L32[c, 1]
+            t += z * L32[c, 2]
+            out.append(t)
+        return out
+
     def _extents(self, g, L32):
         """Exact extents of a mesh under a rotation/scale, without its pose."""
         key = L32.tobytes()
         ext = g.ext.get(key)
         if ext is None:
-            vp = g.verts @ L32.T
-            ext = (vp.min(axis=0).astype(np.float64), vp.max(axis=0).astype(np.float64))
+            lo = np.full(3, np.inf)
+            hi = np.full(3, -np.inf)
+            for s in range(0, g.nv, VERT_CHUNK):
+                cols = self._posed(g, L32, s, min(g.nv, s + VERT_CHUNK))
+                for c in range(3):
+                    lo[c] = min(lo[c], float(cols[c].min()))
+                    hi[c] = max(hi[c], float(cols[c].max()))
+            ext = (lo, hi)
             if len(g.ext) > 4096:
                 g.ext.clear()
             g.ext[key] = ext
         return ext
 
+    def _room_for(self, g):
+        """True if one more pose of ``g`` fits without dropping anything."""
+        room = self.pose_room()
+        if room is None:
+            return True
+        rows = self._pose_rows(g.nv, g.rows)[1]
+        # in what is in use, and in what the storage would have to grow to
+        return (self.pose_bytes + rows * 24 <= room
+                and self.BOX.nbytes + self.BOX.growth(rows) * 24 <= room)
+
+    def _make_room(self, g):
+        """Drop least recently used poses until one more of ``g`` fits the limit.
+
+        Poses in use by the work at hand (same clock) are kept, unless the
+        storage is so fragmented that the new one fits nowhere: then every
+        pose is dropped (which leaves the storage empty, hence compact) and the
+        caller builds the ones it needs again."""
+        if self._room_for(g):
+            return
+        for p in sorted((q for q in self._poses.values() if q.used != self._clock),
+                        key=lambda q: q.used):
+            self._pose_drop(p)
+            self.evictions += 1
+            if self._room_for(g):
+                return
+        need = self._pose_rows(g.nv, g.rows)[1] * 24
+        if self._poses and self.pose_bytes + need <= self.pose_room():
+            for p in list(self._poses.values()):
+                self._pose_drop(p)
+                self.evictions += 1
+            self.flushes += 1
+
     def _pose_new(self, g, L32, key):
+        """Storage for a pose of ``g`` under ``L32``; it is fitted later."""
         self._make_room(g)
         p = Pose()
         p.geom = g
@@ -338,6 +415,7 @@ class World:
         p.slots = set()
         p.used = self._clock
         p.unfit = True
+        p.job = None
         if self._pose_free:
             p.index = self._pose_free.pop()
             self._pose_slots[p.index] = p
@@ -353,76 +431,137 @@ class World:
             self.PNT = grow_rows(self.PNT, need, 0)
         vrows, p.rows = self._pose_rows(g.nv, g.rows)
         room = self.pose_room()
-        # (the array may over-allocate, but not beyond the limit)
+        # When the storage has to grow it goes straight to what the scene is
+        # going to need (the memory is only really taken as it is written
+        # to), but never beyond the limit.
+        self.BOX.want = self._demand + (self._demand >> 3) + 4096
         p.base = self.BOX.alloc(p.rows, None if room is None else room - self.BOX.nbytes)
         p.vbase = 2 * p.base
         p.bbase = p.base + vrows
+        # valid tables from the start, so that a pose under construction can
+        # be addressed (it is not used before it is fitted)
+        i = p.index
+        self.LVL[i, :g.H + 1] = p.bbase + g.off
+        self.PH[i] = g.H
+        self.PTB[i] = g.tbase
+        self.PVB[i] = p.vbase
+        self.PNT[i] = g.nt
         self._poses[key] = p
+        g.poses.append(p)
         self.pose_bytes += p.rows * 24
         return p
 
     def _pose_drop(self, p):
-        """Free a pose.  Objects that were using it get it rebuilt when they
+        """Free a pose.  Objects that were using it get one again when they
         next need it."""
         for slot in p.slots:
             self._obj[slot][3] = None
             self.O_POSE[slot] = -1
+            self._unborrow(slot)
         p.slots.clear()
+        p.job = None
+        self._fitting.discard(p)
+        p.geom.poses.remove(p)
         del self._poses[p.key]
         self.BOX.release(p.base, p.rows)
         self._pose_slots[p.index] = None
         self._pose_free.append(p.index)
         self.pose_bytes -= p.rows * 24
+        if self._borrowing:
+            # memory came free: those waiting for a pose of their own may try again
+            self._virt_todo |= self._borrowing
+            self._borrowing.clear()
 
-    def _make_room(self, g):
-        """Drop least recently used poses until one more of ``g`` fits the limit.
+    def _rekey(self, p, L32, key):
+        """Reuse the storage of a pose for another rotation/scale of its mesh."""
+        del self._poses[p.key]
+        p.key = key
+        p.L = L32.copy()
+        p.unfit = True
+        p.job = None
+        self._poses[key] = p
 
-        Poses in use by the work at hand (same clock) are kept, unless the
-        storage is so fragmented that the new one fits nowhere: then every
-        pose is dropped (which leaves the storage empty, hence compact) and the
-        caller builds the ones it needs again."""
-        room = self.pose_room()
-        if room is None:
-            return
-        rows = self._pose_rows(g.nv, g.rows)[1]
-        need = rows * 24
+    # -- borrowing ----------------------------------------------------------
+    def _rel_to(self, p, g, L32):
+        """How to move the boxes of pose ``p`` into the orientation ``L32``:
+        (matrix, its inverse, slack for rounding), or None if that is not
+        possible or would stretch them too far."""
+        PL = p.L.astype(np.float64)
+        L = L32.astype(np.float64)
+        try:
+            rel = L @ np.linalg.inv(PL)
+            reli = PL @ np.linalg.inv(L)
+        except np.linalg.LinAlgError:
+            return None
+        n1 = float(np.abs(rel).sum(axis=1).max())
+        n2 = float(np.abs(reli).sum(axis=1).max())
+        if not (np.isfinite(n1) and np.isfinite(n2)) or max(n1, n2) > BORROW_MAX:
+            return None
+        # posed coordinates are rounded to float32 (a few parts in 1e7 of
+        # their size) in the pose, in the object and in the box transform
+        pad = 2e-6 * g.rad * (float(np.abs(L).sum(axis=1).max())
+                              + n1 * float(np.abs(PL).sum(axis=1).max()))
+        return rel.astype(np.float32), reli, np.float32(pad)
 
-        def fits():
-            # in what is in use, and in what the storage would have to grow to
-            return (self.pose_bytes + need <= room
-                    and self.BOX.nbytes + self.BOX.growth(rows) * 24 <= room)
+    def _base_for(self, g, L32):
+        """A pose of ``g`` the orientation ``L32`` can borrow, with the
+        transform: (pose, rel, reli, pad), or None."""
+        best = None
+        best_cost = None
+        poses = g.poses
+        if len(poses) > 6:
+            poses = sorted(poses, key=lambda q: q.used)[-6:]
+        for p in poses:
+            x = self._rel_to(p, g, L32)
+            if x is None:
+                continue
+            # the less the boxes are turned, the less they grow; a fitted pose
+            # is better than one that still has to be
+            a = np.abs(x[0])
+            cost = float(a.sum()) / max(float(a.max(axis=1).sum()), 1e-30)
+            cost += 10.0 if p.unfit else 0.0
+            if best is None or cost < best_cost:
+                best = (p,) + x
+                best_cost = cost
+        return best
 
-        if fits():
-            return
-        for p in sorted((q for q in self._poses.values() if q.used != self._clock),
-                        key=lambda q: q.used):
-            self._pose_drop(p)
-            self.evictions += 1
-            if fits():
-                return
-        if self._poses and self.pose_bytes + need <= room:
-            for p in list(self._poses.values()):
-                self._pose_drop(p)
-                self.evictions += 1
-            self.flushes += 1
+    def _borrow(self, slot, rel, reli, pad):
+        self.O_VIRT[slot] = True
+        self.O_REL[slot] = rel
+        self.O_RELI[slot] = reli
+        self.O_PAD[slot] = pad
+        self._borrowing.discard(slot)
+        self._virt_todo.add(slot)
 
-    def _attach(self, slot):
-        """Make sure the object in ``slot`` has its pose, fitted, and return it."""
+    def _unborrow(self, slot):
+        if self.O_VIRT[slot]:
+            self.O_VIRT[slot] = False
+            self._virt_todo.discard(slot)
+            self._borrowing.discard(slot)
+
+    def _link(self, slot, p):
+        p.slots.add(slot)
+        self._obj[slot][3] = p
+        self.O_POSE[slot] = p.index
+
+    def _attach(self, slot, live):
+        """Give the object in ``slot`` a pose: its own, or a borrowed one."""
         o = self._obj[slot]
-        p = o[3]
+        g, L32 = o[1], o[2]
+        key = (g.key, L32.tobytes())
+        p = self._poses.get(key)
         if p is None:
-            g, L32 = o[1], o[2]
-            key = (g.key, L32.tobytes())
-            p = self._poses.get(key)
-            if p is None:
-                p = self._pose_new(g, L32, key)
-            p.slots.add(slot)
-            o[3] = p
-            self.O_POSE[slot] = p.index
+            if g.nt > self.fit_now and g.poses and (live or not self._room_for(g)):
+                # no time to fit while something is being edited, or no memory
+                base = self._base_for(g, L32)
+                if base is not None:
+                    self._link(slot, base[0])
+                    base[0].used = self._clock
+                    self._borrow(slot, base[1], base[2], base[3])
+                    return base[0]
+            p = self._pose_new(g, L32, key)
+        self._link(slot, p)
         p.used = self._clock
-        if p.unfit:
-            self._fit(p)
-            p.unfit = False
         return p
 
     def _detach(self, slot):
@@ -432,15 +571,10 @@ class World:
             return
         o[3] = None
         self.O_POSE[slot] = -1
+        self._unborrow(slot)
         p.slots.discard(slot)
         if not p.slots:
             self._pose_drop(p)
-
-    def pose_room(self):
-        """Bytes available for poses, or None when there is no limit."""
-        if self.cache_limit is None:
-            return None
-        return max(0, self.cache_limit - self.geom_bytes)
 
     def _pose_cost(self, slot):
         g = self._obj[slot][1]
@@ -451,101 +585,195 @@ class World:
         o = self._obj[slot]
         return o[3] if o[3] is not None else (o[1].key, o[2].tobytes())
 
-    def need_poses(self, slots):
-        """Poses of the given objects are about to be used: build what is
-        missing, keeping the others of the same request alive."""
+    def _advance(self, p, deadline):
+        """Continue fitting a pose until it is done (True) or time is up."""
+        if not p.unfit:
+            return True
+        job = p.job
+        if job is None:
+            job = p.job = self._fit_steps(p)
+        while True:
+            try:
+                next(job)
+            except StopIteration:
+                p.job = None
+                p.unfit = False
+                return True
+            if deadline is not None and time.perf_counter() >= deadline:
+                return False
+
+    def _prepare(self, slots, deadline, live):
+        """The poses of the given objects are about to be used.  Whatever is
+        missing is attached (keeping the others of the same request alive)
+        and fitted until ``deadline``; returns True once all are usable."""
         self._clock += 1
+        clock = self._clock
         slots = list(slots)
+        obj = self._obj
         for slot in slots:
-            p = self._obj[slot][3]
+            p = obj[slot][3]
             if p is not None:
-                p.used = self._clock
+                p.used = clock
+        again = 0
         while True:
             flushes = self.flushes
             for slot in slots:
-                self._attach(slot)
+                if obj[slot][3] is None:
+                    self._attach(slot, live)
             if flushes == self.flushes:
                 break
-            if self.flushes - flushes > 1:
+            again += 1
+            if again > 1:
                 # cannot happen while a request fits the limit; if it does not,
                 # the limit gives way rather than the request
                 limit, self.cache_limit = self.cache_limit, None
                 for slot in slots:
-                    self._attach(slot)
+                    if obj[slot][3] is None:
+                        self._attach(slot, live)
                 self.cache_limit = limit
                 break
+        for slot in slots:
+            p = obj[slot][3]
+            if p.unfit and not self._advance(p, deadline):
+                return False
+        return True
+
+    def need_poses(self, slots):
+        """Build the poses of the given objects now, however long it takes."""
+        self._prepare(slots, None, False)
+
+    def reserve(self):
+        """Make the pose storage as large as the scene is going to need (within
+        the limit) in one go.  Optional: it happens anyway with the first pose."""
+        want = self._demand + (self._demand >> 3) + 4096
+        room = self.pose_room()
+        if room is not None:
+            want = min(want, room // 24)
+        want = -(-want // self.BOX.align) * self.BOX.align
+        if want > self.BOX.data.shape[0]:
+            self.BOX._resize(want)
 
     def set_cache_limit(self, nbytes):
         """Most memory the cached data may take, in bytes (None: no limit).
-        Lowering it below what is in use drops poses; they are re-fitted on
-        demand."""
+        Lowering it below what is in use drops poses; they are fitted again
+        on demand."""
         self.cache_limit = None if nbytes is None else max(0, int(nbytes))
         room = self.pose_room()
         if room is not None and self.BOX.nbytes > room:
             for p in list(self._poses.values()):
                 self._pose_drop(p)
             self.BOX.shrink(1 << 14)
+        if self._borrowing:
+            self._virt_todo |= self._borrowing
+            self._borrowing.clear()
 
     def _fit(self, p):
-        """(Re)compute posed vertices and every node box of a pose.
+        """(Re)compute posed vertices and every node box of a pose."""
+        for _ in self._fit_steps(p):
+            pass
+        p.unfit = False
+        p.job = None
 
-        Work is done one coordinate at a time on contiguous 1-D arrays, which
-        is several times faster in NumPy than operating on (n, 3) blocks.
+    def _fit_steps(self, p):
+        """The fit of a pose as a generator that yields after every piece of
+        work of a millisecond or two, so that a large mesh can be fitted in
+        the gaps between redraws.
+
+        Triangles are handled in blocks that fit the processor's cache: the
+        boxes of a block's triangles and of all the tree levels inside the
+        block are computed while the data is at hand.  (Most of the time goes
+        into writing the 48 bytes of boxes per triangle to memory.)
+
+        No view of the shared arrays is kept across a yield: they may be
+        reallocated in between.
         """
         g = p.geom
         nt = g.nt
-        vp = g.verts @ p.L.T
-        self.VERT.data[p.vbase:p.vbase + g.nv] = vp
-        box = self.BOX.data
-        b0 = p.bbase
-        tri = self.TIDX.data[g.tbase:g.tbase + nt]
-        idx = [np.ascontiguousarray(tri[:, k]) for k in range(3)]
-        lv = box[b0:b0 + g.npad[0]]
-        lo = []
-        hi = []
-        for c in range(3):
-            col = np.ascontiguousarray(vp[:, c])
-            a = np.take(col, idx[0])
-            b = np.take(col, idx[1])
-            d = np.take(col, idx[2])
-            l = np.minimum(a, b)
-            np.minimum(l, d, out=l)
+        nv = g.nv
+        L = p.L
+        # posed vertices
+        for s in range(0, nv, VERT_CHUNK):
+            e = min(nv, s + VERT_CHUNK)
+            cols = self._posed(g, L, s, e)
+            dst = self.VERT.data[p.vbase + s:p.vbase + e]
+            for c in range(3):
+                dst[:, c] = cols[c]
+            del dst
+            yield
+
+        H = g.H
+        K = min(FIT_BLOCK, H)
+        B = 1 << K
+        off = g.off
+        cur_buf = np.empty((6, B), dtype=np.float32)
+        nxt_buf = np.empty((6, B), dtype=np.float32)
+        for s in range(0, nt, B):
+            e = min(nt, s + B)
+            n = e - s
+            P = self.VERT.data
+            t = self.TIDX.data[g.tbase + s:g.tbase + e]
+            a = np.take(P, p.vbase + t[:, 0], axis=0)
+            b = np.take(P, p.vbase + t[:, 1], axis=0)
+            d = np.take(P, p.vbase + t[:, 2], axis=0)
+            lo = np.minimum(a, b)
+            np.minimum(lo, d, out=lo)
             np.maximum(a, b, out=a)
             np.maximum(a, d, out=a)
-            lv[:nt, c] = l
-            lv[:nt, 3 + c] = a
-            lo.append(l)
-            hi.append(a)
-        del idx
-        lv[nt:, :3] = np.inf
-        lv[nt:, 3:] = -np.inf
+            cur = cur_buf[:, :n]
+            cur[:3] = lo.T
+            cur[3:] = a.T
+            del P, t, a, b, d, lo
+            box = self.BOX.data
+            b0 = p.bbase
+            other = nxt_buf
+            nxt = None
+            h = 0
+            while True:
+                r0 = b0 + off[h] + (s >> h)
+                box[r0:r0 + n] = cur.T
+                if h == K:
+                    break
+                half = n // 2
+                n2 = (n + 1) // 2
+                nxt = other[:, :n2]
+                np.minimum(cur[:3, 0:2 * half:2], cur[:3, 1:2 * half:2], out=nxt[:3, :half])
+                np.maximum(cur[3:, 0:2 * half:2], cur[3:, 1:2 * half:2], out=nxt[3:, :half])
+                if n & 1:
+                    nxt[:, half] = cur[:, n - 1]
+                other = cur_buf if other is nxt_buf else nxt_buf
+                cur = nxt
+                n = n2
+                h += 1
+            del box, cur, nxt
+            yield
 
+        # the levels above the blocks, the padding rows and the tables
+        box = self.BOX.data
+        b0 = p.bbase
+        n = g.nreal[K]
+        cur = np.ascontiguousarray(box[b0 + off[K]:b0 + off[K] + n].T)
+        for h in range(K + 1, H + 1):
+            half = n // 2
+            n2 = (n + 1) // 2
+            nxt = np.empty((6, n2), dtype=np.float32)
+            np.minimum(cur[:3, 0:2 * half:2], cur[:3, 1:2 * half:2], out=nxt[:3, :half])
+            np.maximum(cur[3:, 0:2 * half:2], cur[3:, 1:2 * half:2], out=nxt[3:, :half])
+            if n & 1:
+                nxt[:, half] = cur[:, n - 1]
+            cur = nxt
+            n = n2
+            box[b0 + off[h]:b0 + off[h] + n] = cur.T
         i = p.index
-        H = g.H
-        self.LVL[i, :H + 1] = b0 + g.off
+        self.LVL[i, :H + 1] = b0 + off
         sz = self.SZ[i]
         sz[:] = 0.0
         for h in range(H + 1):
             n = g.nreal[h]
-            if h:
-                m = g.nreal[h - 1]
-                half = m // 2
-                dst = box[b0 + g.off[h]:b0 + g.off[h] + g.npad[h]]
-                for c in range(3):
-                    l = lo[c][0::2].copy()
-                    np.minimum(l[:half], lo[c][1::2], out=l[:half])
-                    u = hi[c][0::2].copy()
-                    np.maximum(u[:half], hi[c][1::2], out=u[:half])
-                    dst[:n, c] = l
-                    dst[:n, 3 + c] = u
-                    lo[c] = l
-                    hi[c] = u
-                dst[n:, :3] = np.inf
-                dst[n:, 3:] = -np.inf
-            st = max(1, n // 512)
-            ext = np.maximum(np.maximum(hi[0][::st] - lo[0][::st], hi[1][::st] - lo[1][::st]),
-                             hi[2][::st] - lo[2][::st])
-            sz[h] = float(ext.mean())
+            r0 = b0 + off[h]
+            box[r0 + n:r0 + g.npad[h], :3] = np.inf
+            box[r0 + n:r0 + g.npad[h], 3:] = -np.inf
+            smp = box[r0:r0 + n:max(1, n // 512)]
+            sz[h] = float((smp[:, 3:] - smp[:, :3]).max(axis=1).mean())
         self.PH[i] = H
         self.PTB[i] = g.tbase
         self.PVB[i] = p.vbase
@@ -559,6 +787,12 @@ class World:
         self.O_POSE = grow_rows(self.O_POSE, need, -1)
         self.O_ALIVE = grow_rows(self.O_ALIVE, need, False)
         self.O_VER = grow_rows(self.O_VER, need, 0)
+        self.O_VIRT = grow_rows(self.O_VIRT, need, False)
+        self.O_REL = grow_rows(self.O_REL, need, 0.0)
+        self.O_RELI = grow_rows(self.O_RELI, need, 0.0)
+        self.O_PAD = grow_rows(self.O_PAD, need, 0.0)
+        self.O_L = grow_rows(self.O_L, need, 0.0)
+        self.O_LB = grow_rows(self.O_LB, need, 0)
 
     def _set_extents(self, slot):
         o = self._obj[slot]
@@ -595,10 +829,14 @@ class World:
             self._obj.append([uid, g, L32, None])
             self._grow_objects(slot + 1)
         g.refs += 1
+        self._demand += self._pose_rows(g.nv, g.rows)[1]
         self._slot_of[uid] = slot
         self.O_T[slot] = M[:3, 3]
         self.O_ALIVE[slot] = True
         self.O_POSE[slot] = -1
+        self.O_VIRT[slot] = False
+        self.O_L[slot] = L32
+        self.O_LB[slot] = g.lbase
         self.adj[slot] = set()
         self._set_extents(slot)
         # like a live edit: every neighbour gets a quick answer first (does it
@@ -616,20 +854,30 @@ class World:
         L32 = np.ascontiguousarray(M[:3, :3], dtype=np.float32)
         lb = L32.tobytes()
         if lb != o[2].tobytes():
+            g = o[1]
             p = o[3]
-            if p is not None:
-                key = (o[1].key, lb)
-                if len(p.slots) == 1 and key not in self._poses:
-                    # nobody else uses the old pose: keep its storage and
-                    # re-fit it when it is next needed
-                    del self._poses[p.key]
-                    p.key = key
-                    p.L = L32.copy()
-                    p.unfit = True
-                    self._poses[key] = p
-                else:
-                    self._detach(slot)
             o[2] = L32
+            self.O_L[slot] = L32
+            if p is not None:
+                key = (g.key, lb)
+                q = self._poses.get(key)
+                if q is p:
+                    self._unborrow(slot)          # back in the pose's own orientation
+                elif q is not None and not q.unfit:
+                    self._detach(slot)            # there is a pose for exactly this
+                    self._link(slot, q)
+                else:
+                    x = self._rel_to(p, g, L32) if g.nt > self.fit_now else None
+                    if x is not None:
+                        # keep the pose and move its boxes as they are looked
+                        # at; a fitted one follows when things are quiet
+                        self._borrow(slot, *x)
+                    elif q is None and len(p.slots) == 1:
+                        # nobody else uses the pose: fit it again in place
+                        self._unborrow(slot)
+                        self._rekey(p, L32, key)
+                    else:
+                        self._detach(slot)
             self._set_extents(slot)
             changed = True
         t = M[:3, 3]
@@ -649,8 +897,10 @@ class World:
             return False
         self._detach(slot)
         o[1] = g
+        self.O_LB[slot] = g.lbase
         g.refs += 1
         old.refs -= 1
+        self._demand += self._pose_rows(g.nv, g.rows)[1] - self._pose_rows(old.nv, old.rows)[1]
         if old.refs == 0:
             self._geom_drop(old)
         self._set_extents(slot)
@@ -665,6 +915,7 @@ class World:
         self._detach(slot)
         g = self._obj[slot][1]
         g.refs -= 1
+        self._demand -= self._pose_rows(g.nv, g.rows)[1]
         if g.refs == 0:
             self._geom_drop(g)
         self._obj[slot] = None
@@ -673,6 +924,7 @@ class World:
         self._slot_free.append(slot)
         self._dirty.pop(slot, None)
         self._oob_dirty.discard(slot)
+        self._oob_geom.pop(slot, None)
         self.oob.pop(slot, None)
         self.wall.pop(slot, None)
         self.version += 1
@@ -693,7 +945,8 @@ class World:
         """(geometry key, local vertices (nv, 3), triangles (nt, 3)) of a part.
         The arrays are views: copy them if they are kept."""
         g = self._obj[slot][1]
-        return g.key, g.verts, self.TIDX.data[g.tbase:g.tbase + g.nt]
+        return (g.key, self.LVERT.data[g.lbase:g.lbase + g.nv],
+                self.TIDX.data[g.tbase:g.tbase + g.nt])
 
     def part_triangles(self, slot):
         return self._obj[slot][1].nt
@@ -708,6 +961,14 @@ class World:
     def part_bounds(self, slot):
         """Exact world-space extents of a part: (lo, hi)."""
         return self.O_LO[slot] + self.O_T[slot], self.O_HI[slot] + self.O_T[slot]
+
+    def part_corners(self, slot):
+        """Every triangle of a part as float32 (nt, 3, 3), in the part's frame
+        (no translation), exactly as the engine sees it."""
+        o = self._obj[slot]
+        g = o[1]
+        P = np.stack(self._posed(g, o[2], 0, g.nv), axis=1)
+        return P[self.TIDX.data[g.tbase:g.tbase + g.nt]]
 
     # ------------------------------------------------------------ broad phase
     def _stamp(self, key):
@@ -784,7 +1045,8 @@ class World:
     # ------------------------------------------------------------------- step
     @property
     def busy(self):
-        return bool(self._dirty or self._pend_hot or self._pend_cold or self._pend_refine)
+        return bool(self._dirty or self._pend_hot or self._pend_cold or self._pend_refine
+                    or self._fitting or self._virt_todo or self._oob_geom)
 
     @property
     def unsettled(self):
@@ -796,10 +1058,42 @@ class World:
     def pending(self):
         return len(self._pend_hot) + len(self._pend_cold) + len(self._pend_refine)
 
+    def _batch(self, src, size):
+        """The next pairs of a queue to solve together (they stay queued)."""
+        room = self.pose_room()
+        keys = []
+        dead = []
+        held = set()
+        held_bytes = 0
+        pairs = self.pairs
+        for key in src:
+            if len(keys) >= size:
+                break
+            if key not in pairs:
+                dead.append(key)
+                continue
+            if room is not None:
+                # the poses of one batch must fit the cache together
+                extra = 0
+                idents = []
+                for slot in key:
+                    ident = self._pose_ident(slot)
+                    if ident not in held and ident not in idents:
+                        idents.append(ident)
+                        extra += self._pose_cost(slot)
+                if keys and held_bytes + extra > room:
+                    break
+                held.update(idents)
+                held_bytes += extra
+            keys.append(key)
+        for key in dead:
+            del src[key]
+        return keys
+
     def step(self, budget=0.010, hot_budget=0.016, idle=True):
         """Bring results up to date.  Returns True while work remains.
 
-        Three queues, in order:
+        In order:
           hot     pairs touched by a live edit, handled with the quick solve
                   until ``hot_budget`` is used up.  Whether parts collide is
                   always decided; how much detail each pair gets follows the
@@ -807,8 +1101,12 @@ class World:
                   fit are taken up again in the next step.
           cold    background work such as the first scan; solved exactly
                   within what is left of ``budget``.
+          poses   objects that borrow a pose get their own, when ``idle``.
           refine  quick results waiting for their exact pass; only handled
                   when ``idle`` is true, i.e. nothing is being dragged.
+
+        Poses that are missing are fitted within the same budgets, a piece
+        at a time; the pairs that need them wait.
         """
         t0 = time.perf_counter()
         solved = 0
@@ -819,13 +1117,16 @@ class World:
                 src, exact, limit = self._pend_hot, False, hot_budget
             elif self._pend_cold:
                 src, exact, limit = self._pend_cold, True, budget
+            elif idle and (self._fitting or self._virt_todo):
+                if not self._upgrade(t0 + budget):
+                    break
+                continue
             elif idle and self._pend_refine:
                 src, exact, limit = self._pend_refine, True, budget
             else:
                 break
             if solved and time.perf_counter() - t0 > limit:
                 break
-            keys = []
             if exact:
                 size = self._bg_batch
             else:
@@ -833,33 +1134,14 @@ class World:
                 # with more than that pending, the rest wait for the next step
                 # (their previous result stays on screen meanwhile)
                 size = int(min(MAX_BATCH, max(8, LIVE_TARGET / max(self._lite_cost, 1e-5))))
-            room = self.pose_room()
-            held = set()
-            held_bytes = 0
-            while src and len(keys) < size:
-                key = next(iter(src))
-                if self.pairs.get(key) is None:
-                    del src[key]
-                    continue
-                if room is not None:
-                    # the poses of one batch must fit the cache together
-                    extra = 0
-                    idents = []
-                    for slot in key:
-                        ident = self._pose_ident(slot)
-                        if ident not in held and ident not in idents:
-                            idents.append(ident)
-                            extra += self._pose_cost(slot)
-                    if keys and held_bytes + extra > room:
-                        break
-                    held.update(idents)
-                    held_bytes += extra
-                del src[key]
-                self.pairs[key].stamp = self._stamp(key)
-                keys.append(key)
+            keys = self._batch(src, size)
             if not keys:
                 continue
-            self.need_poses({slot for key in keys for slot in key})
+            if not self._prepare({slot for key in keys for slot in key}, t0 + limit, not exact):
+                break                 # still fitting: the pairs stay where they are
+            for key in keys:
+                del src[key]
+                self.pairs[key].stamp = self._stamp(key)
             detail = None if exact else self._choose_detail(keys)
             if exact:
                 n = len(self.viol)
@@ -874,9 +1156,11 @@ class World:
             else:
                 self._learn_cost(len(keys), detail, dt)
             self._serial += 1
+            virt = self.O_VIRT
             for key in keys:
                 pr = self.pairs[key]
                 pr.serial = self._serial
+                pr.loose = bool(virt[key[0]] or virt[key[1]])
                 if pr.state > OK:
                     self.viol[key] = pr
                 else:
@@ -887,9 +1171,71 @@ class World:
             self.version += 1
         if self._oob_dirty or self._oob_all:
             self._update_oob()
+        if self._oob_geom:
+            self._oob_fill(t0 + max(budget, hot_budget), not idle)
         self.last_step_ms = (time.perf_counter() - t0) * 1000.0
         self.last_pairs = solved
         return self.busy
+
+    def _upgrade(self, deadline):
+        """Give objects that borrow a pose one of their own, a piece at a
+        time.  Returns True when nothing is left that can be done."""
+        for p in list(self._fitting):
+            if p not in self._fitting:
+                continue
+            if not self._advance(p, deadline):
+                return False
+            self._fitting.discard(p)
+            self._refresh(p)
+        for slot in list(self._virt_todo):
+            if slot not in self._virt_todo:
+                continue                          # changed by what happened to another
+            o = self._obj[slot]
+            p = o[3]
+            g, L32 = o[1], o[2]
+            key = (g.key, L32.tobytes())
+            q = self._poses.get(key)
+            if q is None:
+                if len(p.slots) == 1:
+                    self._rekey(p, L32, key)      # nobody else uses it: fit again in place
+                    q = p
+                elif self._room_for(g):
+                    self._clock += 1
+                    p.used = self._clock
+                    q = self._pose_new(g, L32, key)
+                else:
+                    # no memory to spare: keep borrowing until some comes free
+                    self._virt_todo.discard(slot)
+                    self._borrowing.add(slot)
+                    continue
+            self._unborrow(slot)
+            if q is not p:
+                p.slots.discard(slot)
+                self._link(slot, q)
+                if not p.slots:
+                    self._pose_drop(p)
+            self._fitting.add(q)
+            if not self._advance(q, deadline):
+                return False
+            self._fitting.discard(q)
+            self._refresh(q)
+        return True
+
+    def _refresh(self, p):
+        """A pose was fitted in the background: results that were worked out
+        with borrowed boxes are redone, so that what is on screen at rest does
+        not depend on how the parts got where they are."""
+        virt = self.O_VIRT
+        for slot in p.slots:
+            if virt[slot]:
+                continue
+            for o in self.adj[slot]:
+                key = (slot, o) if slot < o else (o, slot)
+                pr = self.pairs.get(key)
+                if (pr is None or pr.stale or not pr.loose or virt[o]
+                        or key in self._pend_hot or key in self._pend_cold):
+                    continue
+                self._pend_refine[key] = None
 
     def _choose_detail(self, keys):
         """Which pairs of a live solve get the full treatment: None for all,
@@ -924,38 +1270,17 @@ class World:
         self.live_detail = int(min(64, max(0, spare / max(self._detail_cost, 1e-5))))
 
     # ----------------------------------------------------------- build volume
-    def _pose_groups(self, items):
-        """Split ``items`` (tuples starting with a slot) into runs whose poses
-        fit the cache together."""
-        room = self.pose_room()
-        if room is None or not items:
-            return [items] if items else []
-        groups = []
-        cur = []
-        held = set()
-        held_bytes = 0
-        for item in items:
-            ident = self._pose_ident(item[0])
-            extra = 0 if ident in held else self._pose_cost(item[0])
-            if cur and held_bytes + extra > room:
-                groups.append(cur)
-                cur = []
-                held = set()
-                held_bytes = 0
-                extra = self._pose_cost(item[0])
-            cur.append(item)
-            held.add(ident)
-            held_bytes += extra
-        groups.append(cur)
-        return groups
-
     def _update_oob(self):
+        """Classify the parts that changed against the build volume.  This
+        needs their extents only; the geometry the overlay draws for them is
+        collected by ``_oob_fill``."""
         if self.volume is None:
             if self.oob or self.wall:
                 self.oob.clear()
                 self.wall.clear()
                 self.version += 1
             self._oob_dirty.clear()
+            self._oob_geom.clear()
             self._oob_all = False
             return
         if self._oob_all:
@@ -969,14 +1294,13 @@ class World:
         slots = np.array(cand, dtype=np.int64)
         vlo, vhi = self.volume
         e = self.eps_len
-        # The root box of a pose is fitted to its vertices, so these are the
-        # exact extents of each part: translation alone decides most cases.
+        # These are the exact extents of each part: translation alone decides
+        # most cases.
         lo = self.O_LO[slots] + self.O_T[slots]
         hi = self.O_HI[slots] + self.O_T[slots]
         inside = ((lo >= vlo - e) & (hi <= vhi + e)).all(axis=1)
         outside = ((lo > vhi + e) | (hi < vlo - e)).any(axis=1)
-        inner = self.inner_box()
-        if inner is not None:
+        if self.inner_box() is not None:
             # gaps to the four side walls (x low, y low, x high, y high); the
             # floor and the top do not count
             gaps = np.concatenate([lo[:, :2] - vlo[:2], vhi[:2] - hi[:, :2]], axis=1)
@@ -988,9 +1312,9 @@ class World:
             near = np.zeros(slots.shape[0], dtype=bool)
         changed = False
         self._serial += 1
-        partial = []
-        close = []
+        todo = self._oob_geom
         for i, slot in enumerate(cand):
+            todo.pop(slot, None)
             if near[i]:
                 r = WallResult()
                 r.dist = max(0.0, float(gap[i]))
@@ -1000,13 +1324,13 @@ class World:
                 r.band_only = False
                 # until the geometry is known: the middle of the side of the
                 # part's bounding box that faces the nearest wall
-                axis, high = int(which[i]) % 2, int(which[i]) >= 2
+                r.axis, r.high = int(which[i]) % 2, int(which[i]) >= 2
                 r.center = 0.5 * (lo[i] + hi[i])
-                r.center[axis] = hi[i][axis] if high else lo[i][axis]
+                r.center[r.axis] = hi[i][r.axis] if r.high else lo[i][r.axis]
                 r.radius = 0.25 * float(np.linalg.norm(hi[i] - lo[i]))
                 r.serial = self._serial
                 self.wall[slot] = r
-                close.append((slot, r, axis, high))
+                todo[slot] = None
                 changed = True
             elif self.wall.pop(slot, None) is not None:
                 changed = True
@@ -1022,36 +1346,69 @@ class World:
             r.serial = self._serial
             r.state = OUTSIDE if outside[i] else PARTIAL
             if r.state == PARTIAL:
-                partial.append((slot, r))
+                todo[slot] = None
             self.oob[slot] = r
             changed = True
-        for group in self._pose_groups(partial):
-            self.need_poses([s for s, _ in group])
-            ps = np.array([s for s, _ in group], dtype=np.int64)
-            tris, band = narrow.oob_solve(self, ps, vlo, vhi, OOB_TRI_CAP)
-            for (slot, r), t, b in zip(group, tris, band):
-                r.tris = t
-                r.band_only = b
-        for group in self._pose_groups(close):
-            # the triangles that reach into the margin: everything that is not
-            # completely inside the inner box
-            self.need_poses([c[0] for c in group])
-            ps = np.array([c[0] for c in group], dtype=np.int64)
-            tris, band = narrow.oob_solve(self, ps, inner[0], inner[1], OOB_TRI_CAP)
-            for (slot, r, axis, high), t, b in zip(group, tris, band):
-                r.tris = t
-                r.band_only = b
-                if len(t):
-                    # mark the geometry that is inside the margin of the nearest wall
-                    pts = t.reshape(-1, 3)
-                    c = pts[:, axis]
-                    sel = pts[c > inner[1][axis]] if high else pts[c < inner[0][axis]]
-                    if len(sel):
-                        r.center = sel.mean(axis=0, dtype=np.float64)
-                        r.radius = max(0.5 * float(np.linalg.norm(sel.max(axis=0) - sel.min(axis=0))),
-                                       self.wall_margin)
         if changed:
             self.version += 1
+
+    def _oob_fill(self, deadline, live):
+        """Collect what the overlay draws for parts that reach out of the
+        volume or into the wall margin.  This needs their poses, so it can
+        take several calls; returns True when nothing is left."""
+        todo = self._oob_geom
+        vlo, vhi = self.volume
+        inner = self.inner_box()
+        while todo:
+            room = self.pose_room()
+            group = []
+            held = set()
+            held_bytes = 0
+            for slot in todo:
+                if len(group) >= 64:
+                    break
+                if room is not None:
+                    ident = self._pose_ident(slot)
+                    extra = 0 if ident in held else self._pose_cost(slot)
+                    if group and held_bytes + extra > room:
+                        break
+                    held.add(ident)
+                    held_bytes += extra
+                group.append(slot)
+            if not self._prepare(group, deadline, live):
+                return False
+            for slot in group:
+                del todo[slot]
+            partial = [s for s in group if s in self.oob and self.oob[s].state == PARTIAL]
+            close = [s for s in group if s in self.wall] if inner is not None else []
+            if partial:
+                tris, band = narrow.oob_solve(self, np.array(partial, dtype=np.int64),
+                                              vlo, vhi, OOB_TRI_CAP)
+                for slot, t, b in zip(partial, tris, band):
+                    r = self.oob[slot]
+                    r.tris = t
+                    r.band_only = b
+            if close:
+                # the triangles that reach into the margin: everything that is
+                # not completely inside the inner box
+                tris, band = narrow.oob_solve(self, np.array(close, dtype=np.int64),
+                                              inner[0], inner[1], OOB_TRI_CAP)
+                for slot, t, b in zip(close, tris, band):
+                    r = self.wall[slot]
+                    r.tris = t
+                    r.band_only = b
+                    if len(t):
+                        # mark the geometry that is inside the margin of the nearest wall
+                        pts = t.reshape(-1, 3)
+                        c = pts[:, r.axis]
+                        sel = pts[c > inner[1][r.axis]] if r.high else pts[c < inner[0][r.axis]]
+                        if len(sel):
+                            r.center = sel.mean(axis=0, dtype=np.float64)
+                            r.radius = max(
+                                0.5 * float(np.linalg.norm(sel.max(axis=0) - sel.min(axis=0))),
+                                self.wall_margin)
+            self.version += 1
+        return True
 
     # ---------------------------------------------------------------- reports
     def counts(self):
@@ -1079,10 +1436,12 @@ class World:
             'pairs': len(self.pairs),
             'triangles': int(sum(self._obj[s][1].nt for s in self._slot_of.values())),
             'unique_triangles': int(sum(g.nt for g in self._geoms.values())),
-            'bytes': self.BOX.nbytes + self.TIDX.nbytes
-            + sum(g.verts.nbytes for g in self._geoms.values()),
+            'bytes': self.pose_bytes + self.geom_bytes,
+            'reserved': self.BOX.nbytes + self.TIDX.nbytes + self.LVERT.nbytes,
             'pose_bytes': self.pose_bytes,
+            'geom_bytes': self.geom_bytes,
             'cache_limit': self.cache_limit,
             'evictions': self.evictions,
             'flushes': self.flushes,
+            'borrowing': int(len(self._virt_todo) + len(self._borrowing)),
         }
