@@ -13,13 +13,13 @@ ADDON_ID = __package__
 GIB = float(1 << 30)
 
 # Build volumes in millimetres (X, Y, Z).  These only seed the editable
-# profile list; nothing else in the add-on depends on them.  The 5XX is the
-# 190 x 332 x 248 mm HP publishes, with the short side along X to match the
-# owner's 580 with custom firmware ("580+"), whose volume is his own figure.
+# profile list; nothing else in the add-on depends on them.  The 580+ is the
+# owner's 580 with custom firmware, which builds a little more than the
+# 332 x 190 x 248 mm HP publishes for the 500 series; the figure is his.
 DEFAULT_PROFILES = (
     ("HP MJF 4XXX/5XXX", (380.0, 284.0, 380.0)),
-    ("HP MJF 5XX", (190.0, 332.0, 248.0)),
-    ("HP MJF 580+", (198.7, 332.6, 267.8)),
+    ("HP MJF 5XX", (332.0, 190.0, 248.0)),
+    ("HP MJF 580+", (332.6, 198.7, 267.8)),
     ("HP MJF 1200", (320.0, 165.0, 230.0)),
 )
 
@@ -33,7 +33,7 @@ _PROFILES_V1 = {
     "HP Jet Fusion 5000": ((380.0, 284.0, 250.0), None),
     "HP Jet Fusion 4200": ((380.0, 284.0, 380.0), "HP MJF 4XXX/5XXX"),
     "HP Multi Jet Fusion 1200": ((320.0, 165.0, 230.0), "HP MJF 1200"),
-    "HP Jet Fusion 580 / 540": ((332.0, 190.0, 248.0), None),
+    "HP Jet Fusion 580 / 540": ((332.0, 190.0, 248.0), "HP MJF 5XX"),
 }
 
 

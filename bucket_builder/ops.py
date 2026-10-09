@@ -351,8 +351,10 @@ def report_lines(context):
         return lines
     stats = mon.world.stats()
     s = mon.status()
+    largest = max((o.ntri for o in mon.objs.values() if o.in_world), default=0)
     lines.append(f"Parts: {stats['objects']} ({s['hidden']} hidden), {triangles_text(stats['triangles'])}; "
-                 f"{stats['geoms']} different meshes, {triangles_text(stats['unique_triangles'])}")
+                 f"{stats['geoms']} different meshes, {triangles_text(stats['unique_triangles'])}; "
+                 f"largest part {triangles_text(largest)}")
     lines.append(f"Neighbouring pairs: {stats['pairs']} | collisions {s['collisions']}, clearance "
                  f"{s['clearance']}, outside {s['partly_out'] + s['outside']}, near wall {s['near_wall']}")
     limit = stats['cache_limit']
@@ -363,7 +365,8 @@ def report_lines(context):
         lines.append(f"First complete check after {mon.ready_s:.1f} s")
     else:
         lines.append(f"Still preparing after {time.perf_counter() - mon.t_start:.1f} s")
-    lines.append(f"While editing: update {_spread(list(mon.live_ms))}")
+    lines.append(f"While editing: update {_spread(list(mon.live_ms))}"
+                 + (f" | up to {max(mon.live_parts)} parts at once" if mon.live_parts else ""))
     lines.append(f"While editing: from one redraw to the next {_spread(list(mon.frame_ms))}")
     lines.append(f"Overlay drawing: {_spread(list(mon.draw_ms))}")
     lines.append(f"Overlay triangles: shading {mon.draw_tris[0]:,}, hatching {mon.draw_tris[1]:,}")

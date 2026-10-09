@@ -27,6 +27,10 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
   and must stay snappy; hundreds of millions happen and may be slower.
 * Wants the work pushed to GitHub regularly and notes kept here, because a
   session can stop at any time when a usage limit is hit.
+* Thinks of part collisions and the build volume as two separate things.
+  Wants it simple enough for lay users; raised a "3D Printing" application
+  template (File > New) as the next conversation. Says he may change his mind
+  about display defaults as he uses it.
 * Out of scope for now: automatic packing, physics, booleans, repair,
   supports, orientation optimisation.
 
@@ -44,6 +48,10 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
 * The off-screen overlay test draws with `srgb_target=False` and does not look
   like the real viewport, which blends in linear light. Judge appearance from
   the window tests' screenshots only.
+* Window tests: `bash tests/gui_on_xvfb.sh <gui blender> <out dir> [script]`
+  with `SDL_VIDEO_FORCE_EGL=1`; the stress test needs about 3 minutes, so
+  give the command a long timeout. Do not clean up with `pkill -f` on a
+  pattern that is also in your own command line (it kills the shell).
 * Commit style: imperative subject, a body that says why. Commit and push
   straight to `main` (the owner asked for that and lets Claude manage the
   repository); push after every verified step.
@@ -108,17 +116,71 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
 * Never use `.min(axis=0)` on an (n, 3) array in a hot path (7 x slower than
   per-column), nor `ndarray.resize` (it zero-fills, which really allocates).
 
+Interface (1.1.0, from the owner's list after his first trial):
+
+* **No collision distance.** Parts collide when they touch (closer than
+  `eps_touch`, 2e-6 of the scene size) or cut through each other. The engine
+  still has `coll_thr`; the one use for it is a red tier for gaps that fuse.
+* **A hidden part is checked** unless Ignore Hidden Parts is ticked (his
+  wording: the checkbox is off by default). Hidden means `visible_get()` is
+  false but the dependency graph evaluates the object (the eye, H, a hidden
+  layer collection). *Disabled in viewports* is not evaluated: its matrix is
+  stale or identity after a reload, so it cannot be checked; it is counted
+  (`Monitor.disabled`). Local view does not hide in this sense.
+* Hidden parts get no shading and no hatching, but their problems are drawn
+  (curve, line, marker, box) and named "(hidden)". The dependency graph does
+  not list the instances of a hidden instancer, so `scan_unchecked` finds
+  those from the objects (`evaluated_geometry()`, Blender 4.4+; before that,
+  what was seen while the part showed).
+* **A viewport in local view draws only the problems among the parts it
+  shows** (`only`; a problem with a part hidden everywhere counts if the
+  other one is shown). The badge always speaks for the whole build.
+* **Isolate is a mode** (`st.isolate`): going to a problem then puts its
+  parts in Blender's local view (`ops.local_view`, with
+  `frame_selected=False`, so the view does not jump) and switching it off
+  leaves local view. The view frames the problem, not the parts.
+* **Only the walls that are exceeded change colour** (`Monitor.walls`, exact:
+  the extents in `OobResult` are the part's own).
+* **The verdict's wording** is in one place, `overlay.badge_rows` (lines with
+  a tone); the sidebar shows the same text. Tests compare heads and lines.
+* **Printer names changed once** (`props.PROFILES_VERSION`, `_PROFILES_V1`):
+  a 1.0 library is migrated, a scene saved with a 1.0 name shows the new one
+  (`current_printer_name`) and never has its volume changed.
+* Collapsible parts of a panel use `layout.panel(idname, default_closed=True)`;
+  their state cannot be set from Python (the scratch script
+  `scratchpad/panel_shots.py` opens them with simulated clicks for
+  screenshots).
+* Blender takes `bl_info` away from an extension's module: read the version
+  with `addon_utils.module_bl_info` (`ops.addon_version`).
+* The manifest's `schema_version` is the format's version, "1.0.0". Do not
+  touch it when bumping the add-on's version.
+
 ## State
 
-Last updated: 2026-10-09, shortly after midnight (session 2).
+Last updated: 2026-10-09, about 01:30 (session 2, the night after the owner's
+first trial).
 
-* `main` is version **1.0.1**, sent to the owner as `bucket_builder-1.0.1.zip`
-  (verified in a clean profile: 88 + 39 checks, the UI test, the window undo
-  test). 1.0.0 was his first trial build.
-* The owner tried 1.0.0 on **Blender 5.2.0, Windows 11, NVIDIA GPU, OpenGL
-  backend** (from his crash log). Verdict: delighted; rendering works; snappy
+* `main` is version **1.1.0**: the owner's list of 2026-10-08 23:56 (thirty-odd
+  points on the interface) is done except the two items that are
+  conversations (below). 1.0.0 was his first trial build, 1.0.1 fixed the
+  crash he found.
+* Tests at 1.1.0: 128 checks in `blender_test.py`, 47 in
+  `blender_large_test.py`, the UI test (panels with a checking stand-in,
+  ignore list, report), the off-screen overlay test with sampled colours, and
+  in a window: `blender_gui_test.py` (drag, badge position beside the open
+  sidebar and in the corner, isolate through the real local view, hidden
+  part), `blender_gui_undo.py`, `blender_gui_stress.py` (now fails if the
+  overlay raises: a failed draw is noted in `mon.error`), and
+  `blender_upgrade_test.py` (1.1.0 installed over a 1.0.1 in use, in one
+  session; needs an empty profile and the old zip, kept in
+  `scratchpad/old_zips` or rebuilt from commit bb79c38).
+* The owner runs **Blender 5.2.0, Windows 11, NVIDIA GPU, OpenGL backend** on
+  an HP ZBook Firefly 14 G11 with 32 GB. Verdict on 1.0.0: delighted; snappy
   on small builds, "a bit laggy for real world large complicated buckets".
-* **The crash he found, and the rule that came out of it** (see the top of
+  Performance > **Copy Report** (new in 1.1.0) is how to find out where: it
+  gives the live update time, the overlay time, the time from redraw to
+  redraw while editing, and the build's size.
+* **The crash of 1.0.0, and the rule that came out of it** (see the top of
   `monitor.py`): Blender runs timers at the start of a pass of its main loop
   and refreshes the dependency graph at its end. After an operator that
   freed objects (undo, delete, a change in Adjust Last Operation) the graph
@@ -128,103 +190,85 @@ Last updated: 2026-10-09, shortly after midnight (session 2).
   layer itself afterwards, so scripted tests never see that gap by accident:
   use `bpy.data` removals (blender_test.py) or simulated key presses in a
   window (`tests/blender_gui_undo.py`). Both segfault without the fix.
-* Since 1.0.0: meshes are sorted in about 60 % of the time and can be sorted
-  on several threads (`bvh.order_mesh`, identical order); parts moved together
-  keep their results (`POS_TOL`).
-* **In the stash** (`git stash list`): engine work for "verdict first":
-  unsorted meshes (`World.add_raw`, `set_sorted`, `wanted`, pairs waiting in
-  `_pend_wait`), meshes no object uses kept as a cache (`_idle`,
-  `_make_way`), `flush_poses`, and tests for all of it. State: every test
-  passed except the last assertion of `unused_mesh_tests` (storage limit at
-  small scale; the storage has a minimum of 393 KB). The monitor does not use
-  any of it yet. When it goes in, the monitor must forget `data_geom[mesh]`
-  when a mesh changes while its object is not tracked (hidden / ignored),
-  or a kept mesh would be reused for changed geometry.
-* Not tested: Blender 4.2 - 5.1, macOS, Vulkan / Metal.
+* Engine since 1.0.0: meshes are sorted in about 60 % of the time and can be
+  sorted on several threads (`bvh.order_mesh`, identical order); parts moved
+  together keep their results (`POS_TOL`); meshes can enter the world
+  unsorted (`World.add_raw`, `set_sorted`, `wanted`, pairs waiting in
+  `_pend_wait`) and meshes no object uses can be kept as a cache
+  (`keep_unused`, `_idle`, `_make_way`). **The monitor does not use the last
+  two yet**: that is item B1 below. When it does, it must forget
+  `data_geom[mesh]` when a mesh changes while its object is not tracked
+  (ignored, or hidden with Ignore Hidden Parts), or a kept mesh would be
+  reused for changed geometry.
+* The sandbox VM got slower overnight (now a 2.8 GHz Xeon that runs this code
+  1.7 - 1.9 x slower than the machine of the first day). Figures from before
+  and after are not comparable: measure old and new in the same session.
+* Not tested: Blender 4.2 - 5.1, macOS, Vulkan / Metal, a real GPU.
 
 ## Next
 
-### A. The owner's feedback on 1.0.0 (2026-10-08, 23:56), to ship as 1.1.0
+### A. Open with the owner
 
-He asked for one build with a point-by-point reply. Open questions put to
-him: the axis order of his 580+ (he wrote 198.7 x 332.6 x 267.8, the stock
-entry is 332 x 190 x 248); whether "Ignore Hidden Parts, off by default"
-means hidden parts are checked unless ticked (assumed yes); what he is doing
-when it lags and what the two timing lines in the Parts panel say.
+Answered on 2026-10-09 01:27:
 
-Sidebar
-- [ ] "Enable Monitoring" is easy to miss; the closed-eye icon looks odd: use
-      the open eye as in the Outliner.
-- [ ] Two main sections: part collisions / clearance, and build volume.
-- [ ] "Ignore Hidden Parts" checkbox, prominent, off by default (so hidden
-      parts are checked: they are still in the build).
-- [ ] Remove the collision distance (told him the one argument for it: a red
-      tier for gaps that fuse; removing unless he objects).
-- [ ] Printers: "HP MJF 4XXX/5XXX", "HP MJF 5XX", "HP MJF 580+" (198.7 x
-      332.6 x 267.8, right below 5XX), "HP MJF 1200". Stored libraries need a
-      migration.
-- [ ] Volume section order: View Build Volume, printer menu, checkboxes,
-      then Advanced (size, origin, offset) collapsed.
-- [ ] Parts: "Include All" below Ignore / Include Selected; below that a list
-      of ignored parts, each with a button to include it again.
-- [ ] Performance figures and Recheck Everything in their own sub-panel.
-- [ ] Problems: a clean way to isolate the parts of a problem in local view.
+* His 580+ is 332.6 x 198.7 x 267.8 (he had the order wrong), so the stock
+  5XX is HP's 332 x 190 x 248 again.
+* Hidden parts: yes, hiding does not ignore. He hides parts to see into the
+  middle of the bucket while resolving a collision, and wonders whether local
+  view is the better habit. Parts of a collection that is "disabled" should
+  be ignored: that is what happens for a collection excluded from the view
+  layer (its checkbox) and for one disabled in viewports (the screen icon);
+  a collection hidden with the eye is hidden, so still checked. He regrets
+  that the Outliner cannot get a toggle of its own.
+* Lag: Blender as a whole felt laggy when orbiting (he does not blame the
+  add-on; not measured yet), and "dragging the huge monkey around the
+  keycaps, it would take a few seconds for all the collisions to populate".
+  He can live with it and will try real, heavy buckets and send the report.
 
-Viewport
-- [ ] Badge at the bottom right, text right-aligned to the left of the icon.
-- [ ] Clearance warning: amber triangle with exclamation mark, "Clearance
-      Warning" instead of "Build OK". Red cross: "Collision Detected" instead
-      of "Build has problems". Free to rethink the other wording.
-- [ ] The printer's name somewhere visible with the sidebar closed (a light
-      blue line under the status text, or on the wireframe).
-- [ ] Out of bounds: colour only the side(s) of the bucket that are exceeded;
-      the same for the wall gap.
+Still open:
 
-Display settings
-- [ ] Tint strength default 0.5.
-- [ ] Hatch spacing default 4, whole numbers only, range 2 to 10 (other
-      values give moire).
-- [ ] "See-Through" becomes a checkbox plus a slider shown when ticked,
-      named "Hatch X-Ray".
-- [ ] Checkboxes to hide the closest-distance lines and the intersection
-      outlines.
-- [ ] Separate checkboxes for collision markers and clearance markers.
-
-Elsewhere
-- [ ] Outliner restriction column: not possible (fixed in Blender). Instead:
-      context menu entries in the Outliner and the viewport, and a checkbox
-      in Object Properties > Visibility.
-- [ ] Application template "3D Printing" (File > New): he wants to talk
-      about it after this list. Not an extension type; the add-on could
-      install one.
+* Whether the build volume should show, and be checked, without the
+  collision check (he thinks of them as two things; today one switch turns
+  the monitor on and each section has its own checkboxes).
+* The "3D Printing" application template (File > New). Not an extension
+  type; a template is a folder with a `startup.blend` installed through the
+  Blender menu, and the add-on could install one it carries
+  (`bpy.ops.preferences.app_template_install`). He wants to talk about what
+  it should contain: who the "lay folks" are and what they must be able to do.
+* Offered, no answer: a per-collection ignore switch (for things that should
+  stay visible but out of the check); a disk cache of sorted meshes so that
+  reopening a saved build is quick; an explicit fast / accurate switch; wall
+  gap on by default; amber shading for warning-only parts; the collision
+  distance back as a "must not be closer than" red tier.
 
 ### B. Performance ("laggy for real world large complicated buckets")
 
-Waiting for his numbers. Known and planned, in this order:
-1. Pop the stash, finish "verdict first" in the monitor (objects enter the
-   world unsorted, worker jobs ordered by need, more workers, several
-   threads for one large mesh).
-2. Pause instead of discard when monitoring is switched off; keep meshes of
-   hidden parts.
-3. Background slices back to back (today 12 ms of work, 20 ms of pause);
-   redraws at a limited rate during analysis.
-4. Large selections: 63 ms per step when all of 600 parts move
+Known and planned, in this order:
+
+1. [ ] "Verdict first" in the monitor: objects enter the world unsorted
+   (extents known, so the volume verdict is immediate), worker jobs ordered
+   by `World.wanted()`, more workers, several threads for one large mesh,
+   hashing and cleaning off the main thread.
+2. [ ] Pause instead of discard when monitoring is switched off; keep the
+   meshes of parts that leave the check (`keep_unused`).
+3. [ ] Background slices back to back while there is work (today 12 ms of
+   work, 20 ms of pause); redraws at a limited rate during analysis.
+4. [ ] Large selections: 63 ms per step when all of 600 parts move
    (`scratchpad/bl_group_move.py`): the out-of-volume pictures of parts that
    stick out (42 ms, no budget), the box tests of all against all (15 ms),
    the per-pair bookkeeping (16 ms), one `set_matrix` per object (10 ms).
    A rigid-group shortcut by per-part reference positions is NOT sound (two
    worked counter-examples in the session log); compare per pair, vectorised
    over a pair table.
-5. Overlay cost on a real GPU is unknown: the tint pass redraws every
-   colliding part (up to 4 M triangles).
+5. [ ] Per redraw: `status()` and `World.counts()` walk every violation;
+   the tint pass redraws every colliding part (up to 4 M triangles); cost on
+   a real GPU unknown.
 
 ### C. Before a wider release
 
 * Independent review of the integration code; audit of the Blender API calls
-  against the 4.2 source in `/home/claude/build/blender-42-src`.
-* Offered, no answer yet: a disk cache of sorted meshes so that reopening a
-  saved build is quick; wall gap on by default; amber shading for
-  warning-only parts.
+  against the 4.2 source in `/home/claude/build/blender-42-src` (icons are
+  checked: all exist in 4.2).
 
 Later, if wanted: smaller poses (quantised low levels); logarithmic extents
 for a rotating part; results rotated instead of re-solved when a group is
