@@ -131,13 +131,22 @@ To build the zip from this repository:
   neighbouring parts; when a part moves, only its own pairs are looked at.
 * **No Python loops over triangles.** All pairs that need work are traversed
   together, level by level, in NumPy.
-* **A live step has a time budget.** Whether two parts collide is always
-  decided exactly. How much more each pair gets (the complete intersection
+* **A live step has a time budget.** Whether two parts collide is decided
+  on every step. How much more each pair gets (the complete intersection
   curve, the hatched region, the proven clearance distance) follows the
   measured cost: with a few neighbours every pair gets everything; when a part
   lands on dozens of others, most pairs are only *sketched* (one intersecting
   triangle pair proves a collision) and the detail fills in for as many as
   fit. Whatever was left out is completed exactly just after release.
+* **Whether parts intersect is never left to a search that was cut short.**
+  Two fine meshes that nearly coincide (a part and its copy a fraction of a
+  triangle away) have millions of triangle pairs with overlapping boxes. The
+  search of one pass is bounded, and a live step has a budget for all its
+  pairs together, so that a dozen parts duplicated in place and nudged do
+  not stall a step for seconds. A pair that runs into a bound without a hit
+  is not called clear: it stays "checking" and is settled by an exhaustive
+  search that stops at the first cut and is done a slice at a time. A copy
+  lying exactly on its original is in contact, which is found at once.
 * **Nothing blocks.** Fitted trees are built in slices between redraws, and
   pairs whose trees are ready are solved first, so the results of a new scene
   appear as the work gets done.

@@ -193,10 +193,17 @@ goes. **Recheck Everything** throws all cached data away and starts again.
 * All pairs that need work are traversed together in vectorised NumPy passes;
   nothing loops over triangles in Python.
 * While you drag, every step has a time budget. Whether parts collide is
-  always decided, and the colliding parts are shaded at once. The curve, the
-  hatching and the exact clearance are worked out for as many neighbours as
-  fit in the budget and for all of them a moment after you stop. So a part
-  dropped into the middle of a full build can still be dragged out smoothly.
+  decided on every step, and the colliding parts are shaded at once. The
+  curve, the hatching and the exact clearance are worked out for as many
+  neighbours as fit in the budget and for all of them a moment after you
+  stop. So a part dropped into the middle of a full build can still be
+  dragged out smoothly.
+* One case takes longer than a step: two finely meshed surfaces that lie
+  almost exactly on each other, such as a part and a copy of it moved by a
+  fraction of a millimetre. While you move them the pair may show as "too
+  close" and the badge says "Checking"; the answer follows a moment after
+  you stop. A copy that lies exactly on its original is reported as a
+  collision at once.
 * The first analysis of a large scene, and anything else that is not a live
   edit, runs in slices in the background. The badge shows progress. While
   you edit or turn the view the slices are short, so Blender stays smooth;
