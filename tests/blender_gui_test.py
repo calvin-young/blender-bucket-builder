@@ -16,6 +16,7 @@ import time
 import traceback
 
 import bpy
+import numpy as np
 from mathutils import Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -86,6 +87,62 @@ def look(target, direction, distance):
     space.lens = 50
 
 
+def override():
+    return bpy.context.temp_override(window=win(), area=view_area(), region=view_region())
+
+
+def free_corner():
+    """Where the viewport's free bottom right corner is, in pixels of the
+    viewport region, worked out from where the regions lie on the screen."""
+    area = view_area()
+    region = view_region()
+    right = region.width
+    for r in area.regions:
+        if r.type == 'UI' and r.width > 1 and region.x < r.x < region.x + region.width:
+            right = min(right, r.x - region.x)
+    return right, 0
+
+
+def badge_box(colour):
+    """Bounding box of the pixels of one colour in the free bottom right corner
+    of the viewport: (count, distance of the rightmost one from the corner's
+    right edge, of the lowest one from its bottom edge), or None without a
+    virtual display to read."""
+    px = gui_common.screen_pixels()
+    if px is None:
+        return None
+    w = win()
+    region = view_region()
+    right, bottom = free_corner()
+    # screen rows run downwards, window pixels upwards
+    x0 = w.x + region.x
+    y0 = px.shape[0] - 1 - (w.y + region.y)
+    box = px[y0 - bottom - 150:y0 - bottom + 1, x0 + right - 420:x0 + right].astype(int)
+    r, g, b = box[:, :, 0], box[:, :, 1], box[:, :, 2]
+    if colour == 'red':
+        m = (r > 200) & (g < 90) & (b < 90)
+    elif colour == 'amber':
+        m = (r > 200) & (g > 130) & (g < 220) & (b < 80)
+    else:
+        m = (g > 170) & (r < 120) & (b < 150)
+    if not m.any():
+        return 0, None, None
+    ys, xs = np.nonzero(m)
+    return int(m.sum()), int(420 - 1 - xs.max()), int(150 - ys.max())
+
+
+def check_badge(colour, where):
+    got = badge_box(colour)
+    if got is None:
+        log('(no virtual display to read: the badge position is not checked)')
+        return
+    n, from_right, from_bottom = got
+    log(f'badge ({where}): {n} {colour} pixels in the corner, {from_right} px from its right edge, '
+        f'{from_bottom} px from its bottom')
+    assert n > 800, f'no {colour} badge in the bottom right corner ({where}): {n} px'
+    assert from_right <= 45 and from_bottom <= 45, (where, from_right, from_bottom)
+
+
 def pair_state(a, b):
     mon = monitor.get(bpy.context.scene if bpy.context.scene else win().scene)
     if mon is None:
@@ -153,8 +210,30 @@ def step_check_initial():
     log('status from the timer alone:', s)
     assert not s['busy'], 'background analysis did not finish'
     assert s['objects'] == 6 and s['collisions'] == 1 and s['clearance'] >= 1 and s['partly_out'] == 1, s
+    text = bc.overlay.badge_text(s)
+    assert text[:2] == ('FAIL', 'Collision Detected'), text
+    w = win()
+    log('window at', w.x, w.y, 'size', w.width, w.height)
+    for r in view_area().regions:
+        log('  region', r.type, r.alignment, 'at', r.x, r.y, 'size', r.width, r.height)
+    with override():
+        got = bc.overlay.free_corner(bpy.context)
+    assert tuple(got) == free_corner(), (got, free_corner())
+    assert got[0] < view_region().width - 100, 'the sidebar was expected to cover part of the viewport'
     shot('gui_1_overview')
-    return 0.3
+    check_badge('red', 'beside the open sidebar')
+    view_area().spaces.active.show_region_ui = False
+    return 0.6
+
+
+def step_sidebar_closed():
+    with override():
+        got = bc.overlay.free_corner(bpy.context)
+    assert tuple(got) == free_corner() == (view_region().width, 0), (got, free_corner())
+    shot('gui_1b_sidebar_closed')
+    check_badge('red', 'in the corner of the viewport')
+    view_area().spaces.active.show_region_ui = True
+    return 0.5
 
 
 def step_closeup():
@@ -267,7 +346,9 @@ def step_clean_shot():
     s = mon.status()
     log('status after fixing:', s)
     assert s['collisions'] == 0 and s['partly_out'] == 0 and s['outside'] == 0 and not s['busy'], s
+    assert bc.overlay.badge_text(s)[:2] == ('OK', 'Build OK'), bc.overlay.badge_text(s)
     shot('gui_5_clean')
+    check_badge('green', 'clean build')
     return 0.2
 
 
@@ -284,16 +365,138 @@ def step_wall_shot():
     s = mon.status()
     log('status with a part 3 mm from a side wall:', s, '| badge', bc.overlay.badge_text(s)[:2])
     assert s['near_wall'] == 1 and s['collisions'] == 0 and s['partly_out'] == 0, s
-    assert bc.overlay.badge_text(s)[0] == 'WARN', bc.overlay.badge_text(s)
+    assert bc.overlay.badge_text(s)[:2] == ('WARN', 'Wall Gap Warning'), bc.overlay.badge_text(s)
     shot('gui_6_wall_clearance')
+    check_badge('amber', 'wall gap warning')
     return 0.2
 
 
-STEPS = [step_setup, step_enable, step_check_initial, step_closeup, step_closeup_shot,
+# ---------------------------------------------------------------------------
+# isolating the parts of a problem (Blender's local view), and hidden parts
+# ---------------------------------------------------------------------------
+
+def in_local_view():
+    space = view_area().spaces.active
+    if space.local_view is None:
+        return None
+    return sorted(o.name for o in win().view_layer.objects if o.local_view_get(space))
+
+
+def step_problems_again():
+    bpy.data.objects['Ring'].location = (128, 110, 66)       # into the ball again
+    bpy.data.objects['Pin'].location.z = 103                 # 3 mm above the block
+    look((180, 130, 60), (0.62, -0.62, 0.48), 760)
+    return 1.5
+
+
+def step_isolate():
+    mon = monitor.get(win().scene)
+    st = win().scene.bucket_builder
+    probs = mon.problems()
+    kinds = [p['kind'] for p in probs]
+    log('problems:', [(p['kind'], p['a'], p['b']) for p in probs])
+    assert kinds == ['COLLIDE', 'CLEAR', 'WALL'], kinds
+    with override():
+        assert bpy.ops.bucketbuilder.focus_problem(index=0) == {'FINISHED'}
+    assert in_local_view() is None, 'going to a problem must not isolate by itself'
+    with override():
+        assert bpy.ops.bucketbuilder.isolate() == {'FINISHED'}
+    assert st.isolate and in_local_view() == ['Ball', 'Ring'], (st.isolate, in_local_view())
+    log('isolated:', in_local_view())
+    return 0.8
+
+
+def step_isolate_shot():
+    shot('gui_7_isolated_collision')
+    st = win().scene.bucket_builder
+    with override():
+        assert bpy.ops.bucketbuilder.step_problem(direction=1) == {'FINISHED'}
+    assert st.problem_index == 1 and in_local_view() == ['Block', 'Pin'], (st.problem_index, in_local_view())
+    log('next problem, isolated:', in_local_view())
+    return 0.8
+
+
+def step_isolate_next_shot():
+    shot('gui_8_isolated_clearance')
+    st = win().scene.bucket_builder
+    with override():
+        assert bpy.ops.bucketbuilder.step_problem(direction=1) == {'FINISHED'}
+    assert in_local_view() == ['Cone'], in_local_view()          # the part that is close to a wall
+    with override():
+        assert bpy.ops.bucketbuilder.isolate() == {'FINISHED'}
+    assert not st.isolate and in_local_view() is None, (st.isolate, in_local_view())
+    log('isolation off: the whole build shows again')
+    with override():
+        assert bpy.ops.bucketbuilder.step_problem(direction=1) == {'FINISHED'}
+    assert in_local_view() is None, 'going to a problem isolated it although Isolate is off'
+    look((180, 130, 60), (0.62, -0.62, 0.48), 760)
+    return 0.5
+
+
+def step_hide():
+    ring = bpy.data.objects['Ring']
+    with override():
+        bpy.ops.object.select_all(action='DESELECT')
+    ring.hide_set(True)
+    look((112, 110, 64), (0.35, -0.8, 0.5), 200)
+    return 1.0
+
+
+def step_hidden_shot():
+    mon = monitor.get(win().scene)
+    s = mon.status()
+    text = bc.overlay.badge_text(s)
+    log('with the ring hidden:', {k: s[k] for k in ('objects', 'hidden', 'hidden_problems', 'collisions')},
+        '| badge', text)
+    assert s['objects'] == 6 and s['hidden'] == 1 and s['collisions'] == 1 and s['hidden_problems'] == 1, s
+    assert '1 problem with hidden parts' in text[2], text
+    shot('gui_9_hidden_part')
+    # the isolate switch with a part that cannot be shown: the visible one alone
+    st = win().scene.bucket_builder
+    with override():
+        assert bpy.ops.bucketbuilder.focus_problem(index=0) == {'FINISHED'}
+        assert bpy.ops.bucketbuilder.isolate() == {'FINISHED'}
+    assert in_local_view() == ['Ball'], in_local_view()
+    return 0.8
+
+
+def step_hidden_isolated_shot():
+    shot('gui_10_hidden_part_isolated')
+    st = win().scene.bucket_builder
+    with override():
+        assert bpy.ops.bucketbuilder.isolate() == {'FINISHED'}
+    assert not st.isolate and in_local_view() is None
+    st.ignore_hidden = True
+    return 1.0
+
+
+def step_ignore_hidden():
+    mon = monitor.get(win().scene)
+    s = mon.status()
+    log('with Ignore Hidden Parts:', {k: s[k] for k in ('objects', 'hidden', 'collisions')})
+    assert s['objects'] == 5 and s['hidden'] == 0 and s['collisions'] == 0, s
+    win().scene.bucket_builder.ignore_hidden = False
+    bpy.data.objects['Ring'].hide_set(False)
+    look((180, 130, 60), (0.62, -0.62, 0.48), 760)
+    return 1.0
+
+
+def step_final():
+    mon = monitor.get(win().scene)
+    s = mon.status()
+    assert s['objects'] == 6 and s['hidden'] == 0 and s['collisions'] == 1, s
+    assert not mon.error, mon.error
+    shot('gui_11_final')
+    return 0.2
+
+
+STEPS = [step_setup, step_enable, step_check_initial, step_sidebar_closed, step_closeup, step_closeup_shot,
          step_drag_begin, step_drag_grab]
 for i, dx in enumerate([-30, -30, -30, -30, 30, 40, 40, 40, 40, 40, 40]):
     STEPS += make_drag_step(dx, 'gui_3_mid_drag' if i == 2 else None)
-STEPS += [step_drag_confirm, step_after_drag, step_fix, step_clean_shot, step_wall, step_wall_shot]
+STEPS += [step_drag_confirm, step_after_drag, step_fix, step_clean_shot, step_wall, step_wall_shot,
+          step_problems_again, step_isolate, step_isolate_shot, step_isolate_next_shot,
+          step_hide, step_hidden_shot, step_hidden_isolated_shot, step_ignore_hidden, step_final]
 
 
 def runner():

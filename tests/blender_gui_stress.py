@@ -341,9 +341,9 @@ PREP = {'t': 0.0, 'n': 0, 'tris': 0}
 _groups_orig = bc.overlay._groups
 
 
-def _groups_timed(mon_, st_, shaders_):
+def _groups_timed(*args, **kw):
     t = time.perf_counter()
-    r = _groups_orig(mon_, st_, shaders_)
+    r = _groups_orig(*args, **kw)
     PREP['t'] += time.perf_counter() - t
     PREP['n'] += 1
     PREP['tris'] = max(PREP['tris'], r[0].ntri + r[1].ntri)
@@ -354,9 +354,10 @@ bc.overlay._groups = _groups_timed
 
 
 def step_prep_report():
-    if PREP['n']:
-        log(f'overlay data preparation: {PREP["t"] / PREP["n"] * 1000:.2f} ms per redraw on average '
-            f'over {PREP["n"]} redraws; at most {PREP["tris"] // 1000}k region triangles on screen')
+    assert PREP['n'] > 20, 'the overlay was hardly ever drawn'
+    assert not mon().error, mon().error            # (a failed draw is noted there)
+    log(f'overlay data preparation: {PREP["t"] / PREP["n"] * 1000:.2f} ms per redraw on average '
+        f'over {PREP["n"]} redraws; at most {PREP["tris"] // 1000}k region triangles on screen')
     return 0.05
 
 

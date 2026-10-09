@@ -5,7 +5,7 @@
 bl_info = {
     "name": "Bucket Builder",
     "author": "Bucket Builder contributors",
-    "version": (1, 0, 1),
+    "version": (1, 1, 0),
     "blender": (4, 2, 0),
     "location": "3D Viewport > Sidebar > Bucket",
     "description": "Live collision, clearance and build-volume monitor for 3D-print build preparation",

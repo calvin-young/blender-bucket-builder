@@ -2,6 +2,10 @@
 """Operators: problem navigation, printer profiles, housekeeping."""
 
 import math
+import os
+import platform
+import sys
+import time
 
 import bpy
 import numpy as np
@@ -47,21 +51,63 @@ def frame(context, center, radius):
     return True
 
 
-def _select_parts(context, mon, problem):
-    """Make the parts of a problem the selection (so G / R act on them)."""
-    uids = [u for u in problem['key'][1:]]
-    by_uid = {monitor._uid(o): o for o in context.view_layer.objects}
-    targets = [by_uid[u] for u in uids if u in by_uid]
+def _parts_of(context, problem):
+    """The objects a problem is about (those still in the view layer)."""
+    by_uid = {monitor._uid(o): o for o in context.view_layer.objects if o is not None}
+    return [by_uid[u] for u in problem['key'][1:] if u in by_uid]
+
+
+def _select_parts(context, targets):
+    """Make the given parts the selection (so G / R act on them).  Returns
+    those that could be selected: a hidden part cannot."""
     if not targets or context.mode != 'OBJECT':
-        return
+        return []
     for o in context.selected_objects:
         o.select_set(False)
+    done = []
     for o in targets:
         try:
             o.select_set(True)
+            if o.select_get():
+                done.append(o)
         except RuntimeError:
             pass
-    context.view_layer.objects.active = targets[-1]
+    if done:
+        context.view_layer.objects.active = done[-1]
+    return done
+
+
+def _view3d_area(context):
+    area = context.area
+    if area is not None and area.type == 'VIEW_3D':
+        return area
+    for area in context.screen.areas if context.screen else ():
+        if area.type == 'VIEW_3D':
+            return area
+    return None
+
+
+def local_view(context, targets):
+    """Show ``targets`` on their own in the 3D viewport (Blender's local
+    view), or everything again if there are none.  The selection is changed
+    to the targets.  Returns True if the viewport is in local view afterwards.
+    """
+    area = _view3d_area(context)
+    if area is None or context.mode != 'OBJECT':
+        return False
+    space = area.spaces.active
+    region = next((r for r in area.regions if r.type == 'WINDOW'), None)
+    if region is None:
+        return False
+    try:
+        with context.temp_override(area=area, region=region, space_data=space):
+            if space.local_view is not None:
+                bpy.ops.view3d.localview(frame_selected=False)      # out of the one we are in
+            if targets and _select_parts(bpy.context, targets):
+                bpy.ops.view3d.localview(frame_selected=False)      # into one with the selection
+    except RuntimeError:                  # no viewport that could do it
+        return False
+    return space.local_view is not None
 
 
 def _goto(context, index, select):
@@ -77,10 +123,13 @@ def _goto(context, index, select):
     index %= len(problems)
     pr = problems[index]
     st.problem_index = index
+    targets = _parts_of(context, pr)
+    if st.isolate:
+        local_view(context, targets)
+    elif select:
+        _select_parts(context, targets)
     min_r = 4.0 / mon.mm_per_unit
     frame(context, pr['center'], max(pr['radius'], min_r))
-    if select:
-        _select_parts(context, mon, pr)
     return pr
 
 
@@ -141,6 +190,33 @@ class BUCKETBUILDER_OT_step_problem(Operator):
         return {'FINISHED'}
 
 
+class BUCKETBUILDER_OT_isolate(Operator):
+    """Show the parts of a problem on their own. While this is on, going to a problem puts its parts in local view; switch it off to see the whole build again"""
+    bl_idname = "bucketbuilder.isolate"
+    bl_label = "Isolate"
+    bl_options = {'REGISTER', 'UNDO'}     # (as Blender's own local view: it changes object flags)
+
+    def execute(self, context):
+        st = props.settings(context.scene)
+        mon = monitor.get(context.scene)
+        if context.mode != 'OBJECT':
+            self.report({'WARNING'}, "Isolating parts needs Object Mode")
+            return {'CANCELLED'}
+        if st.isolate:
+            st.isolate = False
+            local_view(context, [])
+            monitor.tag_redraw_all()
+            return {'FINISHED'}
+        st.isolate = True
+        problems = mon.problems() if mon is not None else []
+        if problems and 0 <= st.problem_index < len(problems):
+            _goto(context, st.problem_index, True)
+        else:
+            self.report({'INFO'}, "Pick a problem to see its parts on their own")
+        monitor.tag_redraw_all()
+        return {'FINISHED'}
+
+
 class BUCKETBUILDER_OT_frame_volume(Operator):
     """Frame the whole build volume in the viewport"""
     bl_idname = "bucketbuilder.frame_volume"
@@ -170,7 +246,7 @@ class BUCKETBUILDER_OT_recheck(Operator):
 
 
 class BUCKETBUILDER_OT_ignore(Operator):
-    """Include or exclude the selected objects from the checks"""
+    """Leave the selected objects out of the checks, or take them in again"""
     bl_idname = "bucketbuilder.ignore"
     bl_label = "Ignore Selected"
     bl_options = {'REGISTER', 'UNDO'}
@@ -187,6 +263,125 @@ class BUCKETBUILDER_OT_ignore(Operator):
                 n += 1
         monitor.on_settings_changed(context.scene)
         self.report({'INFO'}, f"{n} object(s) {'ignored' if self.ignore else 'included'}")
+        return {'FINISHED'}
+
+
+def ignored_objects(scene):
+    """The scene's objects that are left out of the checks on purpose."""
+    return [o for o in scene.objects if o.bucket_builder_ignore]
+
+
+class BUCKETBUILDER_OT_include(Operator):
+    """Check this object again"""
+    bl_idname = "bucketbuilder.include"
+    bl_label = "Include"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    name: StringProperty()
+
+    def execute(self, context):
+        obj = context.scene.objects.get(self.name)
+        if obj is None:
+            return {'CANCELLED'}
+        obj.bucket_builder_ignore = False
+        monitor.on_settings_changed(context.scene)
+        return {'FINISHED'}
+
+
+class BUCKETBUILDER_OT_include_all(Operator):
+    """Check every object again: nothing is ignored any more"""
+    bl_idname = "bucketbuilder.include_all"
+    bl_label = "Include All"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        objs = ignored_objects(context.scene)
+        for o in objs:
+            o.bucket_builder_ignore = False
+        monitor.on_settings_changed(context.scene)
+        self.report({'INFO'}, f"{len(objs)} object(s) included")
+        return {'FINISHED'}
+
+
+def triangles_text(n):
+    """A triangle count for people: 36,420 triangles, 31.4 M triangles."""
+    if n < 1000000:
+        return f"{n:,} triangles"
+    return f"{n / 1e6:.1f} M triangles"
+
+
+def _spread(values, unit=' ms'):
+    if not values:
+        return "no figures yet"
+    v = sorted(values)
+    return f"median {v[len(v) // 2]:.1f}{unit}, longest {v[-1]:.1f}{unit}"
+
+
+def addon_version():
+    """The add-on's version as text.  (Blender takes ``bl_info`` away from an
+    extension's module; the manifest is where it reads the version.)"""
+    try:
+        import addon_utils
+        info = addon_utils.module_bl_info(sys.modules[__package__])
+        return ".".join(str(x) for x in info.get('version', ()))
+    except Exception:
+        return "?"
+
+
+def report_lines(context):
+    """What is being checked and how long things take, as lines of text: for
+    the Performance panel and for sending to whoever looks after the add-on."""
+    scene = context.scene
+    st = props.settings(scene)
+    mon = monitor.get(scene)
+    lines = [f"Bucket Builder {addon_version()} | Blender {bpy.app.version_string} | "
+             f"{platform.system()} {platform.release()}"]
+    try:
+        import gpu
+        lines.append(f"Graphics: {gpu.platform.renderer_get()} | {gpu.platform.backend_type_get()} | "
+                     f"{gpu.platform.version_get()}")
+    except Exception:
+        pass
+    total = props.installed_memory()
+    lines.append(f"Processor threads: {os.cpu_count()} | memory: "
+                 + (f"{total / props.GIB:.0f} GB" if total else "unknown")
+                 + f" | workers: {monitor.worker_count()}")
+    if mon is None or st is None or not st.enabled:
+        lines.append("Monitoring is off")
+        return lines
+    stats = mon.world.stats()
+    s = mon.status()
+    lines.append(f"Parts: {stats['objects']} ({s['hidden']} hidden), {triangles_text(stats['triangles'])}; "
+                 f"{stats['geoms']} different meshes, {triangles_text(stats['unique_triangles'])}")
+    lines.append(f"Neighbouring pairs: {stats['pairs']} | collisions {s['collisions']}, clearance "
+                 f"{s['clearance']}, outside {s['partly_out'] + s['outside']}, near wall {s['near_wall']}")
+    limit = stats['cache_limit']
+    lines.append(f"Cached data: {stats['bytes'] / 1e6:.0f} MB"
+                 + (f" of {limit / 1e6:.0f} MB allowed" if limit else "")
+                 + f" | {stats['poses']} poses | dropped for memory: {stats['evictions']}")
+    if mon.ready_s is not None:
+        lines.append(f"First complete check after {mon.ready_s:.1f} s")
+    else:
+        lines.append(f"Still preparing after {time.perf_counter() - mon.t_start:.1f} s")
+    lines.append(f"While editing: update {_spread(list(mon.live_ms))}")
+    lines.append(f"While editing: from one redraw to the next {_spread(list(mon.frame_ms))}")
+    lines.append(f"Overlay drawing: {_spread(list(mon.draw_ms))}")
+    lines.append(f"Overlay triangles: shading {mon.draw_tris[0]:,}, hatching {mon.draw_tris[1]:,}")
+    lines.append(f"Background slices: {_spread(list(mon.bg_ms))} | being edited: {len(mon.hot)}"
+                 f" | still to do: {mon.world.pending}")
+    lines.append(f"Clearance: {st.clearance_mm:g} mm ({'on' if st.use_clearance else 'off'}) | "
+                 f"volume {' x '.join(f'{v:g}' for v in st.volume_size)} mm | {mon.unit_note}")
+    return lines
+
+
+class BUCKETBUILDER_OT_copy_report(Operator):
+    """Copy a few lines about this build and how fast it is being checked to the clipboard, to paste into a message"""
+    bl_idname = "bucketbuilder.copy_report"
+    bl_label = "Copy Report"
+
+    def execute(self, context):
+        context.window_manager.clipboard = "\n".join(report_lines(context))
+        self.report({'INFO'}, "Report copied to the clipboard")
         return {'FINISHED'}
 
 
@@ -213,6 +408,16 @@ def _mark_prefs_dirty(context):
         context.preferences.is_dirty = True
     except Exception:
         pass
+
+
+def _current_profile(p, st):
+    """The scene's printer in the library, or None.  (A scene saved with
+    version 1.0 carries that version's name for it.)"""
+    name = props.current_printer_name(st)
+    for prof in p.profiles:
+        if prof.name == name:
+            return prof
+    return None
 
 
 def apply_volume(st, name, size):
@@ -248,9 +453,9 @@ class BUCKETBUILDER_OT_profile_add(Operator):
     name: StringProperty(name="Name", default="Custom Printer")
 
     def invoke(self, context, event):
-        st = props.settings(context.scene)
-        if st.printer and st.printer != "Custom":
-            self.name = st.printer + " (copy)"
+        name = props.current_printer_name(props.settings(context.scene))
+        if name != "Custom":
+            self.name = name + " (copy)"
         return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
@@ -284,14 +489,15 @@ class BUCKETBUILDER_OT_profile_update(Operator):
         st = props.settings(context.scene)
         if p is None:
             return {'CANCELLED'}
-        for prof in p.profiles:
-            if prof.name == st.printer:
-                prof.size = st.volume_size
-                _mark_prefs_dirty(context)
-                self.report({'INFO'}, f"Updated '{prof.name}'")
-                return {'FINISHED'}
-        self.report({'WARNING'}, "Pick a printer first, or save the volume as a new printer")
-        return {'CANCELLED'}
+        prof = _current_profile(p, st)
+        if prof is None:
+            self.report({'WARNING'}, "Pick a printer first, or save the volume as a new printer")
+            return {'CANCELLED'}
+        prof.size = st.volume_size
+        apply_volume(st, prof.name, tuple(st.volume_size))
+        _mark_prefs_dirty(context)
+        self.report({'INFO'}, f"Updated '{prof.name}'")
+        return {'FINISHED'}
 
 
 class BUCKETBUILDER_OT_profile_remove(Operator):
@@ -307,16 +513,17 @@ class BUCKETBUILDER_OT_profile_remove(Operator):
         st = props.settings(context.scene)
         if p is None:
             return {'CANCELLED'}
-        for i, prof in enumerate(p.profiles):
-            if prof.name == st.printer:
-                p.profiles.remove(i)
-                st.lock_printer_name = True
-                st.printer = "Custom"
-                st.lock_printer_name = False
-                _mark_prefs_dirty(context)
-                return {'FINISHED'}
-        self.report({'WARNING'}, "The current volume is not a saved printer")
-        return {'CANCELLED'}
+        prof = _current_profile(p, st)
+        if prof is None:
+            self.report({'WARNING'}, "The current volume is not a saved printer")
+            return {'CANCELLED'}
+        p.profiles.remove(next(i for i, q in enumerate(p.profiles) if q.name == prof.name))
+        st.lock_printer_name = True
+        st.printer = "Custom"
+        st.lock_printer_name = False
+        monitor.on_settings_changed(context.scene)
+        _mark_prefs_dirty(context)
+        return {'FINISHED'}
 
 
 class BUCKETBUILDER_OT_profile_rename(Operator):
@@ -327,7 +534,7 @@ class BUCKETBUILDER_OT_profile_rename(Operator):
     name: StringProperty(name="Name")
 
     def invoke(self, context, event):
-        self.name = props.settings(context.scene).printer
+        self.name = props.current_printer_name(props.settings(context.scene))
         return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
@@ -336,16 +543,17 @@ class BUCKETBUILDER_OT_profile_rename(Operator):
         name = self.name.strip()
         if p is None or not name:
             return {'CANCELLED'}
-        for prof in p.profiles:
-            if prof.name == st.printer:
-                prof.name = name
-                st.lock_printer_name = True
-                st.printer = name
-                st.lock_printer_name = False
-                _mark_prefs_dirty(context)
-                return {'FINISHED'}
-        self.report({'WARNING'}, "The current volume is not a saved printer")
-        return {'CANCELLED'}
+        prof = _current_profile(p, st)
+        if prof is None:
+            self.report({'WARNING'}, "The current volume is not a saved printer")
+            return {'CANCELLED'}
+        prof.name = name
+        st.lock_printer_name = True
+        st.printer = name
+        st.lock_printer_name = False
+        monitor.on_settings_changed(context.scene)
+        _mark_prefs_dirty(context)
+        return {'FINISHED'}
 
 
 class BUCKETBUILDER_OT_profiles_reset(Operator):
@@ -374,10 +582,11 @@ class BUCKETBUILDER_MT_printers(Menu):
     def draw(self, context):
         layout = self.layout
         st = props.settings(context.scene)
+        current = props.current_printer_name(st)
         for i, (name, size) in enumerate(profile_items(context)):
             text = f"{name}   ({size[0]:g} x {size[1]:g} x {size[2]:g} mm)"
             op = layout.operator("bucketbuilder.profile_apply", text=text,
-                                 icon='CHECKMARK' if name == st.printer else 'BLANK1')
+                                 icon='CHECKMARK' if name == current else 'BLANK1')
             op.index = i
         layout.separator()
         layout.operator("bucketbuilder.profile_add", icon='ADD')
@@ -391,9 +600,13 @@ class BUCKETBUILDER_MT_printers(Menu):
 CLASSES = (
     BUCKETBUILDER_OT_focus_problem,
     BUCKETBUILDER_OT_step_problem,
+    BUCKETBUILDER_OT_isolate,
     BUCKETBUILDER_OT_frame_volume,
     BUCKETBUILDER_OT_recheck,
     BUCKETBUILDER_OT_ignore,
+    BUCKETBUILDER_OT_include,
+    BUCKETBUILDER_OT_include_all,
+    BUCKETBUILDER_OT_copy_report,
     BUCKETBUILDER_OT_profile_apply,
     BUCKETBUILDER_OT_profile_add,
     BUCKETBUILDER_OT_profile_update,

@@ -14,8 +14,9 @@ import numpy as np
 XVFB_FB = os.environ.get('BUCKET_BUILDER_XVFB_FB', '')
 
 
-def xwd_to_png(src, dst):
-    """Convert an X window dump (24 or 32 bits per pixel) to a PNG file."""
+def xwd_pixels(src):
+    """An X window dump (24 or 32 bits per pixel) as an array (height, width, 3)
+    of red, green, blue; the first row is the top of the screen."""
     with open(src, 'rb') as f:
         data = f.read()
     hdr = struct.unpack('>25I', data[:100])
@@ -24,7 +25,20 @@ def xwd_to_png(src, dst):
     raw = np.frombuffer(data, dtype=np.uint8, count=bytes_per_line * height,
                         offset=header_size + ncolors * 12).reshape(height, bytes_per_line)
     px = raw[:, :width * (bpp // 8)].reshape(height, width, bpp // 8)
-    rgb = np.ascontiguousarray(px[:, :, [2, 1, 0]] if byte_order == 0 else px[:, :, 1:4])
+    return np.ascontiguousarray(px[:, :, [2, 1, 0]] if byte_order == 0 else px[:, :, 1:4])
+
+
+def screen_pixels():
+    """What the virtual display shows right now, or None without one."""
+    if XVFB_FB and os.path.exists(XVFB_FB):
+        return xwd_pixels(XVFB_FB)
+    return None
+
+
+def xwd_to_png(src, dst):
+    """Convert an X window dump to a PNG file."""
+    rgb = xwd_pixels(src)
+    height, width = rgb.shape[:2]
     rows = b''.join(b'\x00' + rgb[y].tobytes() for y in range(height))
 
     def chunk(tag, d):
