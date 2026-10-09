@@ -61,11 +61,12 @@ BIG_SKIPS = ('too many triangles', 'not enough memory', 'error')
 
 class ObjState:
     __slots__ = ('uid', 'name', 'in_world', 'skipped', 'data_uid', 'shareable', 'ntri', 'sig',
-                 'pending')
+                 'pending', 'hidden')
 
     def __init__(self, uid, name):
         self.uid = uid
         self.name = name
+        self.hidden = False       # checked although it is hidden in the viewport
         self.in_world = False
         self.skipped = ''
         self.data_uid = None
@@ -90,10 +91,14 @@ def _executor():
     global _pool
     if _pool is None:
         _stop.clear()
-        workers = max(1, min(4, (_os.cpu_count() or 2) - 1))
-        _pool = concurrent.futures.ThreadPoolExecutor(max_workers=workers,
+        _pool = concurrent.futures.ThreadPoolExecutor(max_workers=worker_count(),
                                                       thread_name_prefix='bucket_builder')
     return _pool
+
+
+def worker_count():
+    """How many worker threads there are, or would be."""
+    return max(1, min(4, (_os.cpu_count() or 2) - 1))
 
 
 def _sort_job(co, tri):
@@ -112,13 +117,23 @@ def _matrix(obj):
     return np.array(obj.matrix_world, dtype=np.float64)
 
 
-def _eligible(obj, view_layer):
-    if obj.type != 'MESH' or obj.bucket_builder_ignore:
-        return False
+def _visible(obj, view_layer):
     try:
         return obj.visible_get(view_layer=view_layer)
     except Exception:
         return not obj.hide_viewport
+
+
+def _evaluated(obj, depsgraph):
+    """True if the dependency graph evaluates the object at all.  It does so
+    for an object that is merely hidden (the eye in the Outliner, H), with its
+    modifiers and its place up to date; it does not for one that is disabled
+    in viewports (the screen icon), whose world matrix is then stale or was
+    never worked out.  Such an object cannot be checked."""
+    try:
+        return bool(obj.evaluated_get(depsgraph).is_evaluated)
+    except Exception:
+        return False
 
 
 def _signature(obj):
@@ -201,6 +216,13 @@ class Monitor:
         self.jobs = {}            # geometry key -> _Job (meshes being sorted)
         self.mem_limit = -1       # the cache limit last given to the world
         self.unchecked = {}       # what the scene holds that is not checked: kind -> count
+        self.ignore_hidden = False    # the scene's setting, as last applied
+        self.disabled = 0         # mesh objects disabled in viewports (they are not checked)
+        self.printer = ''         # what the badge says about the printer
+        self._hidden_slots = None     # world slots of the hidden parts (None: work it out)
+        self._redraw = False          # the overlay is out of date although no result changed
+        self._instancers = set()      # parts seen with instances (for when they are hidden)
+        self._walls = (None, None)
         self.need_scan = True
         self.last_scan = 0.0
         self._faces = {}          # non-mesh object uid -> (signature, has faces)
@@ -213,6 +235,11 @@ class Monitor:
         # the Parts panel so slow scenes can be diagnosed)
         self.live_ms = deque(maxlen=240)
         self.draw_ms = deque(maxlen=240)
+        self.frame_ms = deque(maxlen=240)     # time from one redraw to the next while editing
+        self.bg_ms = deque(maxlen=240)        # background slices that had work to do
+        self.draw_tris = [0, 0]   # triangles of the last overlay draw: shading, hatching
+        self.t_start = time.perf_counter()
+        self.ready_s = None       # seconds from the start to the first complete verdict
         self._problems = (None, [])
         self._auto_mm = None
 
@@ -264,9 +291,24 @@ class Monitor:
         mid = 0.5 * (lo + hi)
         return np.minimum(lo + m, mid), np.maximum(hi - m, mid)
 
+    def apply_scope(self, st):
+        """Take over the settings that decide which objects are parts.  (Before
+        the scene is compared with the mirror, which goes by them.)"""
+        if st.ignore_hidden != self.ignore_hidden:
+            self.ignore_hidden = st.ignore_hidden
+            self.need_resync = True
+            self.need_scan = True
+
     def apply_params(self, scene, st):
         self.params_dirty = False
         self.mm_per_unit, self.unit_note = self._resolve_units(scene, st)
+        if st.show_volume or st.use_volume:
+            name = props.current_printer_name(st)
+            if name == "Custom":
+                name = "Custom volume, " + " x ".join(f"{v:g}" for v in st.volume_size) + " mm"
+            self.printer = name
+        else:
+            self.printer = ''
         k = 1.0 / self.mm_per_unit
         w = self.world
         lo, hi = self.volume_box(st)
@@ -275,7 +317,9 @@ class Monitor:
         if slots:
             size = max(size, float((w.O_HI[slots] - w.O_LO[slots]).max()))
         w.set_scale(size, 0.5 * k)
-        w.set_thresholds(st.collision_mm * k, st.clearance_mm * k if st.use_clearance else 0.0)
+        # (parts count as colliding when they touch or cut through each other;
+        # the engine could also call a gap below some distance a collision)
+        w.set_thresholds(0.0, st.clearance_mm * k if st.use_clearance else 0.0)
         w.set_detect_enclosed(st.detect_enclosed)
         if st.use_volume:
             w.set_volume(lo, hi, st.wall_clearance_mm * k if st.use_wall_clearance else 0.0)
@@ -290,6 +334,7 @@ class Monitor:
     def _remove(self, uid):
         os = self.objs.pop(uid, None)
         self.queue.pop(uid, None)
+        self._hidden_slots = None
         if os is not None and os.in_world:
             self.hot.pop(self.world.slot(uid), None)
             self.world.remove_object(uid)
@@ -310,18 +355,38 @@ class Monitor:
         self.check_sigs = False
         seen = set()
         w = self.world
+        ignore_hidden = self.ignore_hidden
+        disabled = 0
         for obj in view_layer.objects:
-            if obj is None or not _eligible(obj, view_layer):
+            if obj is None or obj.type != 'MESH' or obj.bucket_builder_ignore:
                 continue
+            hidden = not _visible(obj, view_layer)
+            if hidden:
+                # A hidden part is still in the build, so it is checked unless
+                # the user says otherwise.  One that is disabled in viewports
+                # is not evaluated by Blender and cannot be.
+                if not _evaluated(obj, depsgraph):
+                    disabled += 1
+                    continue
+                if ignore_hidden:
+                    continue
             uid = _uid(obj)
             seen.add(uid)
             os = self.objs.get(uid)
             if os is None:
                 os = ObjState(uid, obj.name)
+                os.hidden = hidden
                 self.objs[uid] = os
                 self.queue[uid] = None
+                self._hidden_slots = None
                 continue
             os.name = obj.name
+            if os.hidden != hidden:
+                os.hidden = hidden
+                self._hidden_slots = None
+                self.move_serial += 1         # what is drawn for it changes
+                self.cold_serial += 1
+                self._redraw = True
             if not os.in_world:
                 if check_sigs and uid not in self.queue and not os.skipped:
                     self.queue[uid] = None
@@ -335,7 +400,49 @@ class Monitor:
                 self.cold_serial += 1
         for uid in [u for u in self.objs if u not in seen]:
             self._remove(uid)
+        self.disabled = disabled
         self._count_waiting()
+
+    def hidden_slots(self):
+        """World slots of the parts that are checked although they are hidden."""
+        if self._hidden_slots is None:
+            w = self.world
+            self._hidden_slots = {w.slot(uid) for uid, os in self.objs.items()
+                                  if os.hidden and os.in_world}
+        return self._hidden_slots
+
+    def walls(self, only=None):
+        """Which walls have something going through them, and which side
+        walls have something too close: (six flags, four flags), each in the
+        order x low, y low, [z low,] x high, y high[, z high].  ``only``: the
+        slots to go by (a viewport in local view), all parts otherwise."""
+        w = self.world
+        key = (w.version, None if only is None else hash(frozenset(only)))
+        if self._walls[0] != key:
+            out = [False] * 6
+            near = [False] * 4
+            if w.volume is not None:
+                vlo, vhi = w.volume
+                e = w.eps_len
+                for slot, r in w.oob.items():
+                    if only is not None and slot not in only:
+                        continue
+                    for c in range(3):
+                        if r.lo[c] < vlo[c] - e:
+                            out[c] = True
+                        if r.hi[c] > vhi[c] + e:
+                            out[3 + c] = True
+                m = w.wall_margin - e
+                for slot, r in w.wall.items():
+                    if only is not None and slot not in only:
+                        continue
+                    for c in range(2):
+                        if r.lo[c] - vlo[c] < m:
+                            near[c] = True
+                        if vhi[c] - r.hi[c] < m:
+                            near[2 + c] = True
+            self._walls = (key, (tuple(out), tuple(near)))
+        return self._walls[1]
 
     def note_update(self, obj_eval, transform, geometry, now):
         """A dependency-graph update for one object (called from the handler)."""
@@ -412,6 +519,7 @@ class Monitor:
                 self.hot.pop(w.slot(uid), None)
                 w.remove_object(uid)
                 os.in_world = False
+                self._hidden_slots = None
             return
         job = self.jobs.get(key)
         if job is not None:
@@ -434,6 +542,7 @@ class Monitor:
         else:
             w.add_object(os.uid, key, _matrix(ob_eval))
             os.in_world = True
+            self._hidden_slots = None
 
     def _expect(self):
         """Tell the world what the workers are going to deliver, so that it
@@ -544,6 +653,23 @@ class Monitor:
         self._faces[uid] = (sig, faces)
         return faces
 
+    def _hidden_instances(self, obj, depsgraph):
+        """True if a hidden part makes instances.  (The dependency graph does
+        not list the instances of something hidden.)"""
+        if not any(m.type == 'NODES' and m.show_viewport for m in obj.modifiers):
+            return False
+        try:
+            geometry = obj.evaluated_get(depsgraph).evaluated_geometry()
+        except AttributeError:                # before Blender 4.4: what was seen while it showed
+            return _uid(obj) in self._instancers
+        except Exception:
+            return False
+        try:
+            cloud = geometry.instances_pointcloud()
+            return cloud is not None and len(cloud.points) > 0
+        except Exception:
+            return False
+
     def scan_unchecked(self, depsgraph, view_layer):
         """Count what the scene shows but the check does not cover.  Only real
         mesh data of mesh objects is read, so that leaves out instances
@@ -578,17 +704,35 @@ class Monitor:
             pass
         other = 0
         seen = set()
+        instancers = set(parts)
         for obj in view_layer.objects:
-            if obj is None or obj.type not in NON_MESH or obj.bucket_builder_ignore:
+            if obj is None or obj.bucket_builder_ignore:
                 continue
-            try:
-                if not obj.visible_get(view_layer=view_layer):
+            kind = obj.type
+            if kind == 'MESH':
+                # Hidden parts are checked like any other; their instances
+                # were not listed above.
+                os = self.objs.get(_uid(obj))
+                if os is not None and os.hidden and self._hidden_instances(obj, depsgraph):
+                    parts.add(os.uid)
+                    instancers.add(os.uid)
+                continue
+            if kind != 'EMPTY' and kind not in NON_MESH:
+                continue
+            if not _visible(obj, view_layer):
+                if self.ignore_hidden or not _evaluated(obj, depsgraph):
                     continue
-            except Exception:
+                if kind == 'EMPTY':
+                    # a hidden collection instance (not listed above either)
+                    coll = obj.instance_collection if obj.instance_type == 'COLLECTION' else None
+                    if coll is not None and any(o.type == 'MESH' for o in coll.all_objects):
+                        collections.add(_uid(obj))
+            if kind == 'EMPTY':
                 continue
             seen.add(_uid(obj))
             if self._has_faces(obj, depsgraph):
                 other += 1
+        self._instancers = instancers
         for uid in [u for u in self._faces if u not in seen]:
             del self._faces[uid]
         new = {k: v for k, v in (('instances', len(parts)), ('collections', len(collections)),
@@ -610,10 +754,16 @@ class Monitor:
         t0 = time.perf_counter()
         now = t0
         changed = False
+        had_work = self.busy
+        if self.params_dirty:
+            self.apply_scope(st)
         if self.need_resync and not (live and now - self.last_resync < LIVE_RESYNC_SECONDS):
             self.resync(depsgraph, view_layer)
         if self.params_dirty:
             self.apply_params(scene, st)
+        if self._redraw:
+            self._redraw = False              # something changed that only the overlay shows
+            changed = True
         had = len(self.world._slot_of)
         if self.jobs and self._collect_jobs(view_layer, depsgraph, now):
             changed = True
@@ -627,6 +777,11 @@ class Monitor:
             if self.scan_unchecked(depsgraph, view_layer):
                 changed = True
         self.last_tick_ms = (time.perf_counter() - t0) * 1000.0
+        if had_work and not live:
+            self.bg_ms.append(self.last_tick_ms)
+        if (self.ready_s is None and self.world.object_count and not self.queue and not self.jobs
+                and not self.world.unsettled):
+            self.ready_s = time.perf_counter() - self.t_start
         cutoff = now - HOT_SECONDS
         if self.hot:
             for slot in [s for s, t in self.hot.items() if t < cutoff]:
@@ -679,8 +834,15 @@ class Monitor:
         nc, ncl, npart, nout, nwall = w.counts()
         skipped = sum(1 for o in self.objs.values() if o.skipped in BIG_SKIPS)
         waiting = self._waiting()
+        hidden = self.hidden_slots()
         return {
             'objects': w.object_count,
+            'hidden': len(hidden),
+            # problems that involve a part the user cannot see
+            'hidden_problems': (sum(1 for a, b in w.viol if a in hidden or b in hidden)
+                                + sum(1 for s in w.oob if s in hidden)
+                                + sum(1 for s in w.wall if s in hidden)) if hidden else 0,
+            'printer': self.printer,
             'collisions': nc,
             'clearance': ncl,
             'partly_out': npart,
@@ -707,12 +869,17 @@ class Monitor:
         w = self.world
         k = self.mm_per_unit
         out = []
+        hidden = self.hidden_slots()
+
+        def name(slot):
+            return self.name_of(slot) + (" (hidden)" if slot in hidden else "")
+
         for (a, b), pr in w.viol.items():
             if pr.center is None:
                 continue
             out.append({
                 'kind': 'COLLIDE' if pr.state == COLLIDE else 'CLEAR',
-                'a': self.name_of(a), 'b': self.name_of(b),
+                'a': name(a), 'b': name(b),
                 'dist_mm': pr.dist * k,
                 'center': np.asarray(pr.center) + w.O_T[a],
                 'radius': float(pr.radius),
@@ -724,7 +891,7 @@ class Monitor:
             c = 0.5 * (r.lo + r.hi)
             out.append({
                 'kind': 'PARTIAL' if r.state == PARTIAL else 'OUTSIDE',
-                'a': self.name_of(slot), 'b': '',
+                'a': name(slot), 'b': '',
                 'dist_mm': 0.0,
                 'center': c,
                 'radius': 0.5 * float(np.linalg.norm(r.hi - r.lo)),
@@ -735,7 +902,7 @@ class Monitor:
         for slot, r in w.wall.items():
             out.append({
                 'kind': 'WALL',
-                'a': self.name_of(slot), 'b': '',
+                'a': name(slot), 'b': '',
                 'dist_mm': r.dist * k,
                 'center': r.center,
                 'radius': float(r.radius),

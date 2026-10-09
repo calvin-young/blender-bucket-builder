@@ -315,7 +315,7 @@ def main():
     # ------------------------------------------------ what is not checked
     monitor.SCAN_SECONDS = 0.0
     for o in (a, b, c, d):
-        o.hide_set(True)
+        bpy.data.objects.remove(o)
     update()
     mon = settle()
     check(mon.status()['objects'] == 1 and not mon.unchecked
@@ -342,9 +342,25 @@ def main():
         update()
         mon = settle()
         text = overlay.badge_text(mon.status())
-        check(mon.unchecked == {'instances': 1} and text[0] == 'WARN'
+        check(mon.unchecked == {'instances': 1} and text[:2] == ('WARN', 'Not Everything Checked')
               and any('unchecked instances' in line for line in text[2]),
               'instances that geometry nodes do not realize are reported', (mon.unchecked, text))
+        # A hidden part is checked like any other, so its instances are
+        # missing from the check just the same.  (Blender does not list them.)
+        gn.hide_set(True)
+        update()
+        mon = settle()
+        check(mon.status()['hidden'] == 1 and mon.unchecked == {'instances': 1},
+              'also when the part that makes them is hidden', (mon.status()['hidden'], mon.unchecked))
+        st.ignore_hidden = True
+        mon = settle()
+        check(mon.status()['objects'] == 1 and not mon.unchecked,
+              'but not when hidden parts are ignored', (mon.status()['objects'], mon.unchecked))
+        st.ignore_hidden = False
+        gn.hide_set(False)
+        update()
+        mon = settle()
+        check(mon.unchecked == {'instances': 1}, 'shown again, they are reported as before', mon.unchecked)
         real = ng.nodes.new('GeometryNodeRealizeInstances')
         ng.links.new(join.outputs[0], real.inputs[0])
         ng.links.new(real.outputs[0], nout.inputs[0])
@@ -364,6 +380,19 @@ def main():
     mon = settle()
     check(mon.unchecked == {'other': 1}, 'a text object is reported, a curve without faces is not',
           mon.unchecked)
+    txt.hide_set(True)
+    update()
+    mon = settle()
+    check(mon.unchecked == {'other': 1}, 'hidden, it is still part of the build and still reported',
+          mon.unchecked)
+    txt.hide_set(False)
+    txt.hide_viewport = True
+    update()
+    mon = settle()
+    check(not mon.unchecked, 'disabled in viewports, it is not', mon.unchecked)
+    txt.hide_viewport = False
+    update()
+    mon = settle()
     txt.select_set(True)
     bpy.context.view_layer.objects.active = txt
     bpy.ops.object.select_all(action='DESELECT')
@@ -386,6 +415,18 @@ def main():
     text = overlay.badge_text(mon.status())
     check(mon.unchecked == {'collections': 1} and text[0] == 'WARN',
           'a collection instance is reported', (mon.unchecked, text))
+    holder.hide_set(True)
+    update()
+    mon = settle()
+    check(mon.unchecked == {'collections': 1}, 'a hidden one too', mon.unchecked)
+    st.ignore_hidden = True
+    mon = settle()
+    check(not mon.unchecked, 'unless hidden parts are ignored', mon.unchecked)
+    st.ignore_hidden = False
+    holder.hide_set(False)
+    update()
+    mon = settle()
+    check(mon.unchecked == {'collections': 1}, 'and it is reported again when shown', mon.unchecked)
     bpy.data.objects.remove(holder)
     update()
     mon = settle()

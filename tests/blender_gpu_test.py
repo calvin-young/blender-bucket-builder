@@ -121,11 +121,11 @@ def render(mon, st, name, eye, target, is_ortho=False, ortho_scale=200.0, up=(0,
             gpu.state.blend_set('NONE')
             sb = scene_batch(smooth)
             sb.draw(smooth)
-            overlay.draw_scene(mon, st, p, proj @ view, proj, dist, (W, H), 1.0, srgb_target=False)
+            drawn = overlay.draw_scene(mon, st, p, proj @ view, proj, dist, (W, H), 1.0, srgb_target=False)
         with gpu.matrix.push_pop():
             gpu.matrix.load_matrix(Matrix.Identity(4))
             gpu.matrix.load_projection_matrix(ortho(0, W, 0, H, -1, 1))
-            overlay.draw_hud(mon, st, p, proj @ view, W, H, W * 0.5, 1.0)
+            overlay.draw_hud(mon, st, p, proj @ view, W, H, float(W), 0.0, 1.0)
         buf = fb.read_color(0, 0, W, H, 4, 0, 'UBYTE')
     ms = (time.perf_counter() - t0) * 1000
     offscreen.free()
@@ -133,11 +133,41 @@ def render(mon, st, name, eye, target, is_ortho=False, ortho_scale=200.0, up=(0,
     img[:, :, 3] = 255
     path = os.path.join(OUT, name + '.png')
     write_png(path, img)
+    red, amber, magenta = colours(img)
+    print(f'  {name}: saved {path}  ({ms:.0f} ms)  red px {red}  amber px {amber}  magenta px {magenta}'
+          f'  triangles: shading {drawn[0]}, hatching {drawn[1]}')
+    LAST.update(img=img, matrix=proj @ view, drawn=drawn)
+    return red, amber, magenta
+
+
+LAST = {}
+
+
+def colours(img):
+    """Pixels in the collision, warning and out-of-volume colours."""
     red = int(((img[:, :, 0] > 200) & (img[:, :, 1] < 90) & (img[:, :, 2] < 90)).sum())
     amber = int(((img[:, :, 0] > 200) & (img[:, :, 1] > 130) & (img[:, :, 1] < 220) & (img[:, :, 2] < 80)).sum())
     magenta = int(((img[:, :, 0] > 180) & (img[:, :, 1] < 110) & (img[:, :, 2] > 150)).sum())
-    print(f'  {name}: saved {path}  ({ms:.0f} ms)  red px {red}  amber px {amber}  magenta px {magenta}')
     return red, amber, magenta
+
+
+def green(img):
+    return int(((img[:, :, 1] > 170) & (img[:, :, 0] < 110) & (img[:, :, 2] < 140)).sum())
+
+
+def corner(img):
+    """The bottom right corner of the last picture, where the badge is (row 0
+    is the bottom row)."""
+    return img[:150, W - 420:]
+
+
+def around(point, size=9):
+    """The pixels of the last picture around a point of the scene."""
+    v = LAST['matrix'] @ Vector((point[0], point[1], point[2], 1.0))
+    x = int(round((v.x / v.w * 0.5 + 0.5) * W))
+    y = int(round((v.y / v.w * 0.5 + 0.5) * H))
+    assert size <= x < W - size and size <= y < H - size, (point, x, y)
+    return LAST['img'][y - size:y + size + 1, x - size:x + size + 1]
 
 
 def settle():
@@ -196,6 +226,19 @@ def main():
     assert r > 300, 'no collision hatch visible'
     assert a > 100, 'no clearance hatch visible'
     assert m > 300, 'no out-of-volume hatch visible'
+    # the verdict sits in the bottom right corner, in the collision colour
+    cr = colours(corner(LAST['img']))[0]
+    assert cr > 1500, f'no red badge in the bottom right corner ({cr} px)'
+    assert colours(LAST['img'][H // 2 - 60:H // 2 + 60, :300])[0] == 0, 'something red at the left edge'
+    # Only the wall that the part goes through is marked: the middle of an
+    # upright edge of the x = 380 wall is drawn in the out-of-volume colour,
+    # that of an edge of the x = 0 wall in the volume's own.
+    assert mon.walls()[0] == (False, False, False, True, False, False), mon.walls()
+    hit = colours(around((380, 0, 190)))[2]
+    calm = around((0, 0, 190))
+    assert hit > 10, f'the wall that is exceeded is not marked ({hit} px)'
+    assert colours(calm)[2] == 0, 'a wall that nothing goes through is marked'
+    assert int(((calm[:, :, 2] > 150) & (calm[:, :, 0] < 140)).sum()) > 5, 'the edge of the volume is missing'
     render(mon, st, 'collision_closeup', (150, -20, 150), (112, 110, 64))
     render(mon, st, 'clearance_closeup', (330, -10, 110), (230, 90, 68))
     render(mon, st, 'outside_closeup', (520, 60, 150), (350, 200, 60))
@@ -206,25 +249,93 @@ def main():
     pr = props.prefs()
     st.show_tint = False
     r0, _, _ = render(mon, st, 'tint_off', (150, -20, 150), (112, 110, 64))
+    assert LAST['drawn'][0] == 0, LAST['drawn']
     st.show_tint = True
     r1, _, _ = render(mon, st, 'tint_on', (150, -20, 150), (112, 110, 64))
     assert len(overlay._state.get('tint', {})) == 2, 'one cached mesh per colliding part expected'
+    assert LAST['drawn'][0] > 0, LAST['drawn']
     pr.tint_budget = 0.0                       # no triangle budget: outline boxes instead
     r2, _, _ = render(mon, st, 'tint_boxes', (150, -20, 150), (112, 110, 64))
     pr.tint_budget = 4.0
     print(f'  red pixels: tint off {r0}, on {r1}, outline boxes {r2}')
     assert r2 > r0, 'outline boxes of the colliding parts are missing'
 
-    # a clean build: the badge must turn green
-    bpy.data.objects['Ring'].location.z = 150
-    bpy.data.objects['Pin'].location.z = 115
+    # the display switches
+    both = LAST['drawn']
+    st.show_curves = False
+    st.show_markers_collision = False
+    r3, _, _ = render(mon, st, 'no_outlines', (150, -20, 150), (112, 110, 64))
+    st.show_curves = True
+    st.show_markers_collision = True
+    r4, _, _ = render(mon, st, 'outlines', (150, -20, 150), (112, 110, 64))
+    assert r4 > r3, 'the intersection outline and the marker cannot be switched off'
+    st.show_gap_lines = False
+    st.show_markers_clearance = False
+    _, a0, _ = render(mon, st, 'no_gap_lines', (330, -10, 110), (230, 90, 68))
+    st.show_gap_lines = True
+    st.show_markers_clearance = True
+    _, a1, _ = render(mon, st, 'gap_lines', (330, -10, 110), (230, 90, 68))
+    assert a1 > a0, 'the closest-distance line and the marker cannot be switched off'
+    pr.use_xray = False
+    render(mon, st, 'no_xray', (150, -20, 150), (112, 110, 64))
+    pr.use_xray = True
+    for px in (2, 4, 7, 10):
+        pr.hatch_pixels = px
+        render(mon, st, f'hatch_{px}px', (150, -20, 150), (112, 110, 64))
+    pr.hatch_pixels = 4
+
+    # A hidden part is still checked, but it is not shaded or hatched: the
+    # user hid it to see past it.
+    ring = bpy.data.objects['Ring']
+    render(mon, st, 'ring_shown', (150, -20, 150), (112, 110, 64))
+    shown = LAST['drawn']
+    ring.hide_set(True)
+    bpy.context.view_layer.update()
+    mon = settle()
+    s = mon.status()
+    assert s['collisions'] == 1 and s['hidden'] == 1 and s['hidden_problems'] == 1, s
+    r5, _, _ = render(mon, st, 'ring_hidden', (150, -20, 150), (112, 110, 64))
+    assert 0 < LAST['drawn'][0] < shown[0] and 0 < LAST['drawn'][1] < shown[1], (LAST['drawn'], shown)
+    assert r5 > 300, 'the collision with a hidden part is not shown'
+    ring.hide_set(False)
+    bpy.context.view_layer.update()
+    mon = settle()
+
+    # a warning only: the badge is an amber triangle
+    ring.location.z = 150
     bpy.data.objects['Head'].location = (300, 200, 60)
+    bpy.context.view_layer.update()
+    mon = settle()
+    text = overlay.badge_text(mon.status())
+    assert text[:2] == ('WARN', 'Clearance Warning'), text
+    render(mon, st, 'warning', (520, -330, 330), (180, 130, 60))
+    cr, ca, _ = colours(corner(LAST['img']))
+    assert ca > 800 and cr == 0, f'no amber badge in the corner ({ca} amber, {cr} red px)'
+    assert colours(around((380, 0, 190)))[2] == 0, 'a wall is still marked'
+    # the wall gap: only the side of the inner box that a part is too close to
+    st.use_wall_clearance = True
+    bpy.data.objects['Cone'].location.x = 25.0        # base radius 22: 3 mm from the x = 0 wall
+    bpy.context.view_layer.update()
+    mon = settle()
+    assert mon.walls()[1] == (True, False, False, False), mon.walls()
+    render(mon, st, 'wall_gap', (520, -330, 330), (180, 130, 60))
+    near = colours(around((5, 60, 0)))[1]             # bottom edge of the inner box, x low side
+    assert near > 10, f'the side a part is too close to is not marked ({near} px)'
+    assert colours(around((250, 5, 0)))[1] == 0, 'a side nothing is close to is marked'
+    st.use_wall_clearance = False
+    bpy.data.objects['Cone'].location.x = 60.0
+
+    # a clean build: the badge must turn green
+    bpy.data.objects['Pin'].location.z = 115
     bpy.context.view_layer.update()
     mon = settle()
     print('  status after fixing:', mon.status())
     r, a, m = render(mon, st, 'clean', (520, -330, 330), (180, 130, 60))
-    img_ok = mon.status()['collisions'] == 0 and mon.status()['partly_out'] == 0
-    assert img_ok, mon.status()
+    text = overlay.badge_text(mon.status())
+    assert text[:2] == ('OK', 'Build OK'), text
+    assert r == 0 and a == 0 and m == 0, (r, a, m)
+    cg = green(corner(LAST['img']))
+    assert cg > 800, f'no green badge in the corner ({cg} px)'
     print('GPU TEST OK')
 
 

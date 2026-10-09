@@ -53,6 +53,14 @@ class FakeLayout:
     def box(self):
         return FakeLayout()
 
+    def panel(self, idname, **kw):
+        # a collapsible section inside a panel: (its header, its body);
+        # here the body is always there, as if every section were open
+        assert set(kw) <= {'default_closed'}, kw
+        assert idname.startswith('bucketbuilder_'), idname
+        LOG.append(('panel', idname))
+        return FakeLayout(), FakeLayout()
+
     def separator(self, **kw):
         pass
 
@@ -74,6 +82,7 @@ class FakeLayout:
         op = getattr(getattr(bpy.ops, mod), fn)
         rna = op.get_rna_type()            # raises if the operator is not registered
         LOG.append(('operator', idname))
+        LOG.append(('operator_text', kw.get('text', '')))
         return OpProps(rna)
 
     def menu(self, idname, **kw):
@@ -108,6 +117,10 @@ def draw_all(context, tag):
     for cls in ops.CLASSES:
         if issubclass(cls, bpy.types.Menu):
             cls.draw(Holder(), context)
+    # what the add-on adds to Blender's own panels and menus
+    for host, fn in ui._EXTRA:
+        assert hasattr(bpy.types, host), f'{host} does not exist in this Blender'
+        fn(Holder(), context)
     # the preferences page too
     p = props.prefs(context)
     if p is not None:
@@ -124,6 +137,10 @@ def settle():
     return mon
 
 
+def labels_since(n0):
+    return [t for k, t in LOG[n0:] if k == 'label']
+
+
 def main():
     ctx = bpy.context
     sc = ctx.scene
@@ -131,6 +148,12 @@ def main():
     props.seed_profiles(props.prefs())
 
     draw_all(ctx, 'monitoring off')
+    assert ('prop', 'enabled') in LOG and ('prop', 'ignore_hidden') in LOG, 'the main switches are missing'
+    for idname in ('bucketbuilder_collisions_advanced', 'bucketbuilder_volume_advanced',
+                   'bucketbuilder_display_colors'):
+        assert ('panel', idname) in LOG, idname
+    for name in ('collision_mm', 'show_labels'):
+        assert ('prop', name) not in LOG, name
 
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
@@ -149,16 +172,79 @@ def main():
     s = mon.status()
     assert s['collisions'] >= 1 and s['clearance'] >= 1 and s['partly_out'] == 1, s
     assert len(mon.problems()) > ui.LIST_ROWS, len(mon.problems())
+    n0 = len(LOG)
     draw_all(ctx, 'scene with problems')
-    labels = [t for k, t in LOG if k == 'label']
+    labels = labels_since(n0)
     assert any('collision' in t for t in labels), labels[-12:]
     st.problem_index = len(mon.problems()) - 1          # scrolled list
     draw_all(ctx, 'last problem active')
 
     # the same status text feeds the viewport badge
     state, head, lines = bc.overlay.badge_text(mon.status())
-    assert state == 'FAIL' and lines, (state, head, lines)
+    assert state == 'FAIL' and head == 'Collision Detected' and lines, (state, head, lines)
     print('  badge:', state, '|', head, '|', lines)
+
+    # ignoring parts: the list of what is left out, and the ways back in
+    objs = [o for o in sc.objects if o.type == 'MESH']
+    for o in objs[:15]:
+        o.bucket_builder_ignore = True
+    mon = settle()
+    assert len(ops.ignored_objects(sc)) == 15 and mon.status()['objects'] == len(objs) - 15
+    n0 = len(LOG)
+    draw_all(ctx, '15 parts ignored')
+    labels = labels_since(n0)
+    assert '15 ignored:' in labels and objs[0].name in labels, labels
+    assert sum(1 for o in objs[:15] if o.name in labels) == ui.IGNORED_ROWS, 'the list is not capped'
+    assert f'... and {15 - ui.IGNORED_ROWS} more' in labels, labels
+    assert bpy.ops.bucketbuilder.include(name=objs[0].name) == {'FINISHED'}
+    assert not objs[0].bucket_builder_ignore and len(ops.ignored_objects(sc)) == 14
+    assert bpy.ops.bucketbuilder.include(name='no such object') == {'CANCELLED'}
+    assert bpy.ops.bucketbuilder.include_all() == {'FINISHED'}
+    mon = settle()
+    assert not ops.ignored_objects(sc) and mon.status()['objects'] == len(objs), mon.status()
+    n0 = len(LOG)
+    draw_all(ctx, 'everything included again')
+    assert not any('ignored' in t for t in labels_since(n0)), labels_since(n0)
+    print('  ignore list: one part and all parts can be taken in again')
+
+    # a hidden part, and one that Blender does not evaluate
+    objs[1].hide_set(True)
+    objs[2].hide_viewport = True
+    ctx.view_layer.update()
+    mon = settle()
+    st.problem_index = 0                                # the list from its top
+    n0 = len(LOG)
+    draw_all(ctx, 'one part hidden, one disabled in viewports')
+    labels = labels_since(n0)
+    assert '1 of them hidden, and checked' in labels, labels
+    assert any('disabled in viewports' in t for t in labels), labels
+    assert any('(hidden)' in t for k, t in LOG[n0:] if k == 'operator_text'), 'hidden part not marked'
+    objs[1].hide_set(False)
+    objs[2].hide_viewport = False
+    ctx.view_layer.update()
+    mon = settle()
+
+    # the report for whoever is asked why something is slow
+    lines = ops.report_lines(ctx)
+    text = '\n'.join(lines)
+    for word in ('Bucket Builder', 'Blender', 'Parts:', 'Neighbouring pairs', 'Cached data',
+                 'While editing', 'Overlay', 'Clearance'):
+        assert word in text, (word, text)
+    assert lines[0].startswith('Bucket Builder 1.'), lines[0]      # the version is found
+    assert bpy.ops.bucketbuilder.copy_report() == {'FINISHED'}
+    print('  report:')
+    for line in lines:
+        print('    ' + line)
+    st.enabled = False
+    assert 'Monitoring is off' in '\n'.join(ops.report_lines(ctx))
+    st.enabled = True
+    settle()
+
+    # isolating needs a viewport; without one the operator must not fail
+    st.problem_index = 0
+    assert bpy.ops.bucketbuilder.isolate() == {'FINISHED'} and st.isolate
+    assert bpy.ops.bucketbuilder.step_problem(direction=1) == {'FINISHED'}
+    assert bpy.ops.bucketbuilder.isolate() == {'FINISHED'} and not st.isolate
     print('UI TEST OK')
 
 

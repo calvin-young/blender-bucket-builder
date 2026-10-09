@@ -220,14 +220,78 @@ def main():
           'identical copy is recognised and shares geometry too')
 
     # ------------------------------------------------- visibility / ignoring
+    # A hidden part is still in the build: it stays in the check unless the
+    # user says otherwise.
+    badge = bc.overlay.badge_text
     d.hide_set(True)
     update()
     mon = settle()
-    check(mon.world.stats()['objects'] == 4, 'hidden object leaves the check', mon.world.stats())
+    s = mon.status()
+    check(s['objects'] == 5 and s['hidden'] == 1 and s['hidden_problems'] == 0,
+          'a hidden part stays in the check', s)
+    check(badge(s)[2][0] == '5 parts (1 hidden), no collisions', 'and the verdict says how many are hidden',
+          badge(s))
+    d.location.x = 70.0               # moved, unseen, into part A
+    update()
+    check(state(mon, a, d) == COLLIDE, 'a hidden part that is moved is checked like any other (live)',
+          state(mon, a, d))
+    mon = settle()
+    s = mon.status()
+    hid = [q for q in mon.problems() if '(hidden)' in q['a'] or '(hidden)' in q['b']]
+    check(s['hidden_problems'] == 1 and len(hid) == 1 and hid[0]['kind'] == 'COLLIDE'
+          and 'PartA.linked (hidden)' in (hid[0]['a'], hid[0]['b']),
+          'its problems are marked as involving a hidden part', (s['hidden_problems'], hid))
+    check('1 problem with hidden parts' in badge(s)[2], 'and the verdict says so', badge(s))
+    check(mon.world.slot(d.session_uid) in mon.hidden_slots(), 'the overlay knows which part not to shade')
+    st.ignore_hidden = True
+    mon = settle()
+    s = mon.status()
+    check(s['objects'] == 4 and s['hidden'] == 0 and s['collisions'] == 0,
+          'with Ignore Hidden Parts it leaves the check', s)
     d.hide_set(False)
     update()
     mon = settle()
-    check(mon.world.stats()['objects'] == 5, 'unhidden object returns')
+    check(mon.status()['objects'] == 5 and mon.status()['collisions'] == 1, 'shown again, it is back', mon.status())
+    st.ignore_hidden = False
+    d.location.x = 40.0
+    update()
+    mon = settle()
+    check(mon.status()['collisions'] == 0 and not mon.ignore_hidden, 'and the setting is off again')
+    # the eye of a collection hides its parts in the same way
+    tray = bpy.data.collections.new('Tray')
+    sc.collection.children.link(tray)
+    for coll in list(d.users_collection):
+        coll.objects.unlink(d)
+    tray.objects.link(d)
+    update()
+    mon = settle()
+    layer = bpy.context.view_layer.layer_collection.children['Tray']
+    layer.hide_viewport = True
+    update()
+    mon = settle()
+    s = mon.status()
+    check(s['objects'] == 5 and s['hidden'] == 1, 'a part in a hidden collection is checked too', s)
+    layer.hide_viewport = False
+    layer.exclude = True              # not in this view layer at all
+    update()
+    mon = settle()
+    s = mon.status()
+    check(s['objects'] == 4 and s['hidden'] == 0, 'a collection excluded from the view layer is not in the build', s)
+    layer.exclude = False
+    update()
+    mon = settle()
+    check(mon.status()['objects'] == 5, 'included again, its part returns')
+    # Disabled in viewports is different: Blender does not work such an object
+    # out at all (its place, its modifiers), so there is nothing to check.
+    d.hide_viewport = True
+    update()
+    mon = settle()
+    check(mon.status()['objects'] == 4 and mon.disabled == 1,
+          'a part disabled in viewports cannot be checked; it is counted as such', (mon.status(), mon.disabled))
+    d.hide_viewport = False
+    update()
+    mon = settle()
+    check(mon.status()['objects'] == 5 and mon.disabled == 0, 'enabled again, it returns')
     e.bucket_builder_ignore = True
     update()
     mon = settle()
@@ -236,6 +300,7 @@ def main():
     mon = settle()
     bpy.data.objects.remove(e)
     bpy.data.objects.remove(d)
+    bpy.data.collections.remove(tray)
     update()
     mon = settle()
     check(mon.world.stats()['objects'] == 3, 'deleted objects are dropped', mon.world.stats())
@@ -248,12 +313,27 @@ def main():
     r = mon.world.oob[mon.world.slot(a.session_uid)]
     check(r.tris is not None and len(r.tris) > 0, 'out-of-volume triangles collected', len(r.tris))
     check(float(r.tris[:, :, 0].min()) < 0.0, 'they really are beyond the wall')
+    s = mon.status()
+    check(badge(s)[:2] == ('FAIL', 'Outside Build Volume'), 'the verdict names it', badge(s))
+    # only the walls something goes through are marked (x low, y low, z low, x high, y high, z high)
+    F, T = False, True
+    check(mon.walls() == ((T, F, F, F, F, F), (F, F, F, F)), 'the wall it goes through is known', mon.walls())
     a.location.x = -100.0
     update()
     check(oob(mon, a) == OUTSIDE, 'part fully outside (live)')
-    a.location.x = 100.0
+    check(mon.walls()[0] == (T, F, F, F, F, F), 'outside altogether: beyond the same wall', mon.walls())
+    a.location = (370.0, 275.0, 100.0)             # through two walls at once
     update()
-    check(oob(mon, a) is None, 'moved back inside')
+    check(mon.walls()[0] == (F, F, F, T, T, F), 'a part in a corner goes through two walls', mon.walls())
+    a.location = (100.0, 100.0, 370.0)             # through the top
+    b.location = (160.0, 100.0, 10.0)              # and another one through the floor
+    update()
+    check(mon.walls()[0] == (F, F, T, F, F, T), 'top and floor, by different parts', mon.walls())
+    a.location = (100.0, 100.0, 100.0)
+    b.location = (160.0, 100.0, 100.0)
+    update()
+    check(oob(mon, a) is None and mon.walls()[0] == (F,) * 6, 'moved back inside: no wall is marked',
+          mon.walls())
     st.volume_size = (90.0, 284.0, 380.0)      # shrink X: A (80..120) now crosses x=90
     mon = settle()
     check(oob(mon, a) == PARTIAL, 'changing the volume re-evaluates the parts')
@@ -271,8 +351,8 @@ def main():
     mon = settle()
 
     # --------------------------------------------------------- wall clearance
-    badge = bc.overlay.badge_text
-    check(mon.status()['near_wall'] == 0 and badge(mon.status())[0] == 'OK', 'wall clearance is off by default')
+    check(mon.status()['near_wall'] == 0 and badge(mon.status())[:2] == ('OK', 'Build OK'),
+          'wall clearance is off by default', badge(mon.status()))
     st.use_wall_clearance = True                       # 5 mm unless changed
     mon = settle()
     check(mon.status()['near_wall'] == 0, 'no part within 5 mm of a wall')
@@ -284,7 +364,14 @@ def main():
     check(abs(r.dist - 3.0) < 0.05, 'distance to the wall ~3 mm', r.dist)
     check(r.tris is not None and len(r.tris) > 0 and float(r.tris[:, :, 0].min()) < 5.0,
           'the geometry inside the margin is collected', len(r.tris))
-    check(badge(s)[0] == 'WARN', 'it is a warning: the verdict stays "Build OK"', badge(s))
+    check(badge(s)[:2] == ('WARN', 'Wall Gap Warning') and '1 part close to a wall' in badge(s)[2],
+          'it is a warning, not a failure', badge(s))
+    check(mon.walls() == ((F,) * 6, (T, F, F, F)), 'the side it is too close to is known', mon.walls())
+    a.location = (357.0, 262.0, 100.0)                 # 3 mm from x high, 2 mm from y high
+    update()
+    check(mon.walls() == ((F,) * 6, (F, F, T, T)), 'and both sides for a part in a corner', mon.walls())
+    a.location = (23.0, 100.0, 100.0)
+    update()
     wall = [p for p in mon.problems() if p['kind'] == 'WALL']
     check(len(wall) == 1 and wall[0]['a'] == 'PartA' and abs(wall[0]['dist_mm'] - 3.0) < 0.05,
           'listed among the problems with its distance', wall)
@@ -318,14 +405,27 @@ def main():
     # -------------------------------------------------------- printer profiles
     props.seed_profiles(props.prefs())
     p = props.prefs()
-    check(p is not None and len(p.profiles) >= 3, 'default printer profiles present',
-          None if p is None else len(p.profiles))
     names = [x.name for x in p.profiles]
-    idx = next(i for i, x in enumerate(p.profiles) if '580' in x.name)
+    check(p is not None and names[:4] == ['HP MJF 4XXX/5XXX', 'HP MJF 5XX', 'HP MJF 580+', 'HP MJF 1200'],
+          'the built-in printers', names)
+    check(mon.status()['printer'] == 'Custom volume, 380 x 284 x 380 mm',
+          'a volume set by hand is described by its size', mon.status()['printer'])
+    idx = names.index('HP MJF 580+')
     check(bpy.ops.bucketbuilder.profile_apply(index=idx) == {'FINISHED'}, 'profile applied')
-    check(tuple(st.volume_size) == (332.0, 190.0, 248.0) and st.printer == names[idx],
+    check(np.allclose(st.volume_size, (198.7, 332.6, 267.8), atol=1e-4) and st.printer == 'HP MJF 580+',
           'volume and name follow the profile', (tuple(st.volume_size), st.printer))
+    mon = settle()
+    check(mon.status()['printer'] == 'HP MJF 580+', 'the verdict names the printer', mon.status()['printer'])
+    lo, hi = mon.volume_box(st)
+    check(np.allclose(hi - lo, (198.7, 332.6, 267.8), atol=1e-4), 'and the checked volume is that printer\'s')
+    st.show_volume = False
+    st.use_volume = False
+    mon = settle()
+    check(mon.status()['printer'] == '', 'no printer is named while the volume is neither shown nor checked')
+    st.show_volume = True
+    st.use_volume = True
     st.volume_size = (300.0, 200.0, 250.0)
+    check(st.printer == 'Custom', 'editing the size makes it a custom volume again', st.printer)
     check(bpy.ops.bucketbuilder.profile_add('EXEC_DEFAULT', name='My Printer') == {'FINISHED'}, 'profile saved')
     check(any(x.name == 'My Printer' and tuple(x.size) == (300.0, 200.0, 250.0) for x in p.profiles),
           'new profile stored in the library')
@@ -334,10 +434,55 @@ def main():
     check(bpy.ops.bucketbuilder.profile_update() == {'FINISHED'}, 'profile updated')
     check(any(x.name == 'My Printer' and tuple(x.size) == (310.0, 200.0, 250.0) for x in p.profiles),
           'updated size stored')
+    check(bpy.ops.bucketbuilder.profile_rename('EXEC_DEFAULT', name='Our Printer') == {'FINISHED'}
+          and st.printer == 'Our Printer' and any(x.name == 'Our Printer' for x in p.profiles),
+          'profile renamed', st.printer)
     check(bpy.ops.bucketbuilder.profile_remove('EXEC_DEFAULT') == {'FINISHED'}, 'profile removed')
-    check(not any(x.name == 'My Printer' for x in p.profiles), 'profile gone from the library')
+    check(not any(x.name in ('My Printer', 'Our Printer') for x in p.profiles) and st.printer == 'Custom',
+          'profile gone from the library', st.printer)
+
+    # A library made by version 1.0 is brought up to date: its built-in
+    # printers are replaced by the new list, the user's own are kept, and so
+    # is a built-in one whose size the user changed.
+    p.profiles.clear()
+    for name, size in (('HP Jet Fusion 5600', (380, 284, 380)), ('HP Jet Fusion 5200', (380, 284, 380)),
+                       ('HP Jet Fusion 5000', (380, 284, 300)),         # edited: it was 250 high
+                       ('HP Jet Fusion 4200', (380, 284, 380)), ('HP Multi Jet Fusion 1200', (320, 165, 230)),
+                       ('HP Jet Fusion 580 / 540', (332, 190, 248)), ('Bench Printer', (200, 333, 268))):
+        item = p.profiles.add()
+        item.name = name
+        item.size = size
+    p.profiles_seeded = True
+    p.profiles_version = 0
+    props.seed_profiles(p)
+    names = [x.name for x in p.profiles]
+    check(names == ['HP MJF 4XXX/5XXX', 'HP MJF 5XX', 'HP MJF 580+', 'HP MJF 1200', 'HP Jet Fusion 5000',
+                    'Bench Printer'] and p.profiles_version == props.PROFILES_VERSION,
+          'a version 1.0 library is brought up to date, the user\'s printers kept', names)
+    check(tuple(p.profiles[4].size) == (380.0, 284.0, 300.0) and tuple(p.profiles[5].size) == (200.0, 333.0, 268.0),
+          'with their sizes')
+    props.seed_profiles(p)
+    check([x.name for x in p.profiles] == names, 'and only once')
+    # ... and a scene saved with version 1.0, which names its printer the old way
+    bc.ops.apply_volume(st, 'HP Jet Fusion 5600', (380.0, 284.0, 380.0))
+    check(props.current_printer_name(st) == 'HP MJF 4XXX/5XXX', 'a scene saved with version 1.0 shows the '
+          'printer\'s new name', props.current_printer_name(st))
+    st.volume_size = (380.0, 284.0, 380.0)             # touching the size without changing it
+    check(st.printer != 'Custom', 'and its volume still counts as that printer\'s', st.printer)
+    check(bpy.ops.bucketbuilder.profile_update() == {'FINISHED'} and st.printer == 'HP MJF 4XXX/5XXX',
+          'the profile operators find it under the new name', st.printer)
+    bc.ops.apply_volume(st, 'HP Jet Fusion 580 / 540', (332.0, 190.0, 248.0))
+    mon = settle()
+    lo, hi = mon.volume_box(st)
+    check(np.allclose(hi - lo, (332, 190, 248)) and props.current_printer_name(st) == 'HP Jet Fusion 580 / 540',
+          'a scene whose old printer has no successor keeps its volume and its name',
+          (hi - lo, props.current_printer_name(st)))
+    p.profiles.remove(5)
+    p.profiles.remove(4)
     bpy.ops.bucketbuilder.profile_apply(index=0)
     mon = settle()
+    check(st.printer == 'HP MJF 4XXX/5XXX' and tuple(st.volume_size) == (380.0, 284.0, 380.0),
+          'back to the first printer', (st.printer, tuple(st.volume_size)))
 
     # ----------------------------------------------------------------- units
     st.unit_mode = 'SCENE'
@@ -356,13 +501,24 @@ def main():
     update()
     mon = settle()
     check(state(mon, a, b) == CLEAR, 'clearance warning at 3 mm with 5 mm threshold')
+    s = mon.status()
+    check(badge(s)[:2] == ('WARN', 'Clearance Warning') and '1 clearance warning' in badge(s)[2],
+          'the verdict is a clearance warning', badge(s))
     st.clearance_mm = 2.0
     mon = settle()
     check(state(mon, a, b) == OK, 'lowering the clearance threshold clears it')
-    st.collision_mm = 4.0
+    check(badge(mon.status())[:2] == ('OK', 'Build OK'), 'and the build is fine', badge(mon.status()))
+    b.location.x = 140.01             # a hundredth of a millimetre apart
+    update()
     mon = settle()
-    check(state(mon, a, b) == COLLIDE, 'collision threshold 4 mm makes a 3 mm gap a collision')
-    st.collision_mm = 0.0
+    check(state(mon, a, b) == CLEAR and not hasattr(st, 'collision_mm'),
+          'there is no collision distance: parts that do not touch do not collide', state(mon, a, b))
+    b.location.x = 140.0              # touching
+    update()
+    mon = settle()
+    check(state(mon, a, b) == COLLIDE, 'parts that touch do', state(mon, a, b))
+    b.location.x = 143.0
+    update()
     st.clearance_mm = 5.0
     st.use_clearance = False
     mon = settle()
@@ -376,6 +532,9 @@ def main():
     mon = settle()
     probs = mon.problems()
     check(len(probs) >= 1 and probs[0]['kind'] == 'COLLIDE', 'problem list leads with the collision', probs[:1])
+    s = mon.status()
+    check(badge(s)[:2] == ('FAIL', 'Collision Detected') and badge(s)[2][0] == '1 collision',
+          'the verdict is a collision', badge(s))
     check(abs(float(probs[0]['center'][0]) - 117.5) < 1.0, 'problem centre is at the interference')
     r1 = bpy.ops.bucketbuilder.step_problem(direction=1)
     check(r1 == {'FINISHED'} and st.problem_index == 0, 'next-problem operator runs', (r1, st.problem_index))

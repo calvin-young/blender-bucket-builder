@@ -12,16 +12,29 @@ from bpy.types import AddonPreferences, PropertyGroup
 ADDON_ID = __package__
 GIB = float(1 << 30)
 
-# Build volumes in millimetres (X, Y, Z) as published by HP.  These only seed
-# the editable profile list; nothing else in the add-on depends on them.
+# Build volumes in millimetres (X, Y, Z).  These only seed the editable
+# profile list; nothing else in the add-on depends on them.  The 5XX is the
+# 190 x 332 x 248 mm HP publishes, with the short side along X to match the
+# owner's 580 with custom firmware ("580+"), whose volume is his own figure.
 DEFAULT_PROFILES = (
-    ("HP Jet Fusion 5600", (380.0, 284.0, 380.0)),
-    ("HP Jet Fusion 5200", (380.0, 284.0, 380.0)),
-    ("HP Jet Fusion 5000", (380.0, 284.0, 250.0)),
-    ("HP Jet Fusion 4200", (380.0, 284.0, 380.0)),
-    ("HP Multi Jet Fusion 1200", (320.0, 165.0, 230.0)),
-    ("HP Jet Fusion 580 / 540", (332.0, 190.0, 248.0)),
+    ("HP MJF 4XXX/5XXX", (380.0, 284.0, 380.0)),
+    ("HP MJF 5XX", (190.0, 332.0, 248.0)),
+    ("HP MJF 580+", (198.7, 332.6, 267.8)),
+    ("HP MJF 1200", (320.0, 165.0, 230.0)),
 )
+
+# The built-in list has changed once.  Libraries made by version 1.0 are
+# brought up to date: its built-in entries go (unless their size was edited),
+# printers the user saved stay.
+PROFILES_VERSION = 2
+_PROFILES_V1 = {
+    "HP Jet Fusion 5600": ((380.0, 284.0, 380.0), "HP MJF 4XXX/5XXX"),
+    "HP Jet Fusion 5200": ((380.0, 284.0, 380.0), "HP MJF 4XXX/5XXX"),
+    "HP Jet Fusion 5000": ((380.0, 284.0, 250.0), None),
+    "HP Jet Fusion 4200": ((380.0, 284.0, 380.0), "HP MJF 4XXX/5XXX"),
+    "HP Multi Jet Fusion 1200": ((320.0, 165.0, 230.0), "HP MJF 1200"),
+    "HP Jet Fusion 580 / 540": ((332.0, 190.0, 248.0), None),
+}
 
 
 def prefs(context=None):
@@ -124,9 +137,9 @@ def _poke_volume(self, context):
         p = prefs(context)
         match = False
         if p is not None:
+            name = current_printer_name(st)
             for prof in p.profiles:
-                if prof.name == st.printer and all(
-                        abs(a - b) < 1e-4 for a, b in zip(prof.size, st.volume_size)):
+                if prof.name == name and _same_size(prof.size, st.volume_size):
                     match = True
                     break
         if not match and st.printer != "Custom":
@@ -157,10 +170,6 @@ class BucketBuilderSettings(PropertyGroup):
                     "insufficient clearance and parts outside the build volume",
         default=False, update=_poke_enabled)
 
-    collision_mm: FloatProperty(
-        name="Collision", description="Parts closer than this are reported as colliding. "
-        "0 means only touching or intersecting parts",
-        default=0.0, min=0.0, soft_max=5.0, precision=2, step=10, update=_poke)
     use_clearance: BoolProperty(
         name="Clearance Warning", description="Warn when parts are closer than the clearance",
         default=True, update=_poke)
@@ -174,6 +183,13 @@ class BucketBuilderSettings(PropertyGroup):
                     "their surfaces do not touch. This needs closed meshes: switch it off if "
                     "open shells cause false alarms",
         default=True, update=_poke)
+    ignore_hidden: BoolProperty(
+        name="Ignore Hidden Parts",
+        description="Leave parts that are hidden in the viewport out of the checks. When this "
+                    "is off a hidden part is still checked, because it is still in the build. "
+                    "(A part that is disabled in viewports, or whose collection is excluded "
+                    "from the view layer, is never checked)",
+        default=False, update=_poke)
 
     unit_mode: EnumProperty(
         name="Units", description="How scene coordinates map to millimetres",
@@ -188,12 +204,12 @@ class BucketBuilderSettings(PropertyGroup):
         name="Check Build Volume", description="Warn when parts reach outside the build volume",
         default=True, update=_poke)
     use_wall_clearance: BoolProperty(
-        name="Wall Clearance",
+        name="Wall Gap",
         description="Warn when a part inside the build volume is closer than this to a side "
                     "wall (X and Y). The top and the bottom are not checked",
         default=False, update=_poke)
     wall_clearance_mm: FloatProperty(
-        name="Wall Clearance", description="Distance parts should keep from the side walls",
+        name="Wall Gap", description="Distance parts should keep from the side walls",
         default=5.0, min=0.0, soft_max=50.0, precision=2, step=50, update=_poke)
     show_volume: BoolProperty(
         name="Show Build Volume", description="Draw the build volume in the viewport",
@@ -224,13 +240,30 @@ class BucketBuilderSettings(PropertyGroup):
         description="Shade every part that collides with another one, so the parts at fault "
                     "stand out in a crowded build",
         default=True, update=_poke_redraw)
+    show_curves: BoolProperty(
+        name="Intersection Outlines",
+        description="Draw the curve along which two colliding parts cut through each other",
+        default=True, update=_poke_redraw)
+    show_gap_lines: BoolProperty(
+        name="Closest-Distance Lines",
+        description="Draw a line between the two closest points of parts that are too close",
+        default=True, update=_poke_redraw)
+    show_markers_collision: BoolProperty(
+        name="Collision Markers",
+        description="Mark every collision, and every part outside the build volume, with a ring",
+        default=True, update=_poke_redraw)
+    show_markers_clearance: BoolProperty(
+        name="Clearance Markers",
+        description="Mark every clearance and wall-gap warning with a ring and its distance",
+        default=True, update=_poke_redraw)
     show_hud: BoolProperty(
         name="Status Badge", description="Show the large pass / fail badge in the viewport",
         default=True, update=_poke_redraw)
-    show_labels: BoolProperty(
-        name="Markers and Distances", description="Mark each problem and label clearance gaps",
-        default=True, update=_poke_redraw)
     problem_index: IntProperty(default=-1, options={'HIDDEN', 'SKIP_SAVE'})
+    isolate: BoolProperty(
+        name="Isolate",
+        description="Show the parts of the problem you go to on their own (local view)",
+        default=False, options={'SKIP_SAVE'})
 
 
 class BucketBuilderPreferences(AddonPreferences):
@@ -238,6 +271,7 @@ class BucketBuilderPreferences(AddonPreferences):
 
     profiles: CollectionProperty(type=BucketBuilderProfile)
     profiles_seeded: BoolProperty(default=False)
+    profiles_version: IntProperty(default=0)
 
     color_collision: FloatVectorProperty(
         name="Collision", subtype='COLOR', size=4, min=0.0, max=1.0,
@@ -251,16 +285,21 @@ class BucketBuilderPreferences(AddonPreferences):
     color_volume: FloatVectorProperty(
         name="Build Volume", subtype='COLOR', size=4, min=0.0, max=1.0,
         default=(0.35, 0.75, 1.0, 1.0), update=_poke_redraw)
-    hatch_spacing: FloatProperty(
-        name="Hatch Spacing", description="Distance between hatch lines in pixels",
-        default=9.0, min=4.0, max=40.0, update=_poke_redraw)
+    hatch_pixels: IntProperty(
+        name="Hatch Spacing", description="Distance between hatch lines in pixels (whole "
+        "pixels: anything else shimmers)",
+        default=4, min=2, max=10, update=_poke_redraw)
+    use_xray: BoolProperty(
+        name="Hatch X-Ray", description="Let hatched regions that are hidden behind geometry "
+        "show through",
+        default=True, update=_poke_redraw)
     xray: FloatProperty(
-        name="See-Through", description="How strongly problem regions hidden behind "
-        "geometry still show through (0 hides them)",
-        default=0.45, min=0.0, max=1.0, subtype='FACTOR', update=_poke_redraw)
+        name="Strength", description="How strongly hatched regions hidden behind geometry "
+        "show through",
+        default=0.45, min=0.05, max=1.0, subtype='FACTOR', update=_poke_redraw)
     tint_strength: FloatProperty(
         name="Tint Strength", description="How strongly colliding parts are shaded",
-        default=0.3, min=0.0, max=1.0, subtype='FACTOR', update=_poke_redraw)
+        default=0.5, min=0.0, max=1.0, subtype='FACTOR', update=_poke_redraw)
     tint_budget: FloatProperty(
         name="Tint Detail", description="Colliding parts are shaded until this many million "
         "triangles are being drawn; parts beyond that get an outline box instead, so the "
@@ -301,8 +340,11 @@ class BucketBuilderPreferences(AddonPreferences):
         col.prop(self, "tint_strength")
         col.prop(self, "tint_budget")
         col.prop(self, "volume_fill")
-        col.prop(self, "hatch_spacing")
-        col.prop(self, "xray")
+        col.prop(self, "hatch_pixels")
+        col.prop(self, "use_xray")
+        sub = col.column()
+        sub.active = self.use_xray
+        sub.prop(self, "xray")
         col.prop(self, "badge_scale")
         col = layout.column()
         col.prop(self, "budget_ms")
@@ -319,16 +361,40 @@ class BucketBuilderPreferences(AddonPreferences):
         layout.label(text="Printer profiles are edited in the Bucket tab of the 3D viewport sidebar.")
 
 
+def _same_size(a, b):
+    return all(abs(x - y) < 1e-3 for x, y in zip(a, b))
+
+
 def seed_profiles(p):
-    """Fill an empty profile library with the defaults (once)."""
-    if p is None or p.profiles_seeded:
+    """Give the profile library the built-in printers: once for a new
+    library, and once more for one made by version 1.0, whose built-in
+    entries are replaced while the printers the user saved are kept."""
+    if p is None or (p.profiles_seeded and p.profiles_version >= PROFILES_VERSION):
         return
-    if len(p.profiles) == 0:
-        for name, size in DEFAULT_PROFILES:
-            item = p.profiles.add()
-            item.name = name
-            item.size = size
+    builtin = {name for name, _ in DEFAULT_PROFILES}
+    keep = []
+    for prof in p.profiles:
+        old = _PROFILES_V1.get(prof.name)
+        if prof.name in builtin or (old is not None and _same_size(prof.size, old[0])):
+            continue
+        keep.append((prof.name, tuple(prof.size)))
+    p.profiles.clear()
+    for name, size in list(DEFAULT_PROFILES) + keep:
+        item = p.profiles.add()
+        item.name = name
+        item.size = size
     p.profiles_seeded = True
+    p.profiles_version = PROFILES_VERSION
+
+
+def current_printer_name(st):
+    """The name to show for a scene's printer.  Scenes saved with version 1.0
+    carry its printer names; where the volume is still that printer's, the
+    new name is shown instead."""
+    old = _PROFILES_V1.get(st.printer)
+    if old is not None and old[1] is not None and _same_size(st.volume_size, old[0]):
+        return old[1]
+    return st.printer or "Custom"
 
 
 CLASSES = (BucketBuilderProfile, BucketBuilderSettings, BucketBuilderPreferences)
