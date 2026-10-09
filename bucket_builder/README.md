@@ -198,7 +198,10 @@ goes. **Recheck Everything** throws all cached data away and starts again.
   fit in the budget and for all of them a moment after you stop. So a part
   dropped into the middle of a full build can still be dragged out smoothly.
 * The first analysis of a large scene, and anything else that is not a live
-  edit, runs in small slices in the background. The badge shows progress.
+  edit, runs in slices in the background. The badge shows progress. While
+  you edit or turn the view the slices are short, so Blender stays smooth;
+  while you wait they are longer and follow each other directly, so the
+  result comes sooner.
 
 ## Limits to know about
 

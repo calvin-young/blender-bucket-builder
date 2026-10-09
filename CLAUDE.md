@@ -103,6 +103,21 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
   intersection curve crosses, which are an invisible sliver on dense meshes.
 * **Status badge "busy"** only waits for work that can change the verdict
   (unread parts, unsolved pairs), not for refinement or the periodic resync.
+* **The timer paces itself by what the user is doing** (`monitor._tick_scene`,
+  `_pace`). Measured in a window: checking a part that lands on 33 others
+  is 0.35 s of work, but took 12 s to appear, because every 24 ms slice was
+  followed by a redraw (and each change restarts the viewport's
+  anti-aliasing passes, 8 redraws by default). Now: while the user edits
+  (`last_hot`) or turns the view (the overlay sees the view matrix change:
+  `user_active`), slices are short and come with pauses; otherwise they are
+  `BOOST` times longer, or `SHARE` of what Blender takes per pass of its main
+  loop if that is more (up to `MAX_SLICE`), and follow each other directly
+  (interval 0: Blender still handles events between them). Results are shown
+  at most every `redraw_gap()` while work goes on, and at once when it ends.
+  A slice that did next to nothing does not spin. A redraw alone is not the
+  user: anti-aliasing passes redraw without anybody doing anything.
+* `_ensure_timer` restarts a timer that is in a long sleep, so work that
+  turns up starts at once and not up to half a second later.
 * Live updates come from `depsgraph_update_post` (during a modal transform it
   reports only `Object` with the transform flag), background work from a timer.
 * **Mesh data is read from attribute arrays** (`position`, `.corner_vert`): a
@@ -164,7 +179,7 @@ first trial).
   points on the interface) is done except the two items that are
   conversations (below). 1.0.0 was his first trial build, 1.0.1 fixed the
   crash he found.
-* Tests at 1.1.0: 128 checks in `blender_test.py`, 47 in
+* Tests at 1.1.0: 143 checks in `blender_test.py`, 47 in
   `blender_large_test.py`, the UI test (panels with a checking stand-in,
   ignore list, report), the off-screen overlay test with sampled colours, and
   in a window: `blender_gui_test.py` (drag, badge position beside the open
@@ -251,8 +266,12 @@ Known and planned, in this order:
    hashing and cleaning off the main thread.
 2. [ ] Pause instead of discard when monitoring is switched off; keep the
    meshes of parts that leave the check (`keep_unused`).
-3. [ ] Background slices back to back while there is work (today 12 ms of
-   work, 20 ms of pause); redraws at a limited rate during analysis.
+3. [x] Background slices back to back while the user is idle, redraws at a
+   limited rate during analysis (see the decisions above). In the window
+   tests on this machine (software OpenGL, a redraw takes a second): a part
+   dropped onto 33 others has its verdict after 3.7 s instead of 11 - 12 s,
+   the first analysis of 60 parts takes 5.7 s instead of 13 s. On a real GPU
+   the gain is smaller in seconds and about the same in proportion.
 4. [ ] Large selections: 63 ms per step when all of 600 parts move
    (`scratchpad/bl_group_move.py`): the out-of-volume pictures of parts that
    stick out (42 ms, no budget), the box tests of all against all (15 ms),
