@@ -108,8 +108,8 @@ class PairResult:
     to be recomputed.  ``clip_a`` / ``clip_b`` are None, or a box (in the
     first object's frame) the patch should be trimmed to when drawn."""
     __slots__ = ('state', 'dist', 'pa', 'pb', 'segs', 'nseg', 'tri_a', 'tri_b', 'clip_a',
-                 'clip_b', 'approx', 'refine', 'lite', 'loose', 'enclosed', 'center', 'radius',
-                 'stale', 'stamp', 'serial')
+                 'clip_b', 'approx', 'refine', 'lite', 'loose', 'unproven', 'no_cut', 'enclosed',
+                 'center', 'radius', 'stale', 'stamp', 'serial')
 
     def __init__(self):
         self.state = PENDING
@@ -123,6 +123,8 @@ class PairResult:
         self.refine = False
         self.lite = False         # only sketched: the state is known, the details are not
         self.loose = False        # solved while a part was borrowing a pose
+        self.unproven = False     # no intersection found, but the search was cut short
+        self.no_cut = False       # ... and the exhaustive one has since found none either
         self.enclosed = 0         # 1: first part inside the second, 2: the reverse
         self.center = None
         self.radius = 0.0
@@ -216,6 +218,10 @@ class World:
         self._pend_hot = {}       # pairs touched by a live edit: solved first, quickly
         self._pend_cold = {}      # background work: solved exactly
         self._pend_refine = {}    # quick results waiting for their exact pass
+        self._pend_scan = {}      # pairs whose search for an intersection was cut short -> state of
+        #                           the exhaustive one (None: not begun), see narrow.scan
+        self.scans = 0            # how many of those were needed, and how many found a collision
+        self.scan_hits = 0
         self._pend_wait = {}      # pairs waiting for a mesh to be sorted -> came from the hot queue
         self._oob_dirty = set()
         self._oob_all = False
@@ -1224,6 +1230,7 @@ class World:
         self._pend_hot.pop(key, None)
         self._pend_cold.pop(key, None)
         self._pend_refine.pop(key, None)
+        self._pend_scan.pop(key, None)
         self._pend_wait.pop(key, None)
         if self.pairs.pop(key, None) is not None and self.viol.pop(key, None) is not None:
             self.version += 1
@@ -1294,6 +1301,7 @@ class World:
                         e = tol[a] if tol[a] > tol[o] else tol[o]
                         if abs(dx - st[3]) <= e and abs(dy - st[4]) <= e and abs(dz - st[5]) <= e:
                             continue
+            pr.no_cut = False
             if not pr.stale:
                 pr.stale = True
                 # A live edit is answered within a frame or two; until then
@@ -1301,6 +1309,7 @@ class World:
                 if not hot and self.viol.pop(key, None) is not None:
                     self.version += 1
             self._pend_refine.pop(key, None)
+            self._pend_scan.pop(key, None)
             was_hot = self._pend_wait.pop(key, False)
             if hot or was_hot:
                 self._pend_cold.pop(key, None)
@@ -1314,7 +1323,7 @@ class World:
         """True while ``step`` has something to do.  (What waits for a mesh
         to be sorted does not count: see ``waiting``.)"""
         return bool(self._dirty or self._pend_hot or self._pend_cold or self._pend_refine
-                    or self._virt_todo or self._oob_geom)
+                    or self._pend_scan or self._virt_todo or self._oob_geom)
 
     @property
     def waiting(self):
@@ -1323,14 +1332,16 @@ class World:
 
     @property
     def unsettled(self):
-        """True while a pair has no result yet.  (Pairs waiting only for their
+        """True while a pair has no result yet, or one that does not say for
+        certain whether the parts collide.  (Pairs waiting only for their
         exact distance already have a complete collision answer.)"""
-        return bool(self._dirty or self._pend_hot or self._pend_cold or self._pend_wait)
+        return bool(self._dirty or self._pend_hot or self._pend_cold or self._pend_wait
+                    or self._pend_scan)
 
     @property
     def pending(self):
         return (len(self._pend_hot) + len(self._pend_cold) + len(self._pend_refine)
-                + len(self._pend_wait))
+                + len(self._pend_wait) + len(self._pend_scan))
 
     def _batch(self, src, size, borrow):
         """The next pairs of a queue to solve together (they stay queued).
@@ -1449,6 +1460,11 @@ class World:
                 continue
             elif idle and self._pend_refine:
                 src, exact, limit = self._pend_refine, True, budget
+            elif idle and self._pend_scan:
+                if (solved and time.perf_counter() - t0 > budget) or not self._scan_step(t0 + budget):
+                    break
+                solved += 1
+                continue
             else:
                 break
             if solved and time.perf_counter() - t0 > limit:
@@ -1504,6 +1520,9 @@ class World:
                     self.viol.pop(key, None)
                 if pr.refine:
                     self._pend_refine[key] = None
+                if pr.unproven:
+                    self._pend_scan[key] = None
+                    self.scans += 1
             solved += len(keys)
             self.version += 1
         if self._oob_dirty or self._oob_all:
@@ -1513,6 +1532,41 @@ class World:
         self.last_step_ms = (time.perf_counter() - t0) * 1000.0
         self.last_pairs = solved
         return self.busy
+
+    def _scan_step(self, deadline):
+        """Go on with the exhaustive search for an intersection in the pairs
+        whose regular search ran into its caps (``narrow.scan``).  Returns
+        False when time is up or a pose is still being fitted."""
+        while self._pend_scan:
+            key = next(iter(self._pend_scan))
+            pr = self.pairs.get(key)
+            if pr is None or pr.stale or not pr.unproven:
+                del self._pend_scan[key]
+                continue
+            if not self._prepare(set(key), deadline, False):
+                return False
+            state = self._pend_scan[key]
+            if state is None:
+                state = self._pend_scan[key] = narrow.scan_start(self, key)
+            found = narrow.scan(self, key, state, deadline)
+            if found is None:
+                return False
+            del self._pend_scan[key]
+            pr.unproven = False
+            if found:
+                narrow.scan_report(self, key, pr, found)
+                self._serial += 1
+                pr.serial = self._serial
+                self.viol[key] = pr
+                self.scan_hits += 1
+                self.version += 1
+            else:
+                # They do not cut or touch.  How close they are was left
+                # unproven until this was known (see narrow.solve).
+                pr.no_cut = True
+                if self.clear_thr > 0.0:
+                    self._pend_refine[key] = None
+        return True
 
     def _upgrade(self):
         """Things are quiet: whatever was worked out with borrowed boxes is
@@ -1773,5 +1827,7 @@ class World:
             'flushes': self.flushes,
             'borrowing': int(len(self._virt_todo) + len(self._borrowing)),
             'unsorted': sum(1 for g in self._geoms.values() if not g.ready),
+            'scans': self.scans,
+            'scan_hits': self.scan_hits,
             'unused_bytes': sum(self._geom_size(self._geoms[k]) for k in self._idle),
         }

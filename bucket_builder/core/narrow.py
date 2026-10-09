@@ -33,7 +33,18 @@ surface patches of both parts that lie within a few millimetres of the other
 part.  That region is found by the coarse traversal, so its size does not
 depend on how finely the parts are tessellated (the triangles actually cut by
 the curve would be an almost invisible band on a dense mesh).
+
+Whether two parts intersect has to be right, always.  The batch above is
+bounded per pair (``CAP_FINE``, ``CAP_OVERLAP``), and two finely tessellated
+surfaces that nearly coincide over a large area (a part and its copy a
+fraction of a millimetre apart, a shell nested closely in another) have
+millions of triangle pairs with overlapping boxes.  When a pair runs into a
+cap without an intersection having been found, its result is flagged
+``unproven`` and the question is settled by ``scan``: an exhaustive search
+that stops at the first hit and can be continued a slice at a time.
 """
+
+import time
 
 import numpy as np
 
@@ -62,6 +73,8 @@ SEG_CAP = 60000              # intersection segments handed to the overlay
 SEG_CAP_LIVE = 8000
 BOX_CAP = 1200               # proxy boxes handed to the overlay per side
 BOX_CAP_LIVE = 300
+SCAN_BLOCK = 2048            # node pairs the exhaustive search expands at a time
+SCAN_SEGS = 4000             # intersection segments it keeps once it has found some
 BIG = np.float32(1e30)
 
 
@@ -467,7 +480,7 @@ def _dive(w, rows, h_a, h_b, pose_a, pose_b, relt, beam, xf=None):
     return pid, ia, ib
 
 
-def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=CAP_FINE, truncate=False,
+def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=None, truncate=False,
           xf=None):
     """Descend the given rows to triangle pairs.
 
@@ -484,6 +497,8 @@ def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=CAP_FINE, tru
     the rows that truncation left out (inf if none), i.e. a proven lower
     bound for everything that was not followed.
     """
+    if cap is None:
+        cap = CAP_FINE
     npid = pose_a.shape[0]
     pid, ia, ib, lb2 = rows
     keep = lb2 <= np.maximum(np.take(thr2, pid), eps2)
@@ -495,10 +510,26 @@ def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=CAP_FINE, tru
     left2 = np.full(npid, np.inf, dtype=np.float32)
     leaves = []
     dense_rows = []
+    prev = None                 # rows per pair one pass ago, and the levels descended since
+    lev = None
     while pid.shape[0]:
         at_leaf = live & (h_a == 0) & (h_b == 0)
         cnt = np.bincount(pid, minlength=npid)
         too_many = live & ~at_leaf & (cnt > cap)
+        if not truncate and prev is not None:
+            # A pair that is going to exceed the cap by far is stopped as soon
+            # as that can be told: its rows are many already and, at the rate
+            # they have just multiplied, the levels still to go will take them
+            # well past it.  (Two surfaces that nearly coincide multiply
+            # fourfold per level; finding that out at the cap itself costs
+            # most of what such a pair costs.)
+            big = live & ~at_leaf & ~too_many & (cnt > cap // 8) & (prev > 500) & (lev > 0)
+            if big.any():
+                b = np.flatnonzero(big)
+                rate = np.log2(cnt[b] / prev[b]) / lev[b]
+                ahead = cnt[b] * np.exp2(np.clip(rate, 0.0, 2.0) * (h_a[b] + h_b[b]))
+                too_many[b[ahead > 4.0 * cap]] = True
+        prev = cnt
         if truncate and too_many.any():
             m_over = np.take(too_many, pid)
             over = np.flatnonzero(m_over)
@@ -526,6 +557,7 @@ def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=CAP_FINE, tru
             if pid.shape[0] == 0:
                 break
         sa, sb, _ = _steps(w, pose_a, pose_b, h_a, h_b, live, pid.shape[0], -1.0)
+        lev = sa + sb
         h_a = h_a - sa
         h_b = h_b - sb
         pid, ia, ib, lb2 = _step(w, pid, ia, ib, sa, sb,
@@ -787,10 +819,13 @@ def points_inside(w, pose, pts):
 def solve(w, keys, exact=True, detail=None):
     """Evaluate the given object pairs and store their results in ``w.pairs``.
 
-    Whether two parts intersect is always decided exactly.  ``exact=False``
-    is the mode for live edits: some things may be left for later, and such
-    results are flagged ``refine`` so the caller redoes them with
-    ``exact=True`` once the objects stop moving.
+    Whether two parts intersect is decided exactly, with one way out: a pair
+    with so many candidate triangle pairs that the search ran into its caps
+    without finding an intersection comes back flagged ``unproven`` and must
+    be settled with ``scan``.  ``exact=False`` is the mode for live edits:
+    some things may be left for later, and such results are flagged
+    ``refine`` so the caller redoes them with ``exact=True`` once the objects
+    stop moving.
 
     * The clearance distance of pairs that do not intersect is the best value
       found by a capped search (an upper bound, usually within a few percent).
@@ -827,6 +862,10 @@ def solve(w, keys, exact=True, detail=None):
     best = _Best(npid)
     collided = np.zeros(npid, dtype=bool)
     approx = np.zeros(npid, dtype=bool)     # intersection search hit a cap
+    capped = np.zeros(npid, dtype=bool)     # ... so that not every candidate was tested
+    # pairs an exhaustive search has already shown not to intersect or touch
+    cleared = np.fromiter((getattr(w.pairs.get(k), 'no_cut', False) for k in keys), dtype=bool,
+                          count=npid)
     short = np.zeros(npid, dtype=bool)      # distance search was cut short
     near = np.zeros(npid, dtype=bool)
     hit_rows = None
@@ -882,10 +921,12 @@ def solve(w, keys, exact=True, detail=None):
             np.full(npid, -1.0, dtype=np.float32), eps2, xf=xf)
         l_pid, l_ia, l_ib, l_lb2 = leaf
         approx |= dense
+        capped |= dense
         if l_pid.shape[0]:
             cnt = np.bincount(l_pid, minlength=npid)
             if (cnt > CAP_OVERLAP).any():
                 approx |= cnt > CAP_OVERLAP
+                capped |= cnt > CAP_OVERLAP
                 sel = np.sort(_top_k(l_pid, (np.arange(l_pid.shape[0]),), CAP_OVERLAP))
                 l_pid, l_ia, l_ib = l_pid[sel], l_ia[sel], l_ib[sel]
             hp, ha, hb, hs = [], [], [], []
@@ -1032,23 +1073,38 @@ def solve(w, keys, exact=True, detail=None):
                 if not exact:
                     short |= np.isfinite(prove(region, CAP_SEARCH_QUICK, CAP_EXACT_QUICK))
                 else:
+                    # A pair whose search for an intersection was capped goes
+                    # to ``scan`` next.  Most such pairs turn out to cut each
+                    # other, and proving a distance for them (thousands of
+                    # exact evaluations each) would be for nothing: the proof
+                    # is made when the pair comes back from there cleared.
+                    wait = capped & ~cleared & ~collided
+                    if wait.any():
+                        short |= wait
+                        m = ~np.take(wait, region[0])
+                        region_p = tuple(x[m] for x in region)
+                    else:
+                        region_p = region
                     # A first pass with moderate caps settles nearly every
                     # pair.  Where it was cut short, what was left out has a
                     # proven lower bound: only if that could still change the
                     # verdict (touching or not, too close or not) is the
                     # search repeated with large caps, which for two parts
                     # with big areas at about the limit takes long.
-                    left2 = prove(region, CAP_SEARCH, CAP_EXACT)
+                    left2 = prove(region_p, CAP_SEARCH, CAP_EXACT)
                     cut = np.isfinite(left2)
                     if cut.any():
                         u = np.sqrt(np.minimum(best.d2, dlim2))
                         lo = np.sqrt(np.where(cut, left2, 0.0))
-                        open_ = cut & (((u > coll) & (lo <= coll))
+                        # (whether a pair whose intersection search was capped
+                        # touches is for ``scan`` to say, and it has said no
+                        # if the pair is here)
+                        open_ = cut & (((u > coll) & (lo <= coll) & ~capped)
                                        | ((clear > 0.0) & (u >= clear) & (lo < clear)))
                         if open_.any():
                             w.proofs_repeated += int(open_.sum())
-                            m = np.take(open_, region[0])
-                            again = prove(tuple(x[m] for x in region), CAP_FINE, CAP_EXACT_MAX)
+                            m = np.take(open_, region_p[0])
+                            again = prove(tuple(x[m] for x in region_p), CAP_FINE, CAP_EXACT_MAX)
                             left2 = np.where(open_, again, left2)
                             cut = np.isfinite(left2)
                             lo = np.sqrt(np.where(cut, left2, 0.0))
@@ -1108,6 +1164,7 @@ def solve(w, keys, exact=True, detail=None):
         res.approx = bool(approx[p])
         res.lite = bool(lite[p])
         res.refine = bool(lite[p])
+        res.unproven = False
         res.enclosed = 0
         res.segs = None
         res.nseg = 0
@@ -1187,6 +1244,8 @@ def solve(w, keys, exact=True, detail=None):
             else:
                 res.refine = True
         d = float(dist[p])
+        # no intersection found, but not every candidate was looked at
+        res.unproven = bool(capped[p] and not cleared[p]) and d > coll
         if d <= coll:
             state, thr_v = COLLIDE, coll
         elif clear > 0.0 and d < clear:
@@ -1229,6 +1288,137 @@ def solve(w, keys, exact=True, detail=None):
         if (fhi > flo).all():
             res.radius = max(res.radius, 0.5 * float(np.linalg.norm(fhi - flo)))
             res.center = 0.5 * (flo + fhi)
+
+
+# ---------------------------------------------------------------------------
+# the exhaustive search for an intersection
+# ---------------------------------------------------------------------------
+
+def scan_start(w, key):
+    """State for ``scan``: the two roots, and nothing looked at yet."""
+    a, b = key
+    root = np.zeros(1, dtype=np.int64)
+    return {'stack': [(root, root, int(w.PH[w.O_POSE[a]]), int(w.PH[w.O_POSE[b]]))], 'tested': 0}
+
+
+def scan(w, key, state, deadline):
+    """Look at every pair of triangles of two objects whose boxes come within
+    the contact distance, until one pair intersects or touches.
+
+    Both objects must have fitted poses.  The search is depth first over
+    blocks of node pairs, so what it has to remember stays small however many
+    candidates there are, and it gets to triangles at once: two surfaces that
+    cut through each other all over are found out in the first block.  Two
+    that nearly coincide without touching take as long as their millions of
+    candidates take, which is why this can stop at ``deadline`` (seconds, as
+    ``time.perf_counter``) and be called again with the same ``state``.
+
+    Returns None if it ran out of time, False if the parts neither intersect
+    nor touch, and otherwise what it found: ``('cut', segments (n, 2, 3)
+    float32, triangles of a, triangles of b)`` or ``('touch', point on a,
+    point on b, triangle of a, triangle of b)``, in the pair's frame.
+    """
+    a, b = key
+    pose_a = w.O_POSE[[a]]
+    pose_b = w.O_POSE[[b]]
+    rel64 = (w.O_T[b] - w.O_T[a])[None, :]
+    rel64t = np.ascontiguousarray(rel64.T)
+    relt = np.ascontiguousarray(rel64.astype(np.float32).T)
+    eps = w.eps_len
+    coll = max(w.coll_thr, w.eps_touch)
+    coll2 = coll * coll
+    thr2 = np.full(1, (coll + eps) ** 2, dtype=np.float32)
+    eps2 = np.float32(eps * eps)
+    live = np.ones(1, dtype=bool)
+    stack = state['stack']
+    step = EXACT_CHUNK * 2
+    first = True
+    with np.errstate(invalid='ignore', over='ignore'):
+        while stack:
+            # (one block at least, so that a call always gets somewhere)
+            if not first and time.perf_counter() > deadline:
+                return None
+            first = False
+            ia, ib, ha, hb = stack.pop()
+            n = ia.shape[0]
+            if ha == 0 and hb == 0:
+                # triangles: a piece now, the rest when its turn comes
+                if n > step:
+                    stack.append((ia[step:], ib[step:], 0, 0))
+                    ia, ib = ia[:step], ib[:step]
+                    n = step
+                P, Q = _pair_tris(w, pose_a, pose_b, rel64t, np.zeros(n, dtype=np.int64), ia, ib)
+                hit, seg = tritri.tri_tri_intersect(P, Q, w.eps_exact)
+                state['tested'] += n
+                if seg.shape[0]:
+                    return 'cut', seg[:SCAN_SEGS].astype(np.float32), ia[hit][:SCAN_SEGS], ib[hit][:SCAN_SEGS]
+                # contact without one piercing the other (coplanar, edge on edge)
+                sel = np.flatnonzero(tritri.plane_gap2(P, Q) <= coll2)
+                if sel.shape[0]:
+                    d2, cp, cq = tritri.tri_tri_distance(np.take(P, sel, axis=2), np.take(Q, sel, axis=2))
+                    k = int(np.argmin(d2))
+                    if d2[k] <= coll2:
+                        return 'touch', cp[:, k].copy(), cq[:, k].copy(), int(ia[sel[k]]), int(ib[sel[k]])
+                continue
+            if n > SCAN_BLOCK:
+                # depth first: one half now, the other waits
+                half = n // 2
+                stack.append((ia[half:], ib[half:], ha, hb))
+                ia, ib = ia[:half], ib[:half]
+                n = half
+                if n > SCAN_BLOCK:
+                    stack.append((ia, ib, ha, hb))
+                    continue
+            h_a = np.array([ha])
+            h_b = np.array([hb])
+            sa, sb, _ = _steps(w, pose_a, pose_b, h_a, h_b, live, n, -1.0)
+            h_a = h_a - sa
+            h_b = h_b - sb
+            _, ia, ib, _ = _step(w, np.zeros(n, dtype=np.int64), ia, ib, sa, sb,
+                                 w.LVL[pose_a, h_a], w.LVL[pose_b, h_b], relt, thr2, eps2)
+            if ia.shape[0]:
+                stack.append((ia, ib, int(h_a[0]), int(h_b[0])))
+    return False
+
+
+def scan_report(w, key, res, found):
+    """Turn a pair's result into a collision that ``scan`` has found."""
+    a, b = key
+    pose_a = int(w.O_POSE[a])
+    pose_b = int(w.O_POSE[b])
+    pad = w.viz_pad
+    res.state = COLLIDE
+    res.dist = 0.0
+    res.approx = True             # the curve is not complete
+    res.unproven = False
+    res.refine = False
+    res.enclosed = 0
+    if found[0] == 'cut':
+        _, segs, ta, tb = found
+        pts = segs.reshape(-1, 3)
+        lo = pts.min(axis=0).astype(np.float64)
+        hi = pts.max(axis=0).astype(np.float64)
+        res.segs = segs
+        res.nseg = int(segs.shape[0])
+        ta = _unique(ta, int(w.PNT[pose_a]) + 1)
+        tb = _unique(tb, int(w.PNT[pose_b]) + 1)
+    else:
+        _, pa, pb, ta, tb = found
+        lo = np.minimum(pa, pb)
+        hi = np.maximum(pa, pb)
+        res.segs = None
+        res.nseg = 0
+        ta = np.array([ta], dtype=np.int64)
+        tb = np.array([tb], dtype=np.int64)
+    if res.tri_a is None and res.tri_b is None:
+        # (a pair that was already too close keeps the patches it shows)
+        res.tri_a = _node_tris(w, pose_a, 0, ta)
+        res.tri_b = _node_tris(w, pose_b, 0, tb)
+        res.clip_a = res.clip_b = None
+    if res.center is None or res.pa is None:
+        res.center = 0.5 * (lo + hi)
+        res.radius = max(0.5 * float(np.linalg.norm(hi - lo)), pad)
+    res.pa = res.pb = 0.5 * (lo + hi)
 
 
 # ---------------------------------------------------------------------------
