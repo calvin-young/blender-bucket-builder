@@ -110,76 +110,122 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
 
 ## State
 
-Last updated: 2026-10-08 (session 2, afternoon).
+Last updated: 2026-10-09, shortly after midnight (session 2).
 
-* Everything is on `main`. Engine, monitor, overlay, panels, printer profiles:
-  working and tested on Blender 5.2.2 (Linux, software OpenGL), headless and
-  in a real window on a virtual display with simulated mouse input.
-* Added this session at the owner's request: wall gap (side walls only,
-  warning), light red shading of every colliding part, printers 5600 / 1200 /
-  580, fewer labels in crowded builds, warnings for geometry that is not
-  checked.
-* Large builds (the afternoon's work): pose cache with a Memory preference
-  (automatic: a fifth of installed RAM, 6.4 GB on the owner's 32 GB machine),
-  borrowed poses, sliced fits, worker threads, fast mesh reading. Figures are
-  in `README.md` ("Large builds"): 30 M triangles in 20 parts in Blender: all
-  checked after 15 s on 2 cores, longest main-thread block 43 ms, drag 5 ms,
-  rotate 8 ms per step, 2.2 GB. At the start of the session the same scene
-  froze Blender for about 25 s and rotating took 150 ms per step.
-* Live modifiers: the evaluated mesh is what is checked (verified with Array
-  and Shrinkwrap; Subdivision is not in the test build).
-* Not tested: a real GPU, Blender 4.2 - 5.1, Windows, macOS, a human at the
-  mouse, worker threads in an interactive session on a many-core machine.
-  The owner works on an HP ZBook Firefly 14 G11 with 32 GB RAM.
+* `main` is version **1.0.1**, sent to the owner as `bucket_builder-1.0.1.zip`
+  (verified in a clean profile: 88 + 39 checks, the UI test, the window undo
+  test). 1.0.0 was his first trial build.
+* The owner tried 1.0.0 on **Blender 5.2.0, Windows 11, NVIDIA GPU, OpenGL
+  backend** (from his crash log). Verdict: delighted; rendering works; snappy
+  on small builds, "a bit laggy for real world large complicated buckets".
+* **The crash he found, and the rule that came out of it** (see the top of
+  `monitor.py`): Blender runs timers at the start of a pass of its main loop
+  and refreshes the dependency graph at its end. After an operator that
+  freed objects (undo, delete, a change in Adjust Last Operation) the graph
+  still lists them, and reading it there, `object_instances` above all,
+  crashes Blender. The timer's slice (`_tick_scene`) calls
+  `view_layer.update()` first. `bpy.ops` called from Python updates the view
+  layer itself afterwards, so scripted tests never see that gap by accident:
+  use `bpy.data` removals (blender_test.py) or simulated key presses in a
+  window (`tests/blender_gui_undo.py`). Both segfault without the fix.
+* Since 1.0.0: meshes are sorted in about 60 % of the time and can be sorted
+  on several threads (`bvh.order_mesh`, identical order); parts moved together
+  keep their results (`POS_TOL`).
+* **In the stash** (`git stash list`): engine work for "verdict first":
+  unsorted meshes (`World.add_raw`, `set_sorted`, `wanted`, pairs waiting in
+  `_pend_wait`), meshes no object uses kept as a cache (`_idle`,
+  `_make_way`), `flush_poses`, and tests for all of it. State: every test
+  passed except the last assertion of `unused_mesh_tests` (storage limit at
+  small scale; the storage has a minimum of 393 KB). The monitor does not use
+  any of it yet. When it goes in, the monitor must forget `data_geom[mesh]`
+  when a mesh changes while its object is not tracked (hidden / ignored),
+  or a kept mesh would be reused for changed geometry.
+* Not tested: Blender 4.2 - 5.1, macOS, Vulkan / Metal.
 
 ## Next
 
-The owner read the "Large builds" table (2026-10-08, 16:02) and objected to
-the cold start: 15 s for 30 M triangles where Netfabb takes 2 - 3 s. His
-habit is to arrange first and tick the box to check. Answered; the plan below
-was promised to him, in this order. Tick items off here as they land.
+### A. The owner's feedback on 1.0.0 (2026-10-08, 23:56), to ship as 1.1.0
 
-Measured now (2-core VM, one worker thread): 3.6 M triangles 2.0 s, 10 M
-5.1 s, 30 M 15 s. About 90 % is `bvh.sort_mesh` (480 ns per triangle; the
-four lowest levels are 260 of that, mostly row extents of tiny rows; see
-`scratchpad/sort_prof.py` for the per-level profile). Two sorts in two
-threads take the time of one, so the owner's laptop (4 workers) should be
-about 4 x quicker already. Checking itself is 1.6 s for 30 M.
+He asked for one build with a point-by-point reply. Open questions put to
+him: the axis order of his 580+ (he wrote 198.7 x 332.6 x 267.8, the stock
+entry is 332 x 190 x 248); whether "Ignore Hidden Parts, off by default"
+means hidden parts are checked unless ticked (assumed yes); what he is doing
+when it lags and what the two timing lines in the Parts panel say.
 
-1. [ ] Verdict first: objects enter the world with unsorted geometry (extents
-   known), pairs wait only for the meshes they need, worker jobs are ordered
-   by need. A rough arrangement then gets its answer at once.
-2. [ ] Faster preparation: cheaper row extents for small rows, cache blocking,
-   several threads for one big mesh, more workers than 4.
-3. [ ] Keep prepared meshes when Monitor Build is unticked (pause instead of
-   discard) and when parts are hidden (unused meshes stay cached within the
-   memory limit).
-4. [ ] Background slices back to back while there is work (today 12 ms of
-   work, 20 ms of pause), redraws at a limited rate during analysis.
-5. [ ] Group moves (found in review): the pair stamp rounds the relative
-   translation to 1e-6 units, Blender's float32 positions jitter by more, so
-   moving parts together re-solves all pairs among them on every step
-   (`scratchpad/group_move.py`: 28 ms per step for 120 parts instead of 4).
-   Compare with a tolerance of about 1e-6 x the larger coordinate.
-6. [ ] Independent review of the integration code and an audit of the Blender
-   API calls against the 4.2 source in `/home/claude/build/blender-42-src`.
-7. [ ] Package: rebuild `dist/bucket_builder-1.0.0.zip`, install it into a
-   clean profile, run the tests against that, send the zip to the owner
-   (last verified build: commit 0e33db7, 80 + 38 checks in a clean profile).
+Sidebar
+- [ ] "Enable Monitoring" is easy to miss; the closed-eye icon looks odd: use
+      the open eye as in the Outliner.
+- [ ] Two main sections: part collisions / clearance, and build volume.
+- [ ] "Ignore Hidden Parts" checkbox, prominent, off by default (so hidden
+      parts are checked: they are still in the build).
+- [ ] Remove the collision distance (told him the one argument for it: a red
+      tier for gaps that fuse; removing unless he objects).
+- [ ] Printers: "HP MJF 4XXX/5XXX", "HP MJF 5XX", "HP MJF 580+" (198.7 x
+      332.6 x 267.8, right below 5XX), "HP MJF 1200". Stored libraries need a
+      migration.
+- [ ] Volume section order: View Build Volume, printer menu, checkboxes,
+      then Advanced (size, origin, offset) collapsed.
+- [ ] Parts: "Include All" below Ignore / Include Selected; below that a list
+      of ignored parts, each with a button to include it again.
+- [ ] Performance figures and Recheck Everything in their own sub-panel.
+- [ ] Problems: a clean way to isolate the parts of a problem in local view.
 
-Offered to the owner, no answer yet: a disk cache of sorted meshes so that
-reopening a saved build is quick; an explicit fast / accurate switch; wall
-gap on by default; amber shading for warning-only parts; a built-in profile
-for his 580 with custom firmware (needs the dimensions).
+Viewport
+- [ ] Badge at the bottom right, text right-aligned to the left of the icon.
+- [ ] Clearance warning: amber triangle with exclamation mark, "Clearance
+      Warning" instead of "Build OK". Red cross: "Collision Detected" instead
+      of "Build has problems". Free to rethink the other wording.
+- [ ] The printer's name somewhere visible with the sidebar closed (a light
+      blue line under the status text, or on the wireframe).
+- [ ] Out of bounds: colour only the side(s) of the bucket that are exceeded;
+      the same for the wall gap.
 
-Later, if wanted:
-* Smaller poses (quantised boxes for the two lowest levels would halve them;
-  the fit is memory bound, so it would get faster).
-* Extents of a rotating part are an O(vertices) pass per step (5 ms for
-  1.5 M triangles); a support query on the borrowed tree would make it
-  logarithmic. The fixed cost of a live solve is 3 - 6 ms of Python overhead
-  over about 20 tree levels.
-* Rotating a group of parts together re-solves the pairs among them (their
-  relation is unchanged; results would have to be rotated instead).
-* Non-mesh objects could be checked instead of warned about (`to_mesh`
-  works on them).
+Display settings
+- [ ] Tint strength default 0.5.
+- [ ] Hatch spacing default 4, whole numbers only, range 2 to 10 (other
+      values give moire).
+- [ ] "See-Through" becomes a checkbox plus a slider shown when ticked,
+      named "Hatch X-Ray".
+- [ ] Checkboxes to hide the closest-distance lines and the intersection
+      outlines.
+- [ ] Separate checkboxes for collision markers and clearance markers.
+
+Elsewhere
+- [ ] Outliner restriction column: not possible (fixed in Blender). Instead:
+      context menu entries in the Outliner and the viewport, and a checkbox
+      in Object Properties > Visibility.
+- [ ] Application template "3D Printing" (File > New): he wants to talk
+      about it after this list. Not an extension type; the add-on could
+      install one.
+
+### B. Performance ("laggy for real world large complicated buckets")
+
+Waiting for his numbers. Known and planned, in this order:
+1. Pop the stash, finish "verdict first" in the monitor (objects enter the
+   world unsorted, worker jobs ordered by need, more workers, several
+   threads for one large mesh).
+2. Pause instead of discard when monitoring is switched off; keep meshes of
+   hidden parts.
+3. Background slices back to back (today 12 ms of work, 20 ms of pause);
+   redraws at a limited rate during analysis.
+4. Large selections: 63 ms per step when all of 600 parts move
+   (`scratchpad/bl_group_move.py`): the out-of-volume pictures of parts that
+   stick out (42 ms, no budget), the box tests of all against all (15 ms),
+   the per-pair bookkeeping (16 ms), one `set_matrix` per object (10 ms).
+   A rigid-group shortcut by per-part reference positions is NOT sound (two
+   worked counter-examples in the session log); compare per pair, vectorised
+   over a pair table.
+5. Overlay cost on a real GPU is unknown: the tint pass redraws every
+   colliding part (up to 4 M triangles).
+
+### C. Before a wider release
+
+* Independent review of the integration code; audit of the Blender API calls
+  against the 4.2 source in `/home/claude/build/blender-42-src`.
+* Offered, no answer yet: a disk cache of sorted meshes so that reopening a
+  saved build is quick; wall gap on by default; amber shading for
+  warning-only parts.
+
+Later, if wanted: smaller poses (quantised low levels); logarithmic extents
+for a rotating part; results rotated instead of re-solved when a group is
+rotated; non-mesh objects checked instead of warned about.
