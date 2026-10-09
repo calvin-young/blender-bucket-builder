@@ -202,6 +202,7 @@ class World:
         self._virt_todo = set()   # borrowing slots whose results are still to be redone
         self._borrowing = set()   # the other borrowing slots
 
+        self.check_pairs = True   # False: nothing about pairs is worked out (see set_pair_check)
         self.coll_thr = 0.0
         self.clear_thr = 0.0      # 0 disables the clearance check
         self.detect_enclosed = True   # report parts completely inside other parts
@@ -265,6 +266,19 @@ class World:
         self.coll_thr = coll
         self.clear_thr = clear
         self.invalidate_all()
+
+    def set_pair_check(self, flag):
+        """Switch the search for collisions and clearance problems on or off.
+
+        While it is off nothing about pairs is worked out, but nothing is
+        forgotten either: the results there are stay as they are (whoever
+        shows them has to know that they are not kept up to date), parts that
+        change are noted, and when it is switched on again only their pairs
+        are looked at.  The build volume is checked either way."""
+        flag = bool(flag)
+        if flag != self.check_pairs:
+            self.check_pairs = flag
+            self.version += 1
 
     def set_detect_enclosed(self, flag):
         flag = bool(flag)
@@ -368,6 +382,22 @@ class World:
         g = self._geoms.get(key)
         return g is not None and g.ready
 
+    def geom_token(self, key):
+        """Something that is the same for as long as ``key`` stands for the
+        mesh registered right now (None if there is none).  A mesh that is
+        dropped and registered again is not the same, although its key is."""
+        return self._geoms.get(key)
+
+    def geom_users(self, key):
+        """How many objects use a mesh."""
+        g = self._geoms.get(key)
+        return 0 if g is None else len(g.users)
+
+    def geom_uids(self, key):
+        """The uids of the objects that use a mesh."""
+        g = self._geoms.get(key)
+        return [] if g is None else [self._obj[slot][0] for slot in g.users]
+
     def geom_views(self, key):
         """(vertices, triangles) of a mesh as views of the shared storage, for
         handing an unsorted mesh to ``bvh.order_mesh``.  They stay valid for
@@ -410,7 +440,7 @@ class World:
         pairs and out-of-volume pictures each holds up."""
         out = {}
         obj = self._obj
-        for pair in self._pend_wait:
+        for pair in (self._pend_wait if self.check_pairs else ()):
             for slot in pair:
                 g = obj[slot][1]
                 if not g.ready:
@@ -1322,24 +1352,28 @@ class World:
     def busy(self):
         """True while ``step`` has something to do.  (What waits for a mesh
         to be sorted does not count: see ``waiting``.)"""
-        return bool(self._dirty or self._pend_hot or self._pend_cold or self._pend_refine
-                    or self._pend_scan or self._virt_todo or self._oob_geom)
+        if self._oob_geom or self._oob_dirty or self._oob_all:
+            return True
+        return self.check_pairs and bool(self._dirty or self._pend_hot or self._pend_cold
+                                         or self._pend_refine or self._pend_scan or self._virt_todo)
 
     @property
     def waiting(self):
         """True while something waits for a mesh to be sorted."""
-        return bool(self._pend_wait or self._oob_wait)
+        return bool(self._oob_wait or (self.check_pairs and self._pend_wait))
 
     @property
     def unsettled(self):
         """True while a pair has no result yet, or one that does not say for
         certain whether the parts collide.  (Pairs waiting only for their
         exact distance already have a complete collision answer.)"""
-        return bool(self._dirty or self._pend_hot or self._pend_cold or self._pend_wait
-                    or self._pend_scan)
+        return self.check_pairs and bool(self._dirty or self._pend_hot or self._pend_cold
+                                         or self._pend_wait or self._pend_scan)
 
     @property
     def pending(self):
+        if not self.check_pairs:
+            return 0
         return (len(self._pend_hot) + len(self._pend_cold) + len(self._pend_refine)
                 + len(self._pend_wait) + len(self._pend_scan))
 
@@ -1448,9 +1482,10 @@ class World:
         """
         t0 = time.perf_counter()
         solved = 0
-        if self._dirty:
+        pairs = self.check_pairs
+        if pairs and self._dirty:
             self._broad()
-        while True:
+        while pairs:
             if self._pend_hot:
                 src, exact, limit = self._pend_hot, False, hot_budget
             elif self._pend_cold:
@@ -1824,11 +1859,12 @@ class World:
     def stats(self):
         return {
             'objects': len(self._slot_of),
-            'geoms': len(self._geoms),
+            'geoms': len(self._geoms) - len(self._idle),       # unique meshes in use
+            'kept': len(self._idle),                          # ... and kept although nobody uses them
             'poses': len(self._poses),
             'pairs': len(self.pairs),
             'triangles': int(sum(self._obj[s][1].nt for s in self._slot_of.values())),
-            'unique_triangles': int(sum(g.nt for g in self._geoms.values())),
+            'unique_triangles': int(sum(g.nt for g in self._geoms.values() if g.refs)),
             'bytes': self.pose_bytes + self.geom_bytes,
             'reserved': self.BOX.nbytes + self.TIDX.nbytes + self.LVERT.nbytes,
             'pose_bytes': self.pose_bytes,

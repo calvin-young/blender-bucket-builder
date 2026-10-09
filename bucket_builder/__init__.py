@@ -5,7 +5,7 @@
 bl_info = {
     "name": "Bucket Builder",
     "author": "Bucket Builder contributors",
-    "version": (1, 1, 0),
+    "version": (1, 2, 0),
     "blender": (4, 2, 0),
     "location": "3D Viewport > Sidebar > Bucket",
     "description": "Live collision, clearance and build-volume monitor for 3D-print build preparation",
@@ -16,12 +16,12 @@ if "bpy" in locals():
     # "Reload Scripts": refresh sub-modules, dependencies first
     import importlib
     for _name in ("core.tritri", "core.arena", "core.bvh", "core.narrow", "core.world", "core",
-                  "props", "monitor", "overlay", "ops", "ui"):
+                  "props", "icons", "monitor", "overlay", "ops", "ui"):
         importlib.reload(importlib.import_module("." + _name, __package__))
 
 import bpy
 
-from . import monitor, ops, overlay, props, ui
+from . import icons, monitor, ops, overlay, props, ui
 
 
 def _seed_later():
@@ -29,16 +29,20 @@ def _seed_later():
         props.seed_profiles(props.prefs())
     except Exception:
         pass
+    # scenes that are open while an earlier version is replaced by this one
+    monitor.migrate_scenes()
     return None
 
 
 def register():
     props.register()
+    icons.register()
     ops.register()
     ui.register()
     overlay.register()
     monitor.register()
-    # the preferences of a freshly enabled add-on are not reachable inside register()
+    # the preferences of a freshly enabled add-on, and the scenes, are not
+    # reachable inside register()
     bpy.app.timers.register(_seed_later, first_interval=0.2)
 
 
@@ -49,4 +53,5 @@ def unregister():
     overlay.unregister()
     ui.unregister()
     ops.unregister()
+    icons.unregister()
     props.unregister()

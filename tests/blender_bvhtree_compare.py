@@ -61,8 +61,10 @@ def main():
         b = bpy.context.active_object
         bpy.context.view_layer.update()
         st = bpy.context.scene.bucket_builder
-        st.enabled = False
-        st.enabled = True
+        st.detect_collisions = False
+        st.monitor_volume = False
+        monitor.force_recheck(bpy.context.scene)
+        st.detect_collisions = True
         mon = settle()
         ntri = mon.objs[a.session_uid].ntri + mon.objs[b.session_uid].ntri
 
@@ -101,7 +103,7 @@ def main():
             pr = w.pairs.get((sa, sb) if sa < sb else (sb, sa))
             counts_bc.append(0 if pr is None or pr.state != core.COLLIDE else pr.nseg)
         # Blender's own cost of the update without the add-on
-        st.enabled = False
+        st.detect_collisions = False
         t_plain = 0.0
         for x in xs:
             b.location.x = float(x) + 0.001

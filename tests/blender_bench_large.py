@@ -87,13 +87,24 @@ def grid(n):
     return s, np.array(cells)
 
 
-def drive(mon, label, until=None, limit=3600.0):
+def switch(st, on):
+    """Monitoring on or off, with whatever switches this version of the add-on
+    has (so that an older one can be measured with the same script)."""
+    if hasattr(st, 'detect_collisions'):
+        st.detect_collisions = on
+        st.monitor_volume = on
+    else:
+        st.enabled = on
+
+
+def drive(mon, label, until=None, limit=3600.0, parts=0):
     """Tick like the timer does until the monitor is idle; report the slices."""
     sc = bpy.context.scene
     vl = bpy.context.view_layer
     slices = []
     first = None
     known = None
+    placed = None
     t0 = time.perf_counter()
     time.sleep(monitor.IDLE_SECONDS + 0.05)
     while time.perf_counter() - t0 < limit:
@@ -102,6 +113,8 @@ def drive(mon, label, until=None, limit=3600.0):
         slices.append(time.perf_counter() - t1)
         now = time.perf_counter() - t0
         st = mon.status()
+        if placed is None and parts and mon.world.object_count >= parts and not mon.queue:
+            placed = now                  # every part's place is known: the volume can be judged
         if first is None and mon.world.pairs and any(not pr.stale for pr in mon.world.pairs.values()):
             first = now
         if known is None and not st['busy']:
@@ -112,8 +125,11 @@ def drive(mon, label, until=None, limit=3600.0):
             time.sleep(0.005)             # the timer would come back in 20 ms
     total = time.perf_counter() - t0
     sl = np.array(slices) * 1000
-    print(f'{label}: {total:.1f} s; first results after {first if first is not None else float("nan"):.1f} s, '
-          f'verdict final after {known if known is not None else float("nan"):.1f} s')
+    nan = float('nan')
+    print(f'{label}: {total:.1f} s; first results after {first if first is not None else nan:.1f} s, '
+          f'verdict final after {known if known is not None else nan:.1f} s'
+          + (f', every part placed (the build volume judged) after {placed if placed is not None else nan:.1f} s'
+             if parts else ''))
     print(f'    {len(sl)} slices on the main thread: median {np.median(sl):.0f} ms, 95 % under '
           f'{np.percentile(sl, 95):.0f} ms, longest {sl.max():.0f} ms')
     return sl
@@ -150,9 +166,9 @@ def main():
     prefs = bb.props.prefs()
     old_memory = prefs.memory_gb
     prefs.memory_gb = MEMORY_GB
-    st.enabled = True
+    switch(st, True)
     mon = monitor.get(sc, create=True)
-    drive(mon, 'switching monitoring on')
+    drive(mon, 'switching monitoring on', parts=len(objs))
     s = mon.status()
     stats = mon.world.stats()
     print(f'    {s["objects"]} parts checked, {stats["pairs"]} neighbouring pairs: {s["collisions"]} collisions, '
@@ -197,7 +213,7 @@ def main():
     drive(mon, '    settling after the rotation')
     if mon.error:
         print('error reported by the monitor:', mon.error)
-    st.enabled = False
+    switch(st, False)
     prefs.memory_gb = old_memory
     print('LARGE BENCH DONE')
 

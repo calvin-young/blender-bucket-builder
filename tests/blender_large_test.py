@@ -1,9 +1,10 @@
 """Large meshes inside Blender (run with: blender --background --python this_file).
 
 What the add-on does differently for parts too large to handle in one go:
-reading mesh data the fast way, sorting in worker threads, borrowing poses
-while a part is rotated, the memory limit, and the warnings about geometry
-that is in the scene but is not checked.
+reading mesh data the fast way, taking a mesh in before it is sorted and
+sorting it in worker threads (what is needed first), borrowing poses while a
+part is rotated, the memory limit, and the warnings about geometry that is
+in the scene but is not checked.
 """
 
 import importlib
@@ -61,17 +62,19 @@ class held_workers:
 
     def __enter__(self):
         self.go = threading.Event()
-        self.real = monitor._sort_job
+        self.real = monitor._order_job
+        self.started = []
 
-        def held(co, tri):
+        def held(verts, tris, threads):
+            self.started.append((len(tris), threads))
             self.go.wait(60.0)
-            return self.real(co, tri)
+            return self.real(verts, tris, threads)
 
-        monitor._sort_job = held
+        monitor._order_job = held
         return self
 
     def __exit__(self, *exc):
-        monitor._sort_job = self.real
+        monitor._order_job = self.real
         self.go.set()
 
 
@@ -152,6 +155,8 @@ def main():
     p.memory_gb = 0.0
     st.use_volume = False
     st.clearance_mm = 5.0
+    # (what is tested here must not depend on how many processors this machine has)
+    monitor.worker_count = lambda: 4
 
     # ------------------------------------------------------------ reading
     bpy.ops.mesh.primitive_uv_sphere_add(segments=64, ring_count=32, radius=10, location=(500, 0, 0))
@@ -180,21 +185,32 @@ def main():
     update()
     check(len(a.data.polygons) > monitor.SYNC_TRIS, 'test meshes are large enough for the workers',
           len(a.data.polygons))
-    st.enabled = True
-    with held_workers():
+    st.detect_collisions = True
+    st.monitor_volume = True
+    with held_workers() as held:
         mon = read_all(tick())
+        mon = tick()
         s = mon.status()
-        check(len(mon.jobs) == 2 and mon.world.slot(a.session_uid) is None,
-              'large meshes go to worker threads, one job per mesh', (len(mon.jobs), s['preparing']))
-        check(mon.world.slot(small.session_uid) is not None, 'a small mesh is taken in at once')
-        check(s['busy'] and s['preparing'] is not None and s['preparing'][1] == 4
-              and overlay.badge_text(s)[0] == 'BUSY', 'status shows the preparation',
-              (s['preparing'], overlay.badge_text(s)))
+        w = mon.world
+        check(len(mon.jobs) == 2 and all(w.slot(o.session_uid) is not None for o in (a, b, c, small))
+              and w.stats()['unsorted'] == 2,
+              'large meshes are in the world at once, unsorted, one job per mesh on its way',
+              (len(mon.jobs), w.stats()['unsorted'], s['preparing']))
+        lo, hi = w.part_bounds(w.slot(a.session_uid))
+        ref = slow_read(a)[0]
+        check(np.allclose(hi - lo, ref.max(axis=0) - ref.min(axis=0), rtol=1e-5),
+              'where such a part is, is known before its tree is made', (hi - lo).round(2))
+        check(state(mon, a, c) == OK and (0 if state(mon, a, b) is None else state(mon, a, b)) == OK
+              and w.unsettled and w.waiting,
+              'parts that are far apart are done with; only the pair that touches waits', w.wanted())
+        check(s['busy'] and s['preparing'] is not None and overlay.badge_text(s)[0] == 'BUSY',
+              'status shows the preparation', (s['preparing'], overlay.badge_text(s)))
     t0 = time.perf_counter()
     mon = settle()
     stats = mon.world.stats()
-    check(stats['objects'] == 4 and stats['geoms'] == 3 and not mon.jobs,
-          'all parts in after the workers finished; the linked copy shares its mesh',
+    check(stats['objects'] == 4 and stats['geoms'] == 3 and not mon.jobs and not mon.unsorted
+          and stats['unsorted'] == 0,
+          'all trees made after the workers finished; the linked copy shares its mesh',
           (stats['objects'], stats['geoms'], f'{time.perf_counter() - t0:.2f} s'))
     check(state(mon, a, b) == COLLIDE and state(mon, a, c) == OK, 'large parts are checked',
           (state(mon, a, b), state(mon, a, c)))
@@ -205,6 +221,7 @@ def main():
     update()
     with held_workers():
         mon = read_all(tick())
+        mon = tick()
         check(len(mon.jobs) == 2, 'two more jobs', len(mon.jobs))
         co = np.empty(len(d.data.vertices) * 3, dtype=np.float32)
         d.data.vertices.foreach_get('co', co)
@@ -214,6 +231,7 @@ def main():
         bpy.data.objects.remove(e)
         update()
         mon = read_all(tick())
+        mon = tick()
         check(len(mon.jobs) == 3, 'the edited mesh is on its way as well, the old one still being sorted',
               len(mon.jobs))
     mon = settle()
@@ -433,7 +451,8 @@ def main():
     check(not mon.unchecked and overlay.badge_text(mon.status())[0] == 'OK',
           'and the plain pass returns when it is gone', mon.unchecked)
 
-    st.enabled = False
+    st.detect_collisions = False
+    st.monitor_volume = False
     print(f'\n{sum(1 for ok, _ in CHECKS if ok)} of {len(CHECKS)} checks passed')
     print('BLENDER LARGE TEST OK')
 

@@ -125,7 +125,7 @@ def render(mon, st, name, eye, target, is_ortho=False, ortho_scale=200.0, up=(0,
         with gpu.matrix.push_pop():
             gpu.matrix.load_matrix(Matrix.Identity(4))
             gpu.matrix.load_projection_matrix(ortho(0, W, 0, H, -1, 1))
-            overlay.draw_hud(mon, st, p, proj @ view, W, H, float(W), 0.0, 1.0)
+            overlay.draw_hud(mon, st, p, proj @ view, W, H, float(W), 0.0, 1.0, srgb_target=False)
         buf = fb.read_color(0, 0, W, H, 4, 0, 'UBYTE')
     ms = (time.perf_counter() - t0) * 1000
     offscreen.free()
@@ -187,7 +187,9 @@ def main():
 
     sh = overlay._shaders()
     assert sh['hatch'] is not None, 'the hatch shader did not compile'
-    print('  hatch shader compiled')
+    assert sh['tint'] is not None, 'the shading shader did not compile'
+    assert sh['sdf'] is not None, 'the shader of the icons did not compile'
+    print('  shaders compiled: hatching, part shading, smooth icons')
 
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
@@ -212,7 +214,8 @@ def main():
 
     sc = bpy.context.scene
     st = sc.bucket_builder
-    st.enabled = True
+    st.detect_collisions = True
+    st.monitor_volume = True
     mon = settle()
     s = mon.status()
     print('  status:', s)
@@ -226,9 +229,14 @@ def main():
     assert r > 300, 'no collision hatch visible'
     assert a > 100, 'no clearance hatch visible'
     assert m > 300, 'no out-of-volume hatch visible'
-    # the verdict sits in the bottom right corner, in the collision colour
-    cr = colours(corner(LAST['img']))[0]
-    assert cr > 1500, f'no red badge in the bottom right corner ({cr} px)'
+    # the verdict sits in the bottom right corner: the most serious problem
+    # is the part outside the volume, so in that colour, with the collision
+    # in its own colour underneath
+    cr, _, cm = colours(corner(LAST['img']))
+    assert cm > 1500, f'no badge in the out-of-volume colour in the bottom right corner ({cm} px)'
+    assert cr > 60, f'the line about the collision is not in the collision colour ({cr} px)'
+    text = overlay.badge_text(mon.status())
+    assert text[:2] == ('FAIL', '1 Part Outside Build Volume') and text[2][0] == '1 Collision Detected', text
     assert colours(LAST['img'][H // 2 - 60:H // 2 + 60, :300])[0] == 0, 'something red at the left edge'
     # Only the wall that the part goes through is marked: the middle of an
     # upright edge of the x = 380 wall is drawn in the out-of-volume colour,
@@ -271,11 +279,19 @@ def main():
     assert r4 > r3, 'the intersection outline and the marker cannot be switched off'
     st.show_gap_lines = False
     st.show_markers_clearance = False
+    st.show_labels_clearance = False
     _, a0, _ = render(mon, st, 'no_gap_lines', (330, -10, 110), (230, 90, 68))
+    st.show_labels_clearance = True              # the distance without the ring: its own switch
+    _, a_label, _ = render(mon, st, 'gap_label_only', (330, -10, 110), (230, 90, 68))
+    st.show_labels_clearance = False
+    st.show_markers_clearance = True             # and the ring without the distance
+    _, a_ring, _ = render(mon, st, 'gap_ring_only', (330, -10, 110), (230, 90, 68))
     st.show_gap_lines = True
-    st.show_markers_clearance = True
+    st.show_labels_clearance = True
     _, a1, _ = render(mon, st, 'gap_lines', (330, -10, 110), (230, 90, 68))
-    assert a1 > a0, 'the closest-distance line and the marker cannot be switched off'
+    assert a_label > a0 and a_ring > a0, ('the marker and the distance are not separate switches',
+                                          a0, a_label, a_ring)
+    assert a1 > max(a_label, a_ring), 'the closest-distance line and the marker cannot be switched off'
     pr.use_xray = False
     render(mon, st, 'no_xray', (150, -20, 150), (112, 110, 64))
     pr.use_xray = True
@@ -301,13 +317,29 @@ def main():
     bpy.context.view_layer.update()
     mon = settle()
 
+    # A problem that is ignored is not drawn and does not count; what is left
+    # of it is a small grey ring where it is.
+    ball_ring = next(q for q in mon.problems() if q['kind'] == 'COLLIDE')
+    r_before, _, _ = render(mon, st, 'collision_counts', (150, -20, 150), (112, 110, 64))
+    assert bpy.ops.bucketbuilder.ignore_problem(kind='P', a=ball_ring['names'][0],
+                                                b=ball_ring['names'][1]) == {'FINISHED'}
+    s = mon.status()
+    assert s['collisions'] == 0 and s['ignored_problems'] == 1, s
+    r_ignored, _, _ = render(mon, st, 'collision_ignored', (150, -20, 150), (112, 110, 64))
+    assert LAST['drawn'] == [0, LAST['drawn'][1]] and r_ignored < 0.1 * r_before, (
+        'an ignored collision is still drawn', LAST['drawn'], r_ignored, r_before)
+    grey = around(ball_ring['center'], 8)
+    assert int(((np.abs(grey[:, :, 0].astype(int) - grey[:, :, 1]) < 12) & (grey[:, :, 0] > 120)
+                & (grey[:, :, 0] < 200)).sum()) > 12, 'no grey ring where the ignored problem is'
+    assert bpy.ops.bucketbuilder.count_all_problems() == {'FINISHED'} and mon.status()['collisions'] == 1
+
     # a warning only: the badge is an amber triangle
     ring.location.z = 150
     bpy.data.objects['Head'].location = (300, 200, 60)
     bpy.context.view_layer.update()
     mon = settle()
     text = overlay.badge_text(mon.status())
-    assert text[:2] == ('WARN', 'Clearance Warning'), text
+    assert text[0] == 'WARN' and 'Clearance Warning' in text[1], text
     render(mon, st, 'warning', (520, -330, 330), (180, 130, 60))
     cr, ca, _ = colours(corner(LAST['img']))
     assert ca > 800 and cr == 0, f'no amber badge in the corner ({ca} amber, {cr} red px)'
@@ -336,6 +368,14 @@ def main():
     assert r == 0 and a == 0 and m == 0, (r, a, m)
     cg = green(corner(LAST['img']))
     assert cg > 800, f'no green badge in the corner ({cg} px)'
+    # The icon has smooth edges: between the green of the ring and the dark
+    # disc behind it there are pixels of every shade in between.  (Made of
+    # triangles, as it was, there were none: an edge was a staircase.)
+    c = corner(LAST['img']).astype(int)
+    ringish = (c[:, :, 1] > c[:, :, 0] + 25) & (c[:, :, 1] > c[:, :, 2] + 25)
+    shades = np.unique(c[:, :, 1][ringish] // 8)
+    assert len(shades) >= 14, f'the badge icon is not smooth ({len(shades)} shades of green)'
+    print(f'  the badge icon is drawn with smooth edges ({len(shades)} shades along them)')
     print('GPU TEST OK')
 
 
