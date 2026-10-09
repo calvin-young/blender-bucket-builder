@@ -2029,6 +2029,118 @@ def unused_mesh_tests(rng):
           'way for a new mesh; a pause drops the poses and keeps the results')
 
 
+def pair_switch_tests(rng):
+    """The search for collisions can be switched off while the build volume
+    goes on being checked.  While it is off nothing about pairs is worked
+    out and nothing is forgotten; switching it on again costs only the pairs
+    of what has changed since, and gives what a new world would."""
+    parts = {
+        'gbox': meshes.grid_box((0.9, 0.6, 0.6), 5),
+        'sph': meshes.uv_sphere(0.5, 16, 8),
+        'tor': meshes.torus(0.5, 0.18, 16, 8),
+        'cyl': meshes.cylinder(0.25, 1.2, 16),
+        'blob': meshes.blob(rng, 0.5, 16, 8, 0.3),
+    }
+    names = list(parts)
+    vol = ((-2.0, -2.0, -2.0), (2.0, 2.0, 2.0))
+
+    def fresh(objs, pairs=True):
+        w = World()
+        w.set_scale(8.0, 0.01)
+        w.set_thresholds(0.0, 0.2)
+        w.set_volume(*vol, 0.3)
+        w.set_pair_check(pairs)
+        for k, (v, f) in parts.items():
+            w.add_geom(k, v, f)
+        for uid, (g, M) in objs.items():
+            w.add_object(uid, g, M)
+        while w.step(budget=10.0):
+            pass
+        return w
+
+    def pair_view(w):
+        # (which of two parts comes first depends on the slots they happen to have)
+        return {tuple(sorted((w.uid(a), w.uid(b)))): (pr.state, pr.dist, pr.nseg)
+                for (a, b), pr in w.viol.items()}
+
+    def volume_view(w):
+        out = {w.uid(s): ('oob', r.state) for s, r in w.oob.items()}
+        out.update({('wall', w.uid(s)): round(r.dist, 9) for s, r in w.wall.items()})
+        return out
+
+    solved = [0]
+    seen = set()
+    real = narrow.solve
+
+    def counting(w_, keys, exact=True, detail=None):
+        solved[0] += len(keys)
+        seen.update((w_.uid(a), w_.uid(b)) for a, b in keys)
+        return real(w_, keys, exact, detail)
+
+    narrow.solve = counting
+    try:
+        total = kept = 0
+        for trial in range(12):
+            objs = {i: (names[rng.integers(len(names))],
+                        meshes.matrix(meshes.rot(rng), rng.uniform(-2.1, 2.1, 3))) for i in range(22)}
+            w = fresh(objs)
+            before = pair_view(w)
+            assert before and (w.oob or w.wall), 'a scene without problems tests nothing'
+            w.set_pair_check(False)
+            assert not w.busy and not w.unsettled and w.pending == 0 and not w.waiting
+            solved[0] = 0
+            # edits while it is off: moved, turned, added, removed, a mesh swapped
+            moved = set()
+            for uid in rng.choice(22, 5, replace=False):
+                uid = int(uid)
+                g, M = objs[uid]
+                M = M.copy()
+                if uid % 2:
+                    M[:3, :3] = meshes.rot(rng)
+                M[:3, 3] += rng.uniform(-0.5, 0.5, 3)
+                objs[uid] = (g, M)
+                w.set_matrix(uid, M, hot=bool(uid % 3))
+                moved.add(uid)
+            gone = int(rng.integers(22))
+            while gone in moved:
+                gone = int(rng.integers(22))
+            w.remove_object(gone)
+            del objs[gone]
+            objs[100] = (names[trial % len(names)], meshes.matrix(meshes.rot(rng), rng.uniform(-1.5, 1.5, 3)))
+            w.add_object(100, *objs[100])
+            swap = next(u for u in objs if u not in moved and u != 100)
+            objs[swap] = (names[(names.index(objs[swap][0]) + 1) % len(names)], objs[swap][1])
+            w.set_geometry(swap, objs[swap][0])
+            changed = moved | {100, swap}
+            steps = 0
+            while w.step(budget=0.01):
+                steps += 1
+                assert steps < 1000
+            assert solved[0] == 0, 'pairs were solved although the check is off'
+            assert not w.unsettled and w.pending == 0 and not w.busy
+            # the build volume is kept up to date all the same
+            ref_off = fresh(objs, pairs=False)
+            assert volume_view(w) == volume_view(ref_off) and not ref_off.pairs
+            # on again: what a new world makes of it, for the price of what changed
+            w.set_pair_check(True)
+            assert w.busy and w.unsettled
+            seen.clear()
+            while w.step(budget=10.0):
+                pass
+            again = len(seen)
+            assert again > 0 and all(a in changed or b in changed for a, b in seen), (trial, sorted(seen))
+            ref = fresh(objs)
+            same_pairs(pair_view(w), pair_view(ref), ('switched on again', trial))
+            assert volume_view(w) == volume_view(ref)
+            total += len(w.pairs)
+            kept += len(w.pairs) - again
+        assert kept > total // 4
+        print(f'pair check switched off and on: nothing solved while off, the volume still checked; '
+              f'on again, only the pairs of what changed are solved ({kept} of {total} pairs left alone)')
+    finally:
+        narrow.solve = real
+
+
 def group_move_tests(rng):
     """Parts that are moved together keep their results: nothing between them
     is solved again, although their positions arrive rounded to single
@@ -2186,11 +2298,14 @@ def main():
     dense_clearance_tests(rng)
     capped_search_tests(rng)
     near_coincident_tests(rng)
-    live_budget_tests(rng)
+    # (tests added later draw from generators of their own, so that the ones
+    # that follow see the scenes they always saw)
+    live_budget_tests(np.random.default_rng(17))
     cache_tests(rng)
     borrow_tests(rng)
     unsorted_tests(rng)
     unused_mesh_tests(rng)
+    pair_switch_tests(np.random.default_rng(23))
     group_move_tests(rng)
     incremental_tests(rng)
     incremental_tests(rng, borrow=True)

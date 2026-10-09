@@ -6,7 +6,7 @@ import sys
 
 import bpy
 from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProperty,
-                       FloatVectorProperty, IntProperty, StringProperty)
+                       FloatVectorProperty, IntProperty, PointerProperty, StringProperty)
 from bpy.types import AddonPreferences, PropertyGroup
 
 ADDON_ID = __package__
@@ -17,23 +17,28 @@ GIB = float(1 << 30)
 # owner's 580 with custom firmware, which builds a little more than the
 # 332 x 190 x 248 mm HP publishes for the 500 series; the figure is his.
 DEFAULT_PROFILES = (
-    ("HP MJF 4XXX/5XXX", (380.0, 284.0, 380.0)),
-    ("HP MJF 5XX", (332.0, 190.0, 248.0)),
-    ("HP MJF 580+", (332.6, 198.7, 267.8)),
+    ("HP MJF 5600", (380.0, 284.0, 380.0)),
     ("HP MJF 1200", (320.0, 165.0, 230.0)),
+    ("HP MJF 580", (332.0, 190.0, 248.0)),
+    ("HP MJF 580+", (332.6, 198.7, 267.8)),
 )
 
-# The built-in list has changed once.  Libraries made by version 1.0 are
-# brought up to date: its built-in entries go (unless their size was edited),
-# printers the user saved stay.
-PROFILES_VERSION = 2
-_PROFILES_V1 = {
-    "HP Jet Fusion 5600": ((380.0, 284.0, 380.0), "HP MJF 4XXX/5XXX"),
-    "HP Jet Fusion 5200": ((380.0, 284.0, 380.0), "HP MJF 4XXX/5XXX"),
+# The built-in list has changed twice.  Libraries made by an earlier version
+# are brought up to date: its built-in entries go (unless their size was
+# edited), printers the user saved stay.  Every name the list has had, with
+# its size and what that printer is called now (None: it is no longer listed):
+PROFILES_VERSION = 3
+_PROFILES_OLD = {
+    # 1.0
+    "HP Jet Fusion 5600": ((380.0, 284.0, 380.0), "HP MJF 5600"),
+    "HP Jet Fusion 5200": ((380.0, 284.0, 380.0), "HP MJF 5600"),
     "HP Jet Fusion 5000": ((380.0, 284.0, 250.0), None),
-    "HP Jet Fusion 4200": ((380.0, 284.0, 380.0), "HP MJF 4XXX/5XXX"),
+    "HP Jet Fusion 4200": ((380.0, 284.0, 380.0), "HP MJF 5600"),
     "HP Multi Jet Fusion 1200": ((320.0, 165.0, 230.0), "HP MJF 1200"),
-    "HP Jet Fusion 580 / 540": ((332.0, 190.0, 248.0), "HP MJF 5XX"),
+    "HP Jet Fusion 580 / 540": ((332.0, 190.0, 248.0), "HP MJF 580"),
+    # 1.1
+    "HP MJF 4XXX/5XXX": ((380.0, 284.0, 380.0), "HP MJF 5600"),
+    "HP MJF 5XX": ((332.0, 190.0, 248.0), "HP MJF 580"),
 }
 
 
@@ -45,6 +50,35 @@ def prefs(context=None):
 
 def settings(scene):
     return getattr(scene, "bucket_builder", None)
+
+
+def active(st):
+    """True if anything is being monitored in a scene with these settings."""
+    return st is not None and (st.detect_collisions or st.monitor_volume)
+
+
+def volume_shown(st):
+    """The build volume is drawn: its own checkbox, under the main switch."""
+    return st.monitor_volume and st.show_volume
+
+
+def volume_checked(st):
+    """Parts are checked against the build volume."""
+    return st.monitor_volume and st.use_volume
+
+
+def migrate_scene(scene):
+    """Bring the settings of a scene saved by version 1.0 or 1.1 up to date:
+    there was one switch for everything then.  Returns True if anything was
+    changed."""
+    st = settings(scene)
+    if st is None or not st.enabled:
+        return False
+    st.enabled = False
+    if not (st.is_property_set("detect_collisions") or st.is_property_set("monitor_volume")):
+        st.detect_collisions = True
+        st.monitor_volume = True
+    return True
 
 
 _installed = [False, None]
@@ -161,13 +195,35 @@ class BucketBuilderProfile(PropertyGroup):
         default=(380.0, 284.0, 380.0))
 
 
+class BucketBuilderIgnoredProblem(PropertyGroup):
+    """A problem the user has chosen to ignore (see ``Monitor.ignored``)"""
+    kind: StringProperty()        # 'PAIR' (two parts), 'VOLUME' or 'WALL' (one part)
+    a: PointerProperty(type=bpy.types.Object)
+    b: PointerProperty(type=bpy.types.Object)
+    lock: BoolProperty()          # stays ignored whatever happens to the parts
+    # What the problem looked like when it was ignored.  It counts as the same
+    # problem, and stays ignored, for as long as this still describes it.
+    sig: FloatVectorProperty(size=12)
+    aux: FloatVectorProperty(size=8)
+    geo: StringProperty()
+
+
 class BucketBuilderSettings(PropertyGroup):
     """Per-scene settings of the build monitor"""
 
-    enabled: BoolProperty(
-        name="Monitor Build",
-        description="Continuously check all visible mesh objects for collisions, "
-                    "insufficient clearance and parts outside the build volume",
+    # (versions 1.0 and 1.1 had one switch for everything; see migrate_scene)
+    enabled: BoolProperty(default=False, options={'HIDDEN'})
+    detect_collisions: BoolProperty(
+        name="Detect Collisions",
+        description="Check every part against its neighbours while you arrange the build: "
+                    "parts that touch or cut through each other, and parts that are closer "
+                    "than the clearance",
+        default=False, update=_poke_enabled)
+    monitor_volume: BoolProperty(
+        name="Monitor Build Volume",
+        description="Show the printer's build volume and check that every part is inside it. "
+                    "While this is off the volume is neither drawn nor checked, whatever the "
+                    "two checkboxes below say",
         default=False, update=_poke_enabled)
 
     use_clearance: BoolProperty(
@@ -213,7 +269,7 @@ class BucketBuilderSettings(PropertyGroup):
         default=5.0, min=0.0, soft_max=50.0, precision=2, step=50, update=_poke)
     show_volume: BoolProperty(
         name="Show Build Volume", description="Draw the build volume in the viewport",
-        default=True, update=_poke_redraw)
+        default=True, update=_poke)
     printer: StringProperty(
         name="Printer", description="Name of the printer profile the volume came from",
         default=DEFAULT_PROFILES[0][0])
@@ -254,16 +310,33 @@ class BucketBuilderSettings(PropertyGroup):
         default=True, update=_poke_redraw)
     show_markers_clearance: BoolProperty(
         name="Clearance Markers",
-        description="Mark every clearance and wall-gap warning with a ring and its distance",
+        description="Mark every clearance and wall-gap warning with a ring",
         default=True, update=_poke_redraw)
+    show_labels_clearance: BoolProperty(
+        name="Clearance Distance Labels",
+        description="Write the distance next to every clearance and wall-gap warning",
+        default=True, update=_poke_redraw)
+    local_view_mode: EnumProperty(
+        name="In Local View",
+        description="What a viewport shows while it is in local view (isolating a problem "
+                    "puts its parts in local view)",
+        items=(('SHOWN', "Parts in View",
+                "The problems of the parts in the view. A part outside the view that one of "
+                "them runs into appears as a ghost, so nothing new goes unnoticed"),
+               ('ALL', "Whole Build",
+                "Every problem of the build, also those among parts that are not in the view")),
+        default='SHOWN', update=_poke_redraw)
     show_hud: BoolProperty(
         name="Status Badge", description="Show the large pass / fail badge in the viewport",
         default=True, update=_poke_redraw)
+    # the problem the user last went to: which one it is, and where it was in the list
+    problem_key: StringProperty(default="", options={'HIDDEN', 'SKIP_SAVE'})
     problem_index: IntProperty(default=-1, options={'HIDDEN', 'SKIP_SAVE'})
     isolate: BoolProperty(
         name="Isolate",
         description="Show the parts of the problem you go to on their own (local view)",
         default=False, options={'SKIP_SAVE'})
+    ignored_problems: CollectionProperty(type=BucketBuilderIgnoredProblem)
 
 
 class BucketBuilderPreferences(AddonPreferences):
@@ -367,19 +440,22 @@ def _same_size(a, b):
 
 def seed_profiles(p):
     """Give the profile library the built-in printers: once for a new
-    library, and once more for one made by version 1.0, whose built-in
-    entries are replaced while the printers the user saved are kept."""
+    library, and once more for one made by an earlier version, whose built-in
+    entries are replaced while the printers the user saved are kept.  A
+    built-in printer whose size the user has changed keeps that size."""
     if p is None or (p.profiles_seeded and p.profiles_version >= PROFILES_VERSION):
         return
     builtin = {name for name, _ in DEFAULT_PROFILES}
     keep = []
+    sizes = {}
     for prof in p.profiles:
-        old = _PROFILES_V1.get(prof.name)
-        if prof.name in builtin or (old is not None and _same_size(prof.size, old[0])):
-            continue
-        keep.append((prof.name, tuple(prof.size)))
+        old = _PROFILES_OLD.get(prof.name)
+        if prof.name in builtin:
+            sizes[prof.name] = tuple(prof.size)
+        elif old is None or not _same_size(prof.size, old[0]):
+            keep.append((prof.name, tuple(prof.size)))
     p.profiles.clear()
-    for name, size in list(DEFAULT_PROFILES) + keep:
+    for name, size in [(n, sizes.get(n, sz)) for n, sz in DEFAULT_PROFILES] + keep:
         item = p.profiles.add()
         item.name = name
         item.size = size
@@ -388,22 +464,23 @@ def seed_profiles(p):
 
 
 def current_printer_name(st):
-    """The name to show for a scene's printer.  Scenes saved with version 1.0
-    carry its printer names; where the volume is still that printer's, the
-    new name is shown instead."""
-    old = _PROFILES_V1.get(st.printer)
+    """The name to show for a scene's printer.  Scenes saved with an earlier
+    version carry its printer names; where the volume is still that printer's,
+    the present name is shown instead."""
+    old = _PROFILES_OLD.get(st.printer)
     if old is not None and old[1] is not None and _same_size(st.volume_size, old[0]):
         return old[1]
     return st.printer or "Custom"
 
 
-CLASSES = (BucketBuilderProfile, BucketBuilderSettings, BucketBuilderPreferences)
+CLASSES = (BucketBuilderProfile, BucketBuilderIgnoredProblem, BucketBuilderSettings,
+           BucketBuilderPreferences)
 
 
 def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
-    bpy.types.Scene.bucket_builder = bpy.props.PointerProperty(type=BucketBuilderSettings)
+    bpy.types.Scene.bucket_builder = PointerProperty(type=BucketBuilderSettings)
     bpy.types.Object.bucket_builder_ignore = BoolProperty(
         name="Ignore in Bucket Builder",
         description="Leave this object out of collision, clearance and build-volume checks",

@@ -91,48 +91,60 @@ def override():
     return bpy.context.temp_override(window=win(), area=view_area(), region=view_region())
 
 
-def free_corner():
-    """Where the viewport's free bottom right corner is, in pixels of the
-    viewport region, worked out from where the regions lie on the screen."""
-    area = view_area()
+def sidebar():
+    """The sidebar region if it is open and lies on top of the viewport, else None."""
     region = view_region()
-    right = region.width
-    for r in area.regions:
+    for r in view_area().regions:
         if r.type == 'UI' and r.width > 1 and region.x < r.x < region.x + region.width:
-            right = min(right, r.x - region.x)
-    return right, 0
+            return r
+    return None
 
 
-def badge_box(colour):
-    """Bounding box of the pixels of one colour in the free bottom right corner
-    of the viewport: (count, distance of the rightmost one from the corner's
-    right edge, of the lowest one from its bottom edge), or None without a
-    virtual display to read."""
+def ui_scale():
+    return bpy.context.preferences.system.ui_scale
+
+
+def sidebar_free():
+    """What the add-on has measured: how many pixels of the sidebar are empty at its bottom."""
+    return bc.overlay._state.get('sidebar', {}).get(view_area().as_pointer())
+
+
+def colour_mask(box, colour):
+    r, g, b = box[:, :, 0].astype(int), box[:, :, 1].astype(int), box[:, :, 2].astype(int)
+    if colour == 'red':
+        return (r > 200) & (g < 90) & (b < 90)
+    if colour == 'amber':
+        return (r > 200) & (g > 130) & (g < 220) & (b < 80)
+    if colour == 'magenta':
+        return (r > 180) & (g < 110) & (b > 150)
+    if colour == 'reddish':                       # a part shaded as colliding
+        return (r > 150) & (r > g + 60) & (r > b + 60)
+    return (g > 170) & (r < 120) & (b < 150)      # green
+
+
+def badge_box(colour, edge):
+    """Bounding box of the pixels of one colour in the bottom right corner of
+    the part of the viewport that ends at ``edge`` (pixels from the region's
+    left): (count, distance of the rightmost one from that edge, of the
+    lowest one from the bottom), or None without a virtual display to read."""
     px = gui_common.screen_pixels()
     if px is None:
         return None
     w = win()
     region = view_region()
-    right, bottom = free_corner()
     # screen rows run downwards, window pixels upwards
     x0 = w.x + region.x
     y0 = px.shape[0] - 1 - (w.y + region.y)
-    box = px[y0 - bottom - 150:y0 - bottom + 1, x0 + right - 420:x0 + right].astype(int)
-    r, g, b = box[:, :, 0], box[:, :, 1], box[:, :, 2]
-    if colour == 'red':
-        m = (r > 200) & (g < 90) & (b < 90)
-    elif colour == 'amber':
-        m = (r > 200) & (g > 130) & (g < 220) & (b < 80)
-    else:
-        m = (g > 170) & (r < 120) & (b < 150)
+    edge = int(round(edge))
+    m = colour_mask(px[y0 - 150:y0 + 1, x0 + edge - 520:x0 + edge], colour)
     if not m.any():
         return 0, None, None
     ys, xs = np.nonzero(m)
-    return int(m.sum()), int(420 - 1 - xs.max()), int(150 - ys.max())
+    return int(m.sum()), int(520 - 1 - xs.max()), int(150 - ys.max())
 
 
-def check_badge(colour, where):
-    got = badge_box(colour)
+def check_badge(colour, where, edge):
+    got = badge_box(colour, edge)
     if got is None:
         log('(no virtual display to read: the badge position is not checked)')
         return
@@ -141,6 +153,21 @@ def check_badge(colour, where):
         f'{from_bottom} px from its bottom')
     assert n > 800, f'no {colour} badge in the bottom right corner ({where}): {n} px'
     assert from_right <= 45 and from_bottom <= 45, (where, from_right, from_bottom)
+
+
+def pixels_around(point, colour, size=14):
+    """How many pixels of a colour the screen shows around a point of the
+    scene (None without a virtual display)."""
+    px = gui_common.screen_pixels()
+    if px is None:
+        return None
+    w = win()
+    region = view_region()
+    rv3d = view_area().spaces.active.region_3d
+    v = rv3d.perspective_matrix @ Vector((point[0], point[1], point[2], 1.0))
+    x = w.x + region.x + int(round((v.x / v.w * 0.5 + 0.5) * region.width))
+    y = px.shape[0] - 1 - (w.y + region.y + int(round((v.y / v.w * 0.5 + 0.5) * region.height)))
+    return int(colour_mask(px[y - size:y + size + 1, x - size:x + size + 1], colour).sum())
 
 
 def pair_state(a, b):
@@ -192,7 +219,11 @@ def step_setup():
 
 
 def step_enable():
-    win().scene.bucket_builder.enabled = True
+    st = win().scene.bucket_builder
+    assert not st.detect_collisions and not st.monitor_volume and monitor.get(win().scene) is None, \
+        'a new scene must start with both switches off'
+    st.detect_collisions = True
+    st.monitor_volume = True
     for region in view_area().regions:
         if region.type == 'UI':
             try:
@@ -203,6 +234,12 @@ def step_enable():
     return 1.5
 
 
+def set_tab(name):
+    for region in view_area().regions:
+        if region.type == 'UI':
+            region.active_panel_category = name
+
+
 def step_check_initial():
     mon = monitor.get(win().scene)
     assert mon is not None, 'timer did not create the monitor'
@@ -211,29 +248,52 @@ def step_check_initial():
     assert not s['busy'], 'background analysis did not finish'
     assert s['objects'] == 6 and s['collisions'] == 1 and s['clearance'] >= 1 and s['partly_out'] == 1, s
     text = bc.overlay.badge_text(s)
-    assert text[:2] == ('FAIL', 'Collision Detected'), text
+    assert text[:2] == ('FAIL', '1 Part Outside Build Volume') and '1 Collision Detected' in text[2], text
     w = win()
     log('window at', w.x, w.y, 'size', w.width, w.height)
     for r in view_area().regions:
         log('  region', r.type, r.alignment, 'at', r.x, r.y, 'size', r.width, r.height)
-    with override():
-        got = bc.overlay.free_corner(bpy.context)
-    assert tuple(got) == free_corner(), (got, free_corner())
-    assert got[0] < view_region().width - 100, 'the sidebar was expected to cover part of the viewport'
+    # The sidebar is open on our own tab, whose panels fill it to the bottom:
+    # the badge has to keep to the left of it.
+    side = sidebar()
+    assert side is not None and side.width > 100, 'the sidebar was expected to cover part of the viewport'
+    free = sidebar_free()
+    log('the sidebar is empty for', free, 'pixels at its bottom')
+    assert free is not None and free < 60, ('the panels of the Bucket tab were expected to fill the sidebar', free)
     shot('gui_1_overview')
-    check_badge('red', 'beside the open sidebar')
+    check_badge('magenta', 'beside the sidebar, whose panels reach the bottom', side.x - view_region().x)
+    set_tab('Item')                                   # a tab with one short panel
+    return 1.0
+
+
+def step_badge_far_right():
+    # Now most of the sidebar is empty, and the viewport shows through it:
+    # the badge goes all the way to the right, next to the column of tabs.
+    side = sidebar()
+    free = sidebar_free()
+    log('with the Item tab the sidebar is empty for', free, 'pixels at its bottom')
+    assert free is not None and free > 200, free
+    shot('gui_1a_badge_far_right')
+    check_badge('magenta', 'under the empty part of the sidebar',
+                view_region().width - bc.overlay.TAB_STRIP * ui_scale())
+    set_tab('Bucket')
+    return 1.0
+
+
+def step_badge_back():
+    free = sidebar_free()
+    assert free is not None and free < 60, free
+    check_badge('magenta', 'beside the sidebar again', sidebar().x - view_region().x)
     view_area().spaces.active.show_region_ui = False
-    return 0.6
+    return 0.8
 
 
 def step_sidebar_closed():
-    with override():
-        got = bc.overlay.free_corner(bpy.context)
-    assert tuple(got) == free_corner() == (view_region().width, 0), (got, free_corner())
+    assert sidebar() is None
     shot('gui_1b_sidebar_closed')
-    check_badge('red', 'in the corner of the viewport')
+    check_badge('magenta', 'in the corner of the viewport', view_region().width)
     view_area().spaces.active.show_region_ui = True
-    return 0.5
+    return 0.8
 
 
 def step_closeup():
@@ -370,7 +430,7 @@ def step_clean_shot():
     assert s['collisions'] == 0 and s['partly_out'] == 0 and s['outside'] == 0 and not s['busy'], s
     assert bc.overlay.badge_text(s)[:2] == ('OK', 'Build OK'), bc.overlay.badge_text(s)
     shot('gui_5_clean')
-    check_badge('green', 'clean build')
+    check_badge('green', 'clean build', sidebar().x - view_region().x)
     return 0.2
 
 
@@ -387,9 +447,9 @@ def step_wall_shot():
     s = mon.status()
     log('status with a part 3 mm from a side wall:', s, '| badge', bc.overlay.badge_text(s)[:2])
     assert s['near_wall'] == 1 and s['collisions'] == 0 and s['partly_out'] == 0, s
-    assert bc.overlay.badge_text(s)[:2] == ('WARN', 'Wall Gap Warning'), bc.overlay.badge_text(s)
+    assert bc.overlay.badge_text(s)[:2] == ('WARN', '1 Part Within Wall Gap'), bc.overlay.badge_text(s)
     shot('gui_6_wall_clearance')
-    check_badge('amber', 'wall gap warning')
+    check_badge('amber', 'wall gap warning', sidebar().x - view_region().x)
     return 0.2
 
 
@@ -411,6 +471,13 @@ def step_problems_again():
     return 1.5
 
 
+def row_args(kind):
+    """What the buttons in the row of the first problem of a kind send."""
+    mon = monitor.get(win().scene)
+    pr = next(p for p in mon.problems() if p['kind'] == kind)
+    return dict(kind=pr['key'][0], a=pr['names'][0], b=pr['names'][1])
+
+
 def step_isolate():
     mon = monitor.get(win().scene)
     st = win().scene.bucket_builder
@@ -421,15 +488,58 @@ def step_isolate():
     with override():
         assert bpy.ops.bucketbuilder.focus_problem(index=0) == {'FINISHED'}
     assert in_local_view() is None, 'going to a problem must not isolate by itself'
+    # the button in the row of the collision
     with override():
-        assert bpy.ops.bucketbuilder.isolate() == {'FINISHED'}
-    assert st.isolate and in_local_view() == ['Ball', 'Ring'], (st.isolate, in_local_view())
-    log('isolated:', in_local_view())
-    return 0.8
+        assert bpy.ops.bucketbuilder.isolate_problem(**row_args('COLLIDE')) == {'FINISHED'}
+    assert st.isolate and st.problem_index == 0 and in_local_view() == ['Ball', 'Ring'], (
+        st.isolate, st.problem_index, in_local_view())
+    log('isolated with the button of its row:', in_local_view())
+    assert st.local_view_mode == 'SHOWN', st.local_view_mode
+    look((180, 110, 60), (0.45, -0.75, 0.48), 520)
+    return 1.0
 
 
 def step_isolate_shot():
     shot('gui_7_isolated_collision')
+    # Only the problems of the parts in view are drawn: the warning between
+    # the block and the pin, neither of which is in view, is not.
+    amber = pixels_around((230, 90, 66.5), 'amber', 22)
+    log('amber pixels where the block and the pin are too close (both out of view):', amber)
+    assert amber in (None, 0), amber
+    # Now the ring is dragged into the block, which is not in view ...
+    bpy.data.objects['Ring'].location = (200, 95, 52)
+    return 1.2
+
+
+def step_ghost_shot():
+    mon = monitor.get(win().scene)
+    block, ring = bpy.data.objects['Block'], bpy.data.objects['Ring']
+    assert pair_state(block, ring) == 'COLLIDE', pair_state(block, ring)
+    assert in_local_view() == ['Ball', 'Ring'], in_local_view()
+    shot('gui_7a_isolated_new_collision')
+    # ... and the block appears, shaded as a colliding part: a ghost that
+    # says a new problem has come up outside the view.
+    ghost = pixels_around((243, 77, 40), 'reddish', 12)
+    log('reddish pixels where the block is (it is not in view):', ghost)
+    assert ghost is None or ghost > 150, f'no ghost of the part that was run into ({ghost} px)'
+    win().scene.bucket_builder.local_view_mode = 'ALL'
+    return 1.0
+
+
+def step_all_shot():
+    # The other way: a view in local view shows every problem of the build.
+    amber = pixels_around((230, 90, 66.5), 'amber', 22)
+    log('with "Whole Build": amber pixels where the block and the pin are too close:', amber)
+    assert amber is None or amber > 20, amber
+    shot('gui_7b_isolated_whole_build')
+    st = win().scene.bucket_builder
+    st.local_view_mode = 'SHOWN'
+    bpy.data.objects['Ring'].location = (128, 110, 66)
+    look((180, 130, 60), (0.62, -0.62, 0.48), 760)
+    return 1.2
+
+
+def step_isolate_next():
     st = win().scene.bucket_builder
     with override():
         assert bpy.ops.bucketbuilder.step_problem(direction=1) == {'FINISHED'}
@@ -444,15 +554,58 @@ def step_isolate_next_shot():
     with override():
         assert bpy.ops.bucketbuilder.step_problem(direction=1) == {'FINISHED'}
     assert in_local_view() == ['Cone'], in_local_view()          # the part that is close to a wall
+    # the button of the row that is isolated switches it off again
     with override():
-        assert bpy.ops.bucketbuilder.isolate() == {'FINISHED'}
+        assert bpy.ops.bucketbuilder.isolate_problem(**row_args('WALL')) == {'FINISHED'}
     assert not st.isolate and in_local_view() is None, (st.isolate, in_local_view())
     log('isolation off: the whole build shows again')
     with override():
         assert bpy.ops.bucketbuilder.step_problem(direction=1) == {'FINISHED'}
     assert in_local_view() is None, 'going to a problem isolated it although Isolate is off'
+    # ... and the switch above the list does the same for whatever is current
+    with override():
+        assert bpy.ops.bucketbuilder.isolate() == {'FINISHED'}
+    assert st.isolate and in_local_view() == ['Ball', 'Ring'], (st.problem_index, in_local_view())
+    with override():
+        assert bpy.ops.bucketbuilder.isolate() == {'FINISHED'}
+    assert not st.isolate and in_local_view() is None
+    look((230, 90, 70), (0.62, -0.62, 0.3), 260)
+    return 0.8
+
+
+def step_ignore():
+    # A problem that is ignored: its hatching goes, a small grey ring stays,
+    # and the verdict no longer counts it but says that something is ignored.
+    before = pixels_around((230, 90, 66.5), 'amber', 30)
+    assert before is None or before > 20, before
+    with override():
+        assert bpy.ops.bucketbuilder.ignore_problem(**row_args('CLEAR')) == {'FINISHED'}
+    STATE['amber_before'] = before
+    return 1.0
+
+
+def step_ignore_shot():
+    mon = monitor.get(win().scene)
+    s = mon.status()
+    text = bc.overlay.badge_text(s)
+    log('with the clearance warning ignored:', text)
+    assert s['clearance'] == 0 and s['ignored_problems'] == 1 and '1 problem ignored' in text[2], text
+    after = pixels_around((230, 90, 66.5), 'amber', 30)
+    log('amber pixels at the warning before and after ignoring it:', STATE['amber_before'], after)
+    assert after in (None, 0), after
+    shot('gui_8a_problem_ignored')
+    bpy.data.objects['Pin'].location.z = 102.0           # the gap changes: 2 mm now
+    return 1.2
+
+
+def step_ignore_over():
+    mon = monitor.get(win().scene)
+    s = mon.status()
+    assert s['clearance'] == 1 and s['ignored_problems'] == 0, ('a problem that changes counts again', s)
+    log('the part was moved: the warning counts again')
+    bpy.data.objects['Pin'].location.z = 103.0
     look((180, 130, 60), (0.62, -0.62, 0.48), 760)
-    return 0.5
+    return 1.0
 
 
 def step_hide():
@@ -509,16 +662,27 @@ def step_final():
     assert s['objects'] == 6 and s['hidden'] == 0 and s['collisions'] == 1, s
     assert not mon.error, mon.error
     shot('gui_11_final')
+    # the button that is there for what comes next: it says so, and does nothing else
+    with override():
+        assert bpy.ops.bucketbuilder.export_3mf() == {'CANCELLED'}
+    return 0.8
+
+
+def step_export():
+    shot('gui_12_export_coming')
     return 0.2
 
 
-STEPS = [step_setup, step_enable, step_check_initial, step_sidebar_closed, step_closeup, step_closeup_shot,
+STEPS = [step_setup, step_enable, step_check_initial, step_badge_far_right, step_badge_back,
+         step_sidebar_closed, step_closeup, step_closeup_shot,
          step_view_idle, step_view_turn, step_view_seen, step_drag_begin, step_drag_grab]
 for i, dx in enumerate([-30, -30, -30, -30, 30, 40, 40, 40, 40, 40, 40]):
     STEPS += make_drag_step(dx, 'gui_3_mid_drag' if i == 2 else None)
 STEPS += [step_drag_confirm, step_after_drag, step_fix, step_clean_shot, step_wall, step_wall_shot,
-          step_problems_again, step_isolate, step_isolate_shot, step_isolate_next_shot,
-          step_hide, step_hidden_shot, step_hidden_isolated_shot, step_ignore_hidden, step_final]
+          step_problems_again, step_isolate, step_isolate_shot, step_ghost_shot, step_all_shot,
+          step_isolate_next, step_isolate_next_shot, step_ignore, step_ignore_shot, step_ignore_over,
+          step_hide, step_hidden_shot, step_hidden_isolated_shot, step_ignore_hidden, step_final,
+          step_export]
 
 
 def runner():

@@ -137,7 +137,9 @@ def step_setup():
     rv3d.view_rotation = Vector((0.62, -0.62, 0.48)).normalized().to_track_quat('Z', 'Y')
     rv3d.view_distance = 760
     space.clip_end = 20000.0
-    win().scene.bucket_builder.enabled = True
+    st = win().scene.bucket_builder
+    st.detect_collisions = True
+    st.monitor_volume = True
     log('scene built, monitoring on')
     return 1.5
 

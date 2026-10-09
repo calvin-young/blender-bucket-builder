@@ -5,10 +5,10 @@ Blender session: what "Install from Disk" does for someone who upgrades.
 
 Run it with BLENDER_USER_RESOURCES pointing at an empty directory: it installs
 into that profile.  The old package is not in the repository; build it from
-its commit, for example version 1.0.1:
+its commit, for example version 1.1.0:
 
-    git worktree add /tmp/bb-1.0.1 bb79c38
-    blender --command extension build --source-dir /tmp/bb-1.0.1/bucket_builder --output-dir /tmp/bb-old
+    git worktree add /tmp/bb-1.1.0 b9e2464
+    blender --command extension build --source-dir /tmp/bb-1.1.0/bucket_builder --output-dir /tmp/bb-old
 
 Blender unregisters the old code, replaces the files, reloads the modules
 and registers the new code, while the scene keeps the settings and the
@@ -55,7 +55,12 @@ def main():
     bpy.ops.mesh.primitive_uv_sphere_add(radius=20, location=(130, 100, 100))      # into the first
     bpy.ops.mesh.primitive_cube_add(size=30, location=(100, 100, 137))             # 2 mm above it
     st = bpy.context.scene.bucket_builder
-    st.enabled = True
+    old_switch = not hasattr(st, 'detect_collisions')      # versions 1.0 and 1.1: one switch for everything
+    if old_switch:
+        st.enabled = True
+    else:
+        st.detect_collisions = True
+        st.monitor_volume = True
     st.clearance_mm = 4.0
     p = m.props.prefs()
     m.props.seed_profiles(p)                  # (the add-on does this from a timer after enabling)
@@ -81,7 +86,12 @@ def main():
     st = bpy.context.scene.bucket_builder
     p = m.props.prefs()
     print(f'  new version {version} installed over it')
-    assert st.enabled and abs(st.clearance_mm - 4.0) < 1e-6, 'the scene lost its settings'
+    assert abs(st.clearance_mm - 4.0) < 1e-6, 'the scene lost its settings'
+    if old_switch:
+        assert st.enabled and not st.detect_collisions, 'the old switch should still be as it was saved'
+        m.monitor.migrate_scenes()            # (a timer does this a moment after the new version is in)
+    assert st.detect_collisions and st.monitor_volume and not st.enabled, \
+        'monitoring was on before the upgrade: both of the new switches must be on after it'
     assert abs(p.tint_strength - 0.8) < 1e-6, 'the preferences were reset'
     assert tuple(st.volume_size) == volume, 'the build volume changed'
     for cls in m.ui.CLASSES + m.ops.CLASSES:
@@ -104,8 +114,8 @@ def main():
     after = (s['objects'], s['collisions'], s['clearance'])
     assert after == before and not mon.error, (after, mon.error)
     head = m.overlay.badge_text(s)[:2]
-    assert head == ('FAIL', 'Collision Detected'), head
-    assert bpy.ops.bucketbuilder.include_all() == {'FINISHED'}       # an operator only the new version has
+    assert head == ('FAIL', '1 Collision Detected'), head
+    assert bpy.ops.bucketbuilder.count_all_problems() == {'FINISHED'}    # an operator only the new version has
     print(f'  the monitor goes on: {after[0]} parts, {after[1]} collision, {after[2]} clearance warning')
     print('UPGRADE TEST OK')
 

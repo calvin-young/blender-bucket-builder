@@ -144,7 +144,9 @@ def step_setup():
 
 def step_enable():
     S['t_enable'] = time.perf_counter()
-    win().scene.bucket_builder.enabled = True
+    st = win().scene.bucket_builder
+    st.detect_collisions = True
+    st.monitor_volume = True
     for r in area().regions:
         if r.type == 'UI':
             try:

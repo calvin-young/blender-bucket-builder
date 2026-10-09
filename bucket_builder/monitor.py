@@ -14,7 +14,18 @@ to date from three sources:
 Taking in a mesh has an expensive part, sorting its triangles into a tree
 (a quarter of a microsecond per triangle).  For large meshes that is done by
 worker threads, which only ever see NumPy arrays: Blender data is read, and
-the scene is touched, on the main thread alone.
+the scene is touched, on the main thread alone.  A large mesh is put into
+the world before it is sorted: where the part is, and so whether it is inside
+the build volume and what it is nowhere near, is known at once, and the
+meshes that results are waiting for are sorted first.
+
+Collisions and the build volume are two switches.  With only the volume
+monitored no pairs are looked for and hardly a mesh needs sorting.  With
+both off the monitor is paused, not thrown away: it keeps its meshes, notes
+what changes meanwhile, and picks up where it left off.
+
+What the world finds is not all shown: the user can ignore a problem
+(``Monitor.view``).  Everything that reports or draws goes by that view.
 
 Blender data is only ever read here; the scene is never modified.
 
@@ -61,16 +72,21 @@ WORKER_POLL = 0.03      # how often finished worker jobs are looked for when not
 RESYNC_SECONDS = 1.5    # safety net: compare the scene with the mirror this often
 LIVE_RESYNC_SECONDS = 0.25   # at most this often while something is being edited
 SYNC_TRIS = 60000       # meshes up to this size are sorted at once, larger ones by a worker
-MAX_INFLIGHT = 40000000  # triangles being sorted at a time (their arrays are in memory)
+MAX_INFLIGHT = 40000000  # triangles being sorted at a time (the sort needs memory of its own)
+SHARED_SORT = 500000    # a mesh larger than this is shared out between idle worker threads
+SIG_ROT = 1e-5          # how far two placements may differ and still be "the same problem" ...
+SIG_POS = 1e-5          # ... in rotation and scale, and in position as a fraction of the build
 SCAN_SECONDS = 2.0      # the scene is searched for unchecked things at most this often
 SCAN_INSTANCES = 20000  # instances looked at per search
 NON_MESH = {'CURVE', 'SURFACE', 'FONT', 'META'}   # objects with faces that are not read
+# the order of the list of problems: the most serious kind first
+PROBLEM_RANK = {'PARTIAL': 0, 'OUTSIDE': 1, 'COLLIDE': 2, 'CLEAR': 3, 'WALL': 4}
 BIG_SKIPS = ('too many triangles', 'not enough memory', 'error')
 
 
 class ObjState:
     __slots__ = ('uid', 'name', 'in_world', 'skipped', 'data_uid', 'shareable', 'ntri', 'sig',
-                 'pending', 'hidden')
+                 'hidden')
 
     def __init__(self, uid, name):
         self.uid = uid
@@ -82,18 +98,32 @@ class ObjState:
         self.shareable = False
         self.ntri = 0
         self.sig = None
-        self.pending = None       # key of the mesh it is waiting for (being sorted)
 
 
 class _Job:
-    """A mesh being sorted by a worker thread, and the objects waiting for it."""
-    __slots__ = ('future', 'uids', 'ntri', 'rows')
+    """A mesh being sorted by a worker thread.  ``geom`` is what the world
+    calls the mesh the job was started for: if that has gone or been replaced
+    by the time the job is done, its result is for nothing."""
+    __slots__ = ('future', 'geom', 'ntri')
 
-    def __init__(self, future, nv, ntri):
+    def __init__(self, future, geom, ntri):
         self.future = future
-        self.uids = set()
+        self.geom = geom
         self.ntri = ntri
-        self.rows = World.rows_for(nv, ntri)
+
+
+def problem_id(kind, a, b=''):
+    """What a problem is known by across changes of the list: its kind
+    ('P' two parts, 'V' the volume, 'W' a wall) and the names of its parts."""
+    return '\x1f'.join((kind, a, b))
+
+
+class View:
+    """What the world has found, as it is to be shown: without the problems
+    the user ignores, and without pair results while collisions are not
+    being checked.  ``muted`` maps what is ignored to 1, or 2 if for good:
+    pair keys, and ('V', slot) / ('W', slot)."""
+    __slots__ = ('stamp', 'viol', 'oob', 'wall', 'muted', 'counts')
 
 
 def _executor():
@@ -106,13 +136,14 @@ def _executor():
 
 
 def worker_count():
-    """How many worker threads there are, or would be."""
-    return max(1, min(4, (_os.cpu_count() or 2) - 1))
+    """How many worker threads there are, or would be: half the processor's
+    threads, the main thread and Blender's own need the rest."""
+    return max(1, min(8, (_os.cpu_count() or 2) // 2))
 
 
-def _sort_job(co, tri):
+def _order_job(verts, tris, threads):
     """What a worker thread runs: nothing but NumPy on arrays it was given."""
-    return bvh.sort_mesh(co, tri, _stop.is_set)
+    return bvh.order_mesh(verts, tris, _stop.is_set, threads)
 
 
 def _uid(idblock):
@@ -210,6 +241,15 @@ class Monitor:
         self.scene_uid = _uid(scene)
         self.scene_name = scene.name
         self.world = World()
+        # A mesh whose last part has left the check is kept while there is
+        # room (a part hidden and shown again costs nothing).  The key of a
+        # mesh is a hash of its data, so a kept mesh can never stand for
+        # other geometry; what must not go stale is ``data_geom`` below.
+        self.world.keep_unused = True
+        self.paused = False       # monitoring is switched off: nothing is worked out (see pause)
+        self.stale = set()        # uids whose geometry changed while paused
+        self.pairs_on = True      # collisions and clearance are being checked
+        self.volume_on = True     # the build volume is being checked
         self.objs = {}            # uid -> ObjState
         self.queue = {}           # uid -> None: geometry to (re)read, in order
         self.queue_total = 0
@@ -221,12 +261,21 @@ class Monitor:
         self.hot = {}             # world slot -> time of last live change
         self.mm_per_unit = 1.0
         self.unit_note = ''
-        self.data_geom = {}       # mesh data uid -> geometry key (unmodified shared meshes)
+        # mesh data uid -> geometry key, for unmodified shared meshes: a
+        # shortcut that saves reading a mesh again.  It is dropped whenever
+        # the mesh may have changed, also when no part that is checked uses it.
+        self.data_geom = {}
         self.jobs = {}            # geometry key -> _Job (meshes being sorted)
+        self.unsorted = {}        # geometry key -> triangles: in the world, not sorted yet
         self.mem_limit = -1       # the cache limit last given to the world
         self.unchecked = {}       # what the scene holds that is not checked: kind -> count
         self.ignore_hidden = False    # the scene's setting, as last applied
         self.disabled = 0         # mesh objects disabled in viewports (they are not checked)
+        self.ignored_parts = 0    # mesh objects left out with the Ignore switch
+        self.hidden_skipped = 0   # hidden mesh objects left out by Ignore Hidden Parts
+        self.ignore = {}          # problems the user ignores (see _read_ignored)
+        self.ignore_serial = 0
+        self._view = None
         self.printer = ''         # what the badge says about the printer
         self._hidden_slots = None     # world slots of the hidden parts (None: work it out)
         self._redraw = False          # the overlay is out of date although no result changed
@@ -253,6 +302,7 @@ class Monitor:
         self.t_start = time.perf_counter()
         self.ready_s = None       # seconds from the start to the first complete verdict
         self._problems = (None, [])
+        self._active = (None, '', -1)
         self._auto_mm = None
 
     # ------------------------------------------------------------ parameters
@@ -296,7 +346,7 @@ class Monitor:
     def margin_box(self, st):
         """The volume shrunk by the wall clearance in X and Y (scene units), or
         None while that check is off."""
-        if not (st.use_volume and st.use_wall_clearance) or st.wall_clearance_mm <= 0.0:
+        if not (props.volume_checked(st) and st.use_wall_clearance) or st.wall_clearance_mm <= 0.0:
             return None
         lo, hi = self.volume_box(st)
         m = np.array([st.wall_clearance_mm, st.wall_clearance_mm, 0.0]) / self.mm_per_unit
@@ -314,13 +364,14 @@ class Monitor:
     def apply_params(self, scene, st):
         self.params_dirty = False
         self.mm_per_unit, self.unit_note = self._resolve_units(scene, st)
-        if st.show_volume or st.use_volume:
+        if st.monitor_volume and (st.show_volume or st.use_volume):
             name = props.current_printer_name(st)
             if name == "Custom":
                 name = "Custom volume, " + " x ".join(f"{v:g}" for v in st.volume_size) + " mm"
             self.printer = name
         else:
             self.printer = ''
+        self._read_ignored(st)
         k = 1.0 / self.mm_per_unit
         w = self.world
         lo, hi = self.volume_box(st)
@@ -333,7 +384,15 @@ class Monitor:
         # the engine could also call a gap below some distance a collision)
         w.set_thresholds(0.0, st.clearance_mm * k if st.use_clearance else 0.0)
         w.set_detect_enclosed(st.detect_enclosed)
-        if st.use_volume:
+        pairs = bool(st.detect_collisions)
+        if pairs != self.pairs_on:
+            self.pairs_on = pairs
+            w.set_pair_check(pairs)
+            if not pairs:
+                w.flush_poses()               # what is fitted for pairs: memory nobody needs now
+            self._redraw = True
+        self.volume_on = props.volume_checked(st)
+        if self.volume_on:
             w.set_volume(lo, hi, st.wall_clearance_mm * k if st.use_wall_clearance else 0.0)
         else:
             w.set_volume(None, None)
@@ -342,14 +401,187 @@ class Monitor:
             self.mem_limit = limit
             w.set_cache_limit(limit)
 
+    # ------------------------------------------------------ ignored problems
+    def _read_ignored(self, st):
+        """Take over the scene's list of ignored problems as a table:
+        ('P', uid a, uid b) or ('V' / 'W', uid) -> (lock, signature, geometry,
+        extra).  Entries about objects that are gone match nothing."""
+        table = {}
+        for item in st.ignored_problems:
+            a = item.a
+            if a is None:
+                continue
+            entry = (bool(item.lock), tuple(item.sig), item.geo, tuple(item.aux))
+            if item.kind == 'PAIR':
+                if item.b is not None:
+                    table[('P', _uid(a), _uid(item.b))] = entry
+            elif item.kind in {'VOLUME', 'WALL'}:
+                table[(item.kind[0], _uid(a))] = entry
+        if table != self.ignore:
+            self.ignore = table
+            self.ignore_serial += 1
+            self._redraw = True
+
+    def _short(self, slot):
+        """A few characters that stand for the mesh of a part."""
+        key = self.world.part_mesh(slot)[0]
+        return key[:6].hex() if isinstance(key, (bytes, bytearray)) else str(key)[:12]
+
+    def signature(self, kind, a, b=None):
+        """What makes a problem this problem and not another one: (twelve
+        numbers, a word for the geometry, eight numbers).  For two parts it
+        is where the second one is as seen from the first, which stays the
+        same when both are moved together; for a part and the build volume,
+        where the part is and what the volume is."""
+        w = self.world
+        Ma = w.part_matrix(a)
+        aux = [0.0] * 8
+        if kind == 'P':
+            M = np.linalg.solve(Ma, w.part_matrix(b))
+            geo = self._short(a) + self._short(b)
+        else:
+            M = Ma
+            geo = self._short(a)
+            if w.volume is not None:
+                aux[:3] = [float(v) for v in w.volume[0]]
+                aux[3:6] = [float(v) for v in w.volume[1]]
+                aux[6] = float(w.wall_margin) if kind == 'W' else 0.0
+        return [float(v) for v in M[:3, :].ravel()], geo, aux
+
+    def _same(self, entry, sig, geo, aux):
+        """Whether an ignored problem is still the one that was ignored."""
+        if entry[2] != geo:
+            return False
+        size = self.world.scene_size
+        was = entry[1]
+        for i in range(12):
+            tol = SIG_POS * size if i % 4 == 3 else SIG_ROT
+            if abs(was[i] - sig[i]) > tol:
+                return False
+        return all(abs(x - y) <= SIG_POS * size for x, y in zip(entry[3], aux))
+
+    def ignored(self, kind, a, b=None):
+        """0 if the problem counts, 1 if the user ignores it, 2 if for good
+        (a lock).  ``a`` and ``b`` are world slots."""
+        table = self.ignore
+        if not table:
+            return 0
+        w = self.world
+        ua = w.uid(a)
+        if kind == 'P':
+            ub = w.uid(b)
+            entry = table.get(('P', ua, ub))
+            if entry is None:
+                entry = table.get(('P', ub, ua))
+                a, b = b, a
+        else:
+            entry = table.get((kind, ua))
+        if entry is None:
+            return 0
+        if entry[0]:
+            return 2
+        try:
+            return 1 if self._same(entry, *self.signature(kind, a, b)) else 0
+        except Exception:                 # (a part that cannot be turned back: scale 0)
+            return 0
+
+    def view(self):
+        """The results as they are to be shown (see ``View``), worked out
+        when the results or the list of ignored problems change."""
+        w = self.world
+        stamp = (w.version, self.ignore_serial, self.pairs_on)
+        v = self._view
+        if v is not None and v.stamp == stamp:
+            return v
+        v = View()
+        v.stamp = stamp
+        v.muted = {}
+        if not self.pairs_on:
+            v.viol = {}
+        elif not self.ignore:
+            v.viol = w.viol
+        else:
+            v.viol = {}
+            for key, pr in w.viol.items():
+                level = self.ignored('P', key[0], key[1])
+                if level:
+                    v.muted[key] = level
+                else:
+                    v.viol[key] = pr
+        v.oob, v.wall = w.oob, w.wall
+        if self.ignore:
+            v.oob, v.wall = {}, {}
+            for kind, src, dst in (('V', w.oob, v.oob), ('W', w.wall, v.wall)):
+                for slot, r in src.items():
+                    level = self.ignored(kind, slot)
+                    if level:
+                        v.muted[(kind, slot)] = level
+                    else:
+                        dst[slot] = r
+        nc = sum(1 for pr in v.viol.values() if pr.state == COLLIDE)
+        npart = sum(1 for r in v.oob.values() if r.state == PARTIAL)
+        v.counts = (nc, len(v.viol) - nc, npart, len(v.oob) - npart, len(v.wall))
+        self._view = v
+        return v
+
+    # ---------------------------------------------------------------- pause
+    def pause(self):
+        """Monitoring was switched off.  From here on nothing is worked out,
+        but the meshes and the results stay for when it is switched on again.
+        The fitted trees go: they are most of the memory, and quick to make
+        again for the pairs that then need them."""
+        if self.paused:
+            return
+        self.paused = True
+        self.hot.clear()
+        self.world.flush_poses()
+
+    def resume(self):
+        """Switched on again: find out what has changed meanwhile."""
+        self.paused = False
+        self.need_resync = True
+        self.check_sigs = True
+        self.need_scan = True
+        self.params_dirty = True
+        for uid in self.stale:
+            if uid in self.objs:
+                self._enqueue(uid)
+        self.stale.clear()
+        self.t_start = time.perf_counter()
+        self.ready_s = None
+        self._count_waiting()
+
+    def note_paused(self, obj_eval):
+        """The geometry of an object changed while the monitor is paused."""
+        try:
+            obj = obj_eval.original
+        except AttributeError:
+            obj = obj_eval
+        if obj.type != 'MESH':
+            return
+        uid = _uid(obj)
+        if uid in self.objs:
+            self.stale.add(uid)
+        if obj.data is not None:
+            self.data_geom.pop(_uid(obj.data), None)
+
     # ----------------------------------------------------------------- sync
     def _remove(self, uid):
         os = self.objs.pop(uid, None)
         self.queue.pop(uid, None)
         self._hidden_slots = None
-        if os is not None and os.in_world:
+        if os is None:
+            return
+        if os.in_world:
             self.hot.pop(self.world.slot(uid), None)
             self.world.remove_object(uid)
+        # Once no part that is checked uses a mesh, nobody tells us when it
+        # changes: what we know about it is forgotten.  (The mesh itself may
+        # be kept in the world.  If the part comes back unchanged, reading
+        # and hashing it finds the kept mesh again, and nothing is sorted.)
+        data = os.data_uid
+        if data in self.data_geom and not any(o.data_uid == data for o in self.objs.values()):
+            del self.data_geom[data]
 
     def _enqueue(self, uid):
         """Have an object's geometry read (again)."""
@@ -357,8 +589,13 @@ class Monitor:
         self._queue_stalled = False
 
     def _waiting(self):
-        """Objects whose geometry is not in the world yet."""
-        return len(self.queue) + sum(len(j.uids) for j in self.jobs.values())
+        """Parts that are not ready: their geometry is still to be read, or
+        its tree is still to be made and something is waiting for it."""
+        n = len(self.queue)
+        if self.unsorted:
+            w = self.world
+            n += sum(w.geom_users(key) for key in w.wanted())
+        return n
 
     def _count_waiting(self):
         n = self._waiting()
@@ -373,9 +610,12 @@ class Monitor:
         seen = set()
         w = self.world
         ignore_hidden = self.ignore_hidden
-        disabled = 0
+        disabled = ignored = skipped = 0
         for obj in view_layer.objects:
-            if obj is None or obj.type != 'MESH' or obj.bucket_builder_ignore:
+            if obj is None or obj.type != 'MESH':
+                continue
+            if obj.bucket_builder_ignore:
+                ignored += 1
                 continue
             hidden = not _visible(obj, view_layer)
             if hidden:
@@ -386,6 +626,7 @@ class Monitor:
                     disabled += 1
                     continue
                 if ignore_hidden:
+                    skipped += 1
                     continue
             uid = _uid(obj)
             seen.add(uid)
@@ -417,7 +658,9 @@ class Monitor:
                 self.cold_serial += 1
         for uid in [u for u in self.objs if u not in seen]:
             self._remove(uid)
-        self.disabled = disabled
+        if (disabled, ignored, skipped) != (self.disabled, self.ignored_parts, self.hidden_skipped):
+            self.disabled, self.ignored_parts, self.hidden_skipped = disabled, ignored, skipped
+            self._redraw = True               # the badge says how many are left out
         self._count_waiting()
 
     def hidden_slots(self):
@@ -434,14 +677,15 @@ class Monitor:
         order x low, y low, [z low,] x high, y high[, z high].  ``only``: the
         slots to go by (a viewport in local view), all parts otherwise."""
         w = self.world
-        key = (w.version, None if only is None else hash(frozenset(only)))
+        key = (w.version, self.ignore_serial, None if only is None else hash(frozenset(only)))
         if self._walls[0] != key:
             out = [False] * 6
             near = [False] * 4
             if w.volume is not None:
                 vlo, vhi = w.volume
                 e = w.eps_len
-                for slot, r in w.oob.items():
+                view = self.view()
+                for slot, r in view.oob.items():
                     if only is not None and slot not in only:
                         continue
                     for c in range(3):
@@ -450,7 +694,7 @@ class Monitor:
                         if r.hi[c] > vhi[c] + e:
                             out[3 + c] = True
                 m = w.wall_margin - e
-                for slot, r in w.wall.items():
+                for slot, r in view.wall.items():
                     if only is not None and slot not in only:
                         continue
                     for c in range(2):
@@ -472,6 +716,10 @@ class Monitor:
         if os is None:
             if obj.type == 'MESH':
                 self.need_resync = True
+                if geometry and obj.data is not None:
+                    # not a part right now (ignored, hidden), but its mesh may
+                    # be one we have read for another object, or kept
+                    self.data_geom.pop(_uid(obj.data), None)
             self.need_scan = True
             return
         if geometry:
@@ -496,18 +744,18 @@ class Monitor:
         return ''
 
     def _load_geometry(self, obj, depsgraph, max_tris, now):
-        """Read one object's evaluated mesh and put it in the world, or hand
-        it to a worker thread to be sorted first."""
+        """Read one object's evaluated mesh and put it in the world.  A small
+        mesh is sorted on the spot; a large one goes in as it is and is
+        sorted by a worker thread when its turn comes (``_schedule``)."""
         uid = _uid(obj)
         os = self.objs[uid]
         w = self.world
         me = obj.data
         os.data_uid = _uid(me)
         os.shareable = (len(obj.modifiers) == 0 and me.shape_keys is None)
-        os.pending = None
         ob_eval = obj.evaluated_get(depsgraph)
         key = self.data_geom.get(os.data_uid) if os.shareable else None
-        if key is not None and not w.has_geom(key) and key not in self.jobs:
+        if key is not None and not w.has_geom(key):
             key = None
         os.skipped = ''
         if key is None:
@@ -525,12 +773,12 @@ class Monitor:
                     os.ntri = int(tri.shape[0])
                     if os.shareable:
                         self.data_geom[os.data_uid] = key
-                    if not w.has_geom(key) and key not in self.jobs:
+                    if not w.has_geom(key):
                         if tri.shape[0] <= SYNC_TRIS:
                             w.add_geom(key, co, tri)
                         else:
-                            self.jobs[key] = _Job(_executor().submit(_sort_job, co, tri),
-                                                  int(co.shape[0]), int(tri.shape[0]))
+                            w.add_raw(key, *bvh.clean_mesh(co, tri))
+                            self.unsorted[key] = int(tri.shape[0])
         if key is None:
             if os.in_world:
                 self.hot.pop(w.slot(uid), None)
@@ -538,18 +786,10 @@ class Monitor:
                 os.in_world = False
                 self._hidden_slots = None
             return
-        job = self.jobs.get(key)
-        if job is not None:
-            # put in when the worker is done (see _collect_jobs)
-            job.uids.add(uid)
-            os.pending = key
-            self._expect()
-            return
         self._install(obj, os, key, ob_eval, now)
-        w.drop_unused_geoms()
 
     def _install(self, obj, os, key, ob_eval, now):
-        """Give an object its (sorted) geometry in the world."""
+        """Give an object its geometry in the world."""
         w = self.world
         os.sig = _signature(obj)
         if os.in_world:
@@ -562,56 +802,72 @@ class Monitor:
             os.in_world = True
             self._hidden_slots = None
 
-    def _expect(self):
-        """Tell the world what the workers are going to deliver, so that it
-        sizes its storage once."""
-        t = v = p = 0
-        for job in self.jobs.values():
-            t += job.rows[0]
-            v += job.rows[1]
-            p += job.rows[2] * max(1, len(job.uids))
-        self.world.incoming = (t, v, p)
+    def _schedule(self):
+        """Hand unsorted meshes to the worker threads: those that results are
+        waiting for first, the more the sooner.  While collisions are checked
+        the others follow, the small ones first (sooner or later every part
+        meets a neighbour, and that should not be the moment its tree has to
+        be made).  With only the build volume monitored nothing else is
+        sorted: a part's place is known without its tree."""
+        w = self.world
+        workers = worker_count()
+        if len(self.jobs) >= workers:
+            return
+        for key in [k for k in self.unsorted if not w.has_geom(k) or w.geom_ready(k)]:
+            del self.unsorted[key]
+        todo = [k for k in self.unsorted if k not in self.jobs]
+        if not todo:
+            return
+        wanted = w.wanted()
+        if not self.pairs_on:
+            todo = [k for k in todo if k in wanted]
+        todo.sort(key=lambda k: (-wanted.get(k, 0), self.unsorted[k]))
+        inflight = sum(j.ntri for j in self.jobs.values())
+        for i, key in enumerate(todo):
+            if len(self.jobs) >= workers:
+                break
+            nt = self.unsorted[key]
+            if self.jobs and inflight + nt > MAX_INFLIGHT:
+                break
+            # a large mesh gets the threads that would otherwise have nothing to do
+            idle = workers - len(self.jobs) - (len(todo) - i - 1)
+            threads = max(1, idle) if nt > SHARED_SORT else 1
+            verts, tris = w.geom_views(key)
+            self.jobs[key] = _Job(_executor().submit(_order_job, verts, tris, threads),
+                                  w.geom_token(key), nt)
+            inflight += nt
 
-    def _collect_jobs(self, view_layer, depsgraph, now):
-        """Take over the meshes the worker threads have finished sorting."""
+    def _collect_jobs(self):
+        """Take over the meshes the worker threads have finished sorting.
+        Returns how many jobs were done."""
         done = [(key, job) for key, job in self.jobs.items() if job.future.done()]
         if not done:
             return 0
-        self._expect()                    # (still counting the ones that just finished)
-        by_uid = None
+        w = self.world
         for key, job in done:
             del self.jobs[key]
-            waiting = [u for u in job.uids if u in self.objs and self.objs[u].pending == key]
+            same = w.geom_token(key) is job.geom      # still the mesh the job was for
             try:
-                verts, tris = job.future.result()
+                tris = job.future.result()
             except Exception as ex:
-                for uid in waiting:
-                    self.objs[uid].pending = None
-                    self.objs[uid].skipped = 'error'
-                self.error = f'sorting a mesh failed: {ex}'
-                continue
-            if not waiting:
-                continue                  # nobody wants it any more
-            self.world.add_sorted(key, verts, tris)
-            if by_uid is None:
-                by_uid = {_uid(o): o for o in view_layer.objects
-                          if o is not None and o.type == 'MESH'}
-            for uid in waiting:
-                os = self.objs[uid]
-                os.pending = None
-                obj = by_uid.get(uid)
-                if obj is None:
-                    self.need_resync = True       # object left the view layer
+                if not same or isinstance(ex, bvh.Cancelled):
                     continue
-                try:
-                    self._install(obj, os, key, obj.evaluated_get(depsgraph), now)
-                except Exception as ex:
-                    os.skipped = 'error'
-                    self.error = f'{os.name}: {ex}'
-        self.world.drop_unused_geoms()
-        self._queue_stalled = False       # the workers can take more
+                # a mesh that cannot be sorted cannot be checked: say so
+                self.unsorted.pop(key, None)
+                self.error = f'sorting a mesh failed: {ex}'
+                for uid in w.geom_uids(key):
+                    os = self.objs.get(uid)
+                    self.hot.pop(w.slot(uid), None)
+                    w.remove_object(uid)
+                    if os is not None:
+                        os.in_world = False
+                        os.skipped = 'error'
+                self._hidden_slots = None
+                continue
+            if same and not w.geom_ready(key):
+                w.set_sorted(key, tris)
+                self.unsorted.pop(key, None)
         self._count_waiting()
-        self._expect()
         return len(done)
 
     def wait_jobs(self, timeout=None):
@@ -634,8 +890,6 @@ class Monitor:
                 continue
             if obj.data is None or obj.data.is_editmode:
                 continue            # wait until edit mode is left
-            if self.jobs and sum(j.ntri for j in self.jobs.values()) > MAX_INFLIGHT:
-                break               # the workers have enough for now
             del self.queue[uid]
             try:
                 self._load_geometry(obj, depsgraph, max_tris, now)
@@ -646,7 +900,7 @@ class Monitor:
             if time.perf_counter() > deadline:
                 break
         self._count_waiting()
-        # (what is left may be waiting for Edit Mode to be left, or for the workers)
+        # (what is left is waiting for Edit Mode to be left)
         self._queue_stalled = done == 0
         return done
 
@@ -794,12 +1048,14 @@ class Monitor:
             self._redraw = False              # something changed that only the overlay shows
             changed = True
         had = len(self.world._slot_of)
-        if self.jobs and self._collect_jobs(view_layer, depsgraph, now):
+        if self.jobs and self._collect_jobs():
             changed = True
         if self.queue and not (live and now - self.last_hot < HOT_SECONDS and self._only_new()):
             self.process_queue(view_layer, depsgraph, t0 + budget, max_tris, now)
         if had == 0 and self.world._slot_of:
             self.apply_params(scene, st)        # units may now be detectable
+        if self.unsorted:
+            self._schedule()
         idle = (not live) and (time.perf_counter() - self.last_hot) > IDLE_SECONDS
         # (what a live edit left unsolved gets the long slice too, once the user has let go)
         self.world.step(budget=budget, hot_budget=budget if relaxed else max(0.016, base), idle=idle)
@@ -809,7 +1065,7 @@ class Monitor:
         self.last_tick_ms = (time.perf_counter() - t0) * 1000.0
         if had_work and not live:
             self.bg_ms.append(self.last_tick_ms)
-        if (self.ready_s is None and self.world.object_count and not self.queue and not self.jobs
+        if (self.ready_s is None and self.world.object_count and not self.queue
                 and not self.world.unsettled):
             self.ready_s = time.perf_counter() - self.t_start
         cutoff = now - HOT_SECONDS
@@ -850,7 +1106,13 @@ class Monitor:
     @property
     def busy(self):
         return (bool(self.queue) or bool(self.jobs) or self.need_resync or self.params_dirty
-                or self.world.busy)
+                or self.world.busy or self._to_sort())
+
+    def _to_sort(self):
+        """True while a mesh is waiting for a worker thread to take it."""
+        if not self.unsorted:
+            return False
+        return self.pairs_on or self.world.waiting
 
     @property
     def has_work(self):
@@ -866,9 +1128,11 @@ class Monitor:
         return os.name if os else '?'
 
     def status(self):
-        """Summary for the panel and the viewport badge."""
+        """Summary for the panel and the viewport badge.  The counts are of
+        the problems that count: not of those the user ignores."""
         w = self.world
-        nc, ncl, npart, nout, nwall = w.counts()
+        view = self.view()
+        nc, ncl, npart, nout, nwall = view.counts
         skipped = sum(1 for o in self.objs.values() if o.skipped in BIG_SKIPS)
         waiting = self._waiting()
         hidden = self.hidden_slots()
@@ -876,9 +1140,9 @@ class Monitor:
             'objects': w.object_count,
             'hidden': len(hidden),
             # problems that involve a part the user cannot see
-            'hidden_problems': (sum(1 for a, b in w.viol if a in hidden or b in hidden)
-                                + sum(1 for s in w.oob if s in hidden)
-                                + sum(1 for s in w.wall if s in hidden)) if hidden else 0,
+            'hidden_problems': (sum(1 for a, b in view.viol if a in hidden or b in hidden)
+                                + sum(1 for s in view.oob if s in hidden)
+                                + sum(1 for s in view.wall if s in hidden)) if hidden else 0,
             'printer': self.printer,
             'collisions': nc,
             'clearance': ncl,
@@ -886,34 +1150,45 @@ class Monitor:
             'outside': nout,
             'near_wall': nwall,
             'skipped': skipped,
+            'pairs': self.pairs_on,
             'volume': w.volume is not None,
+            # what is left out on purpose: nobody should finish a build
+            # without having been reminded of it
+            'ignored_problems': len(view.muted),
+            'ignored_parts': self.ignored_parts,
+            'hidden_skipped': self.hidden_skipped,
             # the verdict is final once every part is read and every pair has a
             # result; exact-distance refinement and the periodic resync that
             # may still be queued do not make it provisional
-            'busy': bool(self.queue) or bool(self.jobs) or self.params_dirty or w.unsettled,
+            'busy': bool(self.queue) or self.params_dirty or w.unsettled,
             'preparing': (max(self.queue_total - waiting, 0), self.queue_total) if waiting else None,
             'unchecked': self.unchecked,
-            'pending': len(w._pend_hot) + len(w._pend_cold) + len(w._pend_scan),
-            'refining': len(w._pend_refine),
-            'clearance_on': w.clear_thr > 0.0,
+            'pending': (len(w._pend_hot) + len(w._pend_cold) + len(w._pend_scan)) if self.pairs_on else 0,
+            'refining': len(w._pend_refine) if self.pairs_on else 0,
+            'clearance_on': self.pairs_on and w.clear_thr > 0.0,
         }
 
     def problems(self):
-        """Sorted list of problems (worst first) for the panel and navigation."""
-        ver = (self.world.version, self.move_serial)
+        """The problems for the panel and for navigation, the most serious
+        first: out of the build volume, collisions, clearance, wall gap.
+        Problems the user ignores are in the list too (``ignored`` is 1, or 2
+        if for good): they stay where they are and are shown greyed."""
+        ver = (self.world.version, self.move_serial, self.ignore_serial, self.pairs_on)
         if self._problems[0] == ver:
             return self._problems[1]
         w = self.world
         k = self.mm_per_unit
         out = []
         hidden = self.hidden_slots()
+        muted = self.view().muted
 
         def name(slot):
             return self.name_of(slot) + (" (hidden)" if slot in hidden else "")
 
-        for (a, b), pr in w.viol.items():
+        for key, pr in (w.viol.items() if self.pairs_on else ()):
             if pr.center is None:
                 continue
+            a, b = key
             out.append({
                 'kind': 'COLLIDE' if pr.state == COLLIDE else 'CLEAR',
                 'a': name(a), 'b': name(b),
@@ -923,6 +1198,9 @@ class Monitor:
                 'approx': pr.approx or pr.refine,
                 'inside': pr.enclosed,
                 'key': ('P', w.uid(a), w.uid(b)),
+                'names': (self.name_of(a), self.name_of(b)),
+                'slots': key,
+                'ignored': muted.get(key, 0),
             })
         for slot, r in w.oob.items():
             c = 0.5 * (r.lo + r.hi)
@@ -935,6 +1213,9 @@ class Monitor:
                 'approx': False,
                 'inside': 0,
                 'key': ('V', w.uid(slot)),
+                'names': (self.name_of(slot), ''),
+                'slots': (slot,),
+                'ignored': muted.get(('V', slot), 0),
             })
         for slot, r in w.wall.items():
             out.append({
@@ -946,11 +1227,34 @@ class Monitor:
                 'approx': False,
                 'inside': 0,
                 'key': ('W', w.uid(slot)),
+                'names': (self.name_of(slot), ''),
+                'slots': (slot,),
+                'ignored': muted.get(('W', slot), 0),
             })
-        rank = {'COLLIDE': 0, 'PARTIAL': 1, 'OUTSIDE': 2, 'CLEAR': 3, 'WALL': 4}
-        out.sort(key=lambda d: (rank[d['kind']], d['dist_mm'], d['a'], d['b']))
+        out.sort(key=lambda d: (PROBLEM_RANK[d['kind']], d['dist_mm'], d['a'], d['b']))
+        for d in out:
+            d['id'] = problem_id(d['key'][0], *d['names'])
         self._problems = (ver, out)
         return out
+
+    def active_index(self, st):
+        """Where the problem the user last went to is in the list now, or -1
+        if it is gone.  (The list changes under the user's hands: what was
+        the second problem a moment ago may be the first now, or solved.)"""
+        problems = self.problems()
+        key = st.problem_key
+        hit = self._active
+        if hit[0] is problems and hit[1] == key:
+            return hit[2]
+        index = -1
+        if key:
+            guess = st.problem_index
+            if 0 <= guess < len(problems) and problems[guess]['id'] == key:
+                index = guess
+            else:
+                index = next((i for i, d in enumerate(problems) if d['id'] == key), -1)
+        self._active = (problems, key, index)
+        return index
 
 
 # ---------------------------------------------------------------------------
@@ -958,13 +1262,21 @@ class Monitor:
 # ---------------------------------------------------------------------------
 
 def get(scene, create=False):
+    """The monitor that is at work for a scene, or None.  With ``create`` one
+    is made, or a paused one is woken up."""
     if scene is None:
         return None
     uid = _uid(scene)
     mon = _monitors.get(uid)
-    if mon is None and create:
+    if mon is None:
+        if not create:
+            return None
         mon = Monitor(scene)
         _monitors[uid] = mon
+    elif mon.paused:
+        if not create:
+            return None
+        mon.resume()
     return mon
 
 
@@ -1009,14 +1321,19 @@ def redraw_gap():
 
 
 def on_enabled_changed(scene):
+    """One of the two main switches was flipped."""
     if scene is None:
         return
     st = props.settings(scene)
-    if st.enabled:
-        get(scene, create=True)
+    if props.active(st):
+        mon = get(scene, create=True)
+        mon.params_dirty = True
+        mon.need_scan = True
         _ensure_timer()
     else:
-        _monitors.pop(_uid(scene), None)
+        mon = _monitors.get(_uid(scene))
+        if mon is not None:
+            mon.pause()
     tag_redraw_all()
 
 
@@ -1044,7 +1361,7 @@ def force_recheck(scene):
     if scene is None:
         return
     _monitors.pop(_uid(scene), None)
-    if props.settings(scene).enabled:
+    if props.active(props.settings(scene)):
         get(scene, create=True)
         _ensure_timer()
     tag_redraw_all()
@@ -1063,13 +1380,26 @@ def _window_for(scene):
 @persistent
 def _on_depsgraph_update(scene, depsgraph):
     st = props.settings(scene)
-    if st is None or not st.enabled:
+    if st is None:
         return
     try:
         if depsgraph.mode != 'VIEWPORT':
             return
     except AttributeError:
         pass
+    if not props.active(st):
+        # Switched off.  A monitor that is paused only notes whose geometry
+        # changes, so that it knows what to read again.
+        mon = _monitors.get(_uid(scene))
+        if mon is not None:
+            mon.pause()
+            try:
+                for upd in depsgraph.updates:
+                    if upd.is_updated_geometry and isinstance(upd.id, bpy.types.Object):
+                        mon.note_paused(upd.id)
+            except Exception:
+                pass
+        return
     mon = get(scene, create=True)
     now = time.perf_counter()
     try:
@@ -1104,6 +1434,7 @@ def _on_undo_redo(scene, *_args):
         mon.need_resync = True
         mon.need_scan = True
         mon.check_sigs = True
+        mon.params_dirty = True           # (the list of ignored problems is undone too)
         mon.data_geom.clear()
     _ensure_timer()
 
@@ -1117,8 +1448,32 @@ def _on_frame_change(scene, *_args):
 
 
 @persistent
+def _on_save_pre(*_args):
+    """An ignored problem points at its parts, and what is pointed at is kept
+    in the file: entries about parts that are gone are dropped before saving,
+    so that deleted parts do not live on in it."""
+    from . import ops
+    try:
+        for scene in bpy.data.scenes:
+            ops.prune_ignored(scene)
+    except Exception:
+        pass
+
+
+def migrate_scenes():
+    """Scenes saved by an earlier version get the settings of this one."""
+    try:
+        for scene in bpy.data.scenes:
+            if props.migrate_scene(scene):
+                on_enabled_changed(scene)
+    except Exception:           # (data that cannot be written right now: the timer tries again)
+        pass
+
+
+@persistent
 def _on_load_post(*_args):
     _monitors.clear()
+    migrate_scenes()
     _ensure_timer()
 
 
@@ -1210,8 +1565,12 @@ def _timer():
         rendering = _rendering()
         for scene in bpy.data.scenes:
             st = props.settings(scene)
-            if st is None or not st.enabled:
-                _monitors.pop(_uid(scene), None)
+            if st is not None and st.enabled:
+                props.migrate_scene(scene)        # a scene from version 1.0 or 1.1
+            if not props.active(st):
+                mon = _monitors.get(_uid(scene))
+                if mon is not None:
+                    mon.pause()
                 continue
             any_enabled = True
             win = None if rendering else _window_for(scene)
@@ -1265,6 +1624,7 @@ _HANDLERS = (
     ('redo_post', _on_undo_redo),
     ('frame_change_post', _on_frame_change),
     ('load_post', _on_load_post),
+    ('save_pre', _on_save_pre),
 )
 
 

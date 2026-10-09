@@ -123,6 +123,7 @@ def _goto(context, index, select):
     index %= len(problems)
     pr = problems[index]
     st.problem_index = index
+    st.problem_key = pr['id']
     targets = _parts_of(context, pr)
     if st.isolate:
         local_view(context, targets)
@@ -131,6 +132,16 @@ def _goto(context, index, select):
     min_r = 4.0 / mon.mm_per_unit
     frame(context, pr['center'], max(pr['radius'], min_r))
     return pr
+
+
+def _find_problem(mon, kind, a, b):
+    """(index, problem) of the problem of that kind between the parts with
+    those names, or (-1, None).  The buttons of a row name their problem
+    this way: the list may have changed since the row was drawn."""
+    for i, pr in enumerate(mon.problems()):
+        if pr['key'][0] == kind and pr['names'] == (a, b):
+            return i, pr
+    return -1, None
 
 
 def describe(pr):
@@ -179,9 +190,22 @@ class BUCKETBUILDER_OT_step_problem(Operator):
 
     def execute(self, context):
         st = props.settings(context.scene)
-        index = st.problem_index + self.direction
+        mon = monitor.get(context.scene)
+        problems = mon.problems() if mon is not None else []
+        # from the problem the user is at; if that one is gone (solved, most
+        # likely), from where it was in the list
+        at = mon.active_index(st) if mon is not None else -1
+        if at < 0:
+            at = st.problem_index - (1 if self.direction > 0 and st.problem_index >= 0 else 0)
+        index = at + self.direction
         if st.problem_index < 0 and self.direction < 0:
             index = -1
+        # problems that are ignored are passed over (unless there are no others)
+        n = len(problems)
+        if n and any(not pr['ignored'] for pr in problems):
+            index %= n
+            while problems[index]['ignored']:
+                index = (index + self.direction) % n
         pr = _goto(context, index, self.select)
         if pr is None:
             self.report({'INFO'}, "No problems")
@@ -208,13 +232,182 @@ class BUCKETBUILDER_OT_isolate(Operator):
             monitor.tag_redraw_all()
             return {'FINISHED'}
         st.isolate = True
-        problems = mon.problems() if mon is not None else []
-        if problems and 0 <= st.problem_index < len(problems):
-            _goto(context, st.problem_index, True)
+        at = mon.active_index(st) if mon is not None else -1
+        if at >= 0:
+            _goto(context, at, True)
         else:
             self.report({'INFO'}, "Pick a problem to see its parts on their own")
         monitor.tag_redraw_all()
         return {'FINISHED'}
+
+
+class _RowOperator:
+    """What the buttons in a row of the list of problems have in common: they
+    name their problem by its kind and the names of its parts."""
+    kind: StringProperty(options={'HIDDEN'})
+    a: StringProperty(options={'HIDDEN'})
+    b: StringProperty(options={'HIDDEN'})
+
+    def find(self, context):
+        mon = monitor.get(context.scene)
+        if mon is None:
+            return None, -1, None
+        index, pr = _find_problem(mon, self.kind, self.a, self.b)
+        if pr is None:
+            self.report({'INFO'}, "That problem is gone")
+        return mon, index, pr
+
+
+class BUCKETBUILDER_OT_isolate_problem(_RowOperator, Operator):
+    """Show the parts of this problem on their own (local view), or everything again"""
+    bl_idname = "bucketbuilder.isolate_problem"
+    bl_label = "Isolate Problem"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        st = props.settings(context.scene)
+        if context.mode != 'OBJECT':
+            self.report({'WARNING'}, "Isolating parts needs Object Mode")
+            return {'CANCELLED'}
+        mon, index, pr = self.find(context)
+        if pr is None:
+            return {'CANCELLED'}
+        if st.isolate and mon.active_index(st) == index:
+            st.isolate = False
+            local_view(context, [])
+        else:
+            st.isolate = True
+            _goto(context, index, True)
+        monitor.tag_redraw_all()
+        return {'FINISHED'}
+
+
+def prune_ignored(scene):
+    """Forget ignored problems whose parts are no longer in the scene.  (An
+    entry points at its parts, and what is pointed at is kept in the file.)"""
+    st = props.settings(scene)
+    if st is None:
+        return 0
+    here = set(scene.objects)
+    gone = [i for i, item in enumerate(st.ignored_problems)
+            if item.a is None or item.a not in here
+            or (item.kind == 'PAIR' and (item.b is None or item.b not in here))]
+    for i in reversed(gone):
+        st.ignored_problems.remove(i)
+    return len(gone)
+
+
+def _ignore_entry(st, kind, objs):
+    """Index of the entry for a problem in the scene's list, or -1."""
+    for i, item in enumerate(st.ignored_problems):
+        if item.kind != kind:
+            continue
+        if kind == 'PAIR':
+            if {item.a, item.b} == set(objs):
+                return i
+        elif item.a == objs[0]:
+            return i
+    return -1
+
+
+_KIND_NAME = {'P': 'PAIR', 'V': 'VOLUME', 'W': 'WALL'}
+
+
+class BUCKETBUILDER_OT_ignore_problem(_RowOperator, Operator):
+    """Ignore this problem: it stays in the list, greyed, and no longer counts. It counts again as soon as it changes, for instance when one of the parts is moved, unless it is locked"""
+    bl_idname = "bucketbuilder.ignore_problem"
+    bl_label = "Ignore Problem"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    lock: BoolProperty(options={'HIDDEN'})
+
+    @classmethod
+    def description(cls, context, properties):
+        if properties.lock:
+            return ("Ignore this problem for good: whatever happens to the parts, a problem of "
+                    "this kind between them does not count. Click again to ignore it only for "
+                    "as long as it stays as it is")
+        return cls.__doc__
+
+    def execute(self, context):
+        scene = context.scene
+        st = props.settings(scene)
+        mon, index, pr = self.find(context)
+        if pr is None:
+            return {'CANCELLED'}
+        objs = _parts_of(context, pr)
+        if len(objs) != len(pr['key']) - 1:
+            return {'CANCELLED'}
+        prune_ignored(scene)
+        kind = _KIND_NAME[self.kind]
+        i = _ignore_entry(st, kind, objs)
+        level = pr['ignored']
+        if self.lock:
+            lock = level != 2             # locked -> ignored as it is now; anything else -> locked
+            keep = True
+        else:
+            lock = False
+            keep = level == 0             # the plain button switches ignoring on and off
+        if not keep:
+            if i >= 0:
+                st.ignored_problems.remove(i)
+            self.report({'INFO'}, "Counts again: " + describe(pr))
+        else:
+            item = st.ignored_problems[i] if i >= 0 else st.ignored_problems.add()
+            item.kind = kind
+            item.a = objs[0]
+            item.b = objs[1] if len(objs) > 1 else None
+            item.lock = lock
+            item.sig, item.geo, item.aux = mon.signature(self.kind, *pr['slots'])
+            self.report({'INFO'}, ("Ignored for good: " if lock else "Ignored: ") + describe(pr))
+        mon._read_ignored(st)             # (at once, so that the list is right when it is redrawn)
+        monitor.tag_redraw_all()
+        return {'FINISHED'}
+
+
+class BUCKETBUILDER_OT_count_all_problems(Operator):
+    """Stop ignoring problems: every one of them counts again"""
+    bl_idname = "bucketbuilder.count_all_problems"
+    bl_label = "Ignore None"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        scene = context.scene
+        st = props.settings(scene)
+        n = len(st.ignored_problems)
+        st.ignored_problems.clear()
+        mon = monitor.get(scene)
+        if mon is not None:
+            mon._read_ignored(st)
+        monitor.tag_redraw_all()
+        self.report({'INFO'}, f"{n} ignored problem(s) forgotten")
+        return {'FINISHED'}
+
+
+class BUCKETBUILDER_OT_status(Operator):
+    """Bucket Builder watches the build while you arrange it. What it checks is switched on below: collisions, the build volume, or both"""
+    bl_idname = "bucketbuilder.status"
+    bl_label = "Monitoring On"
+
+    def execute(self, context):
+        return {'CANCELLED'}              # (a sign, not a switch)
+
+
+class BUCKETBUILDER_OT_export_3mf(Operator):
+    """Write the build to a 3MF file for the printer. Not in this version: it is what comes next"""
+    bl_idname = "bucketbuilder.export_3mf"
+    bl_label = "Export 3MF"
+
+    def execute(self, context):
+        def draw(menu, _context):
+            col = menu.layout.column(align=True)
+            col.label(text="Not in this version yet.")
+            col.label(text="Writing the build to a 3MF file is what comes next.")
+
+        if context.window is not None and not bpy.app.background:
+            context.window_manager.popup_menu(draw, title="Export 3MF", icon='EXPORT')
+        self.report({'INFO'}, "3MF export is not in this version yet: it is what comes next")
+        return {'CANCELLED'}
 
 
 class BUCKETBUILDER_OT_frame_volume(Operator):
@@ -346,9 +539,11 @@ def report_lines(context):
     lines.append(f"Processor threads: {os.cpu_count()} | memory: "
                  + (f"{total / props.GIB:.0f} GB" if total else "unknown")
                  + f" | workers: {monitor.worker_count()}")
-    if mon is None or st is None or not st.enabled:
+    if mon is None or st is None or not props.active(st):
         lines.append("Monitoring is off")
         return lines
+    lines.append(f"Checking: collisions {'on' if st.detect_collisions else 'off'}, build volume "
+                 f"{'on' if props.volume_checked(st) else 'off'}")
     stats = mon.world.stats()
     s = mon.status()
     largest = max((o.ntri for o in mon.objs.values() if o.in_world), default=0)
@@ -356,7 +551,8 @@ def report_lines(context):
                  f"{stats['geoms']} different meshes, {triangles_text(stats['unique_triangles'])}; "
                  f"largest part {triangles_text(largest)}")
     lines.append(f"Neighbouring pairs: {stats['pairs']} | collisions {s['collisions']}, clearance "
-                 f"{s['clearance']}, outside {s['partly_out'] + s['outside']}, near wall {s['near_wall']}")
+                 f"{s['clearance']}, outside {s['partly_out'] + s['outside']}, near wall {s['near_wall']}"
+                 f" | ignored: {s['ignored_problems']} problems, {s['ignored_parts']} parts")
     limit = stats['cache_limit']
     lines.append(f"Cached data: {stats['bytes'] / 1e6:.0f} MB"
                  + (f" of {limit / 1e6:.0f} MB allowed" if limit else "")
@@ -371,7 +567,8 @@ def report_lines(context):
     lines.append(f"Overlay drawing: {_spread(list(mon.draw_ms))}")
     lines.append(f"Overlay triangles: shading {mon.draw_tris[0]:,}, hatching {mon.draw_tris[1]:,}")
     lines.append(f"Background slices: {_spread(list(mon.bg_ms))} | being edited: {len(mon.hot)}"
-                 f" | still to do: {mon.world.pending}")
+                 f" | still to do: {mon.world.pending} | meshes to sort: {len(mon.unsorted)}"
+                 f" | searched to the end: {stats['scans']}")
     lines.append(f"Clearance: {st.clearance_mm:g} mm ({'on' if st.use_clearance else 'off'}) | "
                  f"volume {' x '.join(f'{v:g}' for v in st.volume_size)} mm | {mon.unit_note}")
     return lines
@@ -604,6 +801,11 @@ CLASSES = (
     BUCKETBUILDER_OT_focus_problem,
     BUCKETBUILDER_OT_step_problem,
     BUCKETBUILDER_OT_isolate,
+    BUCKETBUILDER_OT_isolate_problem,
+    BUCKETBUILDER_OT_ignore_problem,
+    BUCKETBUILDER_OT_count_all_problems,
+    BUCKETBUILDER_OT_status,
+    BUCKETBUILDER_OT_export_3mf,
     BUCKETBUILDER_OT_frame_volume,
     BUCKETBUILDER_OT_recheck,
     BUCKETBUILDER_OT_ignore,

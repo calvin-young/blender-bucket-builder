@@ -101,7 +101,12 @@ def main():
     c = add_cube('PartC', (100, 200, 100))
     update()
 
-    st.enabled = True
+    check(not st.detect_collisions and not st.monitor_volume and monitor.get(sc) is None,
+          'a new scene has both switches off, and nothing is monitored')
+    check(bc.overlay.badge_text(None) == ('OFF', 'Not checking collisions', ['Not checking the build volume']),
+          'and the status says so', bc.overlay.badge_text(None))
+    st.detect_collisions = True
+    st.monitor_volume = True
     mon = settle()
     s = mon.status()
     check(s['objects'] == 3, 'three parts mirrored', s)
@@ -324,7 +329,7 @@ def main():
     check(r.tris is not None and len(r.tris) > 0, 'out-of-volume triangles collected', len(r.tris))
     check(float(r.tris[:, :, 0].min()) < 0.0, 'they really are beyond the wall')
     s = mon.status()
-    check(badge(s)[:2] == ('FAIL', 'Outside Build Volume'), 'the verdict names it', badge(s))
+    check(badge(s)[:2] == ('FAIL', '1 Part Outside Build Volume'), 'the verdict names it', badge(s))
     # only the walls something goes through are marked (x low, y low, z low, x high, y high, z high)
     F, T = False, True
     check(mon.walls() == ((T, F, F, F, F, F), (F, F, F, F)), 'the wall it goes through is known', mon.walls())
@@ -374,8 +379,7 @@ def main():
     check(abs(r.dist - 3.0) < 0.05, 'distance to the wall ~3 mm', r.dist)
     check(r.tris is not None and len(r.tris) > 0 and float(r.tris[:, :, 0].min()) < 5.0,
           'the geometry inside the margin is collected', len(r.tris))
-    check(badge(s)[:2] == ('WARN', 'Wall Gap Warning') and '1 part close to a wall' in badge(s)[2],
-          'it is a warning, not a failure', badge(s))
+    check(badge(s)[:2] == ('WARN', '1 Part Within Wall Gap'), 'it is a warning, not a failure', badge(s))
     check(mon.walls() == ((F,) * 6, (T, F, F, F)), 'the side it is too close to is known', mon.walls())
     a.location = (357.0, 262.0, 100.0)                 # 3 mm from x high, 2 mm from y high
     update()
@@ -416,8 +420,8 @@ def main():
     props.seed_profiles(props.prefs())
     p = props.prefs()
     names = [x.name for x in p.profiles]
-    check(p is not None and names[:4] == ['HP MJF 4XXX/5XXX', 'HP MJF 5XX', 'HP MJF 580+', 'HP MJF 1200'],
-          'the built-in printers', names)
+    check(p is not None and names[:4] == ['HP MJF 5600', 'HP MJF 1200', 'HP MJF 580', 'HP MJF 580+'],
+          'the built-in printers, in the owner\'s order', names)
     check(mon.status()['printer'] == 'Custom volume, 380 x 284 x 380 mm',
           'a volume set by hand is described by its size', mon.status()['printer'])
     idx = names.index('HP MJF 580+')
@@ -466,23 +470,47 @@ def main():
     p.profiles_version = 0
     props.seed_profiles(p)
     names = [x.name for x in p.profiles]
-    check(names == ['HP MJF 4XXX/5XXX', 'HP MJF 5XX', 'HP MJF 580+', 'HP MJF 1200', 'HP Jet Fusion 5000',
+    check(names == ['HP MJF 5600', 'HP MJF 1200', 'HP MJF 580', 'HP MJF 580+', 'HP Jet Fusion 5000',
                     'Bench Printer'] and p.profiles_version == props.PROFILES_VERSION,
           'a version 1.0 library is brought up to date, the user\'s printers kept', names)
     check(tuple(p.profiles[4].size) == (380.0, 284.0, 300.0) and tuple(p.profiles[5].size) == (200.0, 333.0, 268.0),
           'with their sizes')
     props.seed_profiles(p)
     check([x.name for x in p.profiles] == names, 'and only once')
+    # ... and one made by version 1.1, where the owner had typed his own 580+
+    p.profiles.clear()
+    for name, size in (('HP MJF 4XXX/5XXX', (380, 284, 380)), ('HP MJF 5XX', (332, 190, 248)),
+                       ('HP MJF 580+', (333, 199, 268)), ('HP MJF 1200', (320, 165, 230)),
+                       ('Bench Printer', (200, 333, 268))):
+        item = p.profiles.add()
+        item.name = name
+        item.size = size
+    p.profiles_version = 2
+    props.seed_profiles(p)
+    names = [x.name for x in p.profiles]
+    check(names == ['HP MJF 5600', 'HP MJF 1200', 'HP MJF 580', 'HP MJF 580+', 'Bench Printer']
+          and tuple(p.profiles[3].size) == (333.0, 199.0, 268.0),
+          'a version 1.1 library gets the new names and order; a size the user typed stays',
+          (names, tuple(p.profiles[3].size)))
+    bc.ops.apply_volume(st, 'HP MJF 4XXX/5XXX', (380.0, 284.0, 380.0))
+    check(props.current_printer_name(st) == 'HP MJF 5600', 'and a scene saved with 1.1 shows the new name')
+    p.profiles.remove(4)
+    p.profiles[3].size = (332.6, 198.7, 267.8)
+    for name, size in (('HP Jet Fusion 5000', (380, 284, 300)), ('Bench Printer', (200, 333, 268))):
+        item = p.profiles.add()
+        item.name = name
+        item.size = size
+    names = [x.name for x in p.profiles]
     # ... and a scene saved with version 1.0, which names its printer the old way
     bc.ops.apply_volume(st, 'HP Jet Fusion 5600', (380.0, 284.0, 380.0))
-    check(props.current_printer_name(st) == 'HP MJF 4XXX/5XXX', 'a scene saved with version 1.0 shows the '
+    check(props.current_printer_name(st) == 'HP MJF 5600', 'a scene saved with version 1.0 shows the '
           'printer\'s new name', props.current_printer_name(st))
     st.volume_size = (380.0, 284.0, 380.0)             # touching the size without changing it
     check(st.printer != 'Custom', 'and its volume still counts as that printer\'s', st.printer)
-    check(bpy.ops.bucketbuilder.profile_update() == {'FINISHED'} and st.printer == 'HP MJF 4XXX/5XXX',
+    check(bpy.ops.bucketbuilder.profile_update() == {'FINISHED'} and st.printer == 'HP MJF 5600',
           'the profile operators find it under the new name', st.printer)
     bc.ops.apply_volume(st, 'HP Jet Fusion 580 / 540', (332.0, 190.0, 248.0))
-    check(props.current_printer_name(st) == 'HP MJF 5XX', 'the same for the 500 series',
+    check(props.current_printer_name(st) == 'HP MJF 580', 'the same for the 500 series',
           props.current_printer_name(st))
     bc.ops.apply_volume(st, 'HP Jet Fusion 5000', (380.0, 284.0, 250.0))
     mon = settle()
@@ -494,7 +522,7 @@ def main():
     p.profiles.remove(4)
     bpy.ops.bucketbuilder.profile_apply(index=0)
     mon = settle()
-    check(st.printer == 'HP MJF 4XXX/5XXX' and tuple(st.volume_size) == (380.0, 284.0, 380.0),
+    check(st.printer == 'HP MJF 5600' and tuple(st.volume_size) == (380.0, 284.0, 380.0),
           'back to the first printer', (st.printer, tuple(st.volume_size)))
 
     # ----------------------------------------------------------------- units
@@ -515,8 +543,7 @@ def main():
     mon = settle()
     check(state(mon, a, b) == CLEAR, 'clearance warning at 3 mm with 5 mm threshold')
     s = mon.status()
-    check(badge(s)[:2] == ('WARN', 'Clearance Warning') and '1 clearance warning' in badge(s)[2],
-          'the verdict is a clearance warning', badge(s))
+    check(badge(s)[:2] == ('WARN', '1 Clearance Warning'), 'the verdict is a clearance warning', badge(s))
     st.clearance_mm = 2.0
     mon = settle()
     check(state(mon, a, b) == OK, 'lowering the clearance threshold clears it')
@@ -546,8 +573,7 @@ def main():
     probs = mon.problems()
     check(len(probs) >= 1 and probs[0]['kind'] == 'COLLIDE', 'problem list leads with the collision', probs[:1])
     s = mon.status()
-    check(badge(s)[:2] == ('FAIL', 'Collision Detected') and badge(s)[2][0] == '1 collision',
-          'the verdict is a collision', badge(s))
+    check(badge(s)[:2] == ('FAIL', '1 Collision Detected'), 'the verdict is a collision', badge(s))
     check(abs(float(probs[0]['center'][0]) - 117.5) < 1.0, 'problem centre is at the interference')
     r1 = bpy.ops.bucketbuilder.step_problem(direction=1)
     check(r1 == {'FINISHED'} and st.problem_index == 0, 'next-problem operator runs', (r1, st.problem_index))
@@ -732,7 +758,7 @@ def main():
     bpy.ops.wm.open_mainfile(filepath=path)
     sc = scene()
     st = sc.bucket_builder
-    check(st.enabled, 'monitoring stays on in the saved file')
+    check(st.detect_collisions and st.monitor_volume, 'both switches stay on in the saved file')
     mon = settle()
     s = mon.status()
     check(s['objects'] == 3 and s['collisions'] == 1, 'results rebuilt after loading the file', s)
@@ -755,13 +781,205 @@ def main():
     except RuntimeError as ex:
         print('       (undo not available in this mode:', str(ex).strip()[:80], ')')
 
-    # ------------------------------------------------------- off / on / reload
+    # ------------------------------------------------- the two switches
     st = scene().bucket_builder
-    st.enabled = False
-    check(monitor.get(scene()) is None, 'switching off frees the monitor')
-    st.enabled = True
+    sc = scene()
+    badge = bc.overlay.badge_text
+    a, b, c = (bpy.data.objects[n] for n in ('PartA', 'PartB', 'PartC'))
+    a.location = (15.0, 100.0, 100.0)             # A through a wall, and B into A
+    b.location = (40.0, 100.0, 100.0)
+    update()
     mon = settle()
-    check(mon.status()['objects'] == 3, 'switching on again works')
+    s = mon.status()
+    check(s['collisions'] == 1 and s['partly_out'] == 1 and badge(s)[:2] == ('FAIL', '1 Part Outside Build Volume')
+          and '1 Collision Detected' in badge(s)[2], 'both checks on: both problems, the volume first',
+          badge(s))
+    kinds = [q['kind'] for q in mon.problems()]
+    check(kinds == ['PARTIAL', 'COLLIDE'], 'the list is in order of severity', kinds)
+    solves = mon.world.stats()['pairs']
+    st.detect_collisions = False
+    mon = settle()
+    s = mon.status()
+    check(s['collisions'] == 0 and s['partly_out'] == 1 and not s['pairs'] and not mon.view().viol
+          and [q['kind'] for q in mon.problems()] == ['PARTIAL'],
+          'collisions switched off: only the build volume is reported', s)
+    check('Not checking collisions' in badge(s)[2] and mon.world.pose_bytes == 0,
+          'the status says what is not checked, and the fitted trees are given back', badge(s))
+    b.location = (160.0, 100.0, 100.0)            # moved while collisions are off
+    a.location = (100.0, 100.0, 100.0)
+    update()
+    mon = settle()
+    s = mon.status()
+    check(badge(s)[:2] == ('OK', 'Inside Build Volume') and mon.world.last_pairs == 0,
+          'with only the volume monitored a clean build is "inside", and no pair is solved', badge(s))
+    b.location = (135.0, 100.0, 100.0)
+    update()
+    st.detect_collisions = True
+    mon = settle()
+    check(mon.status()['collisions'] == 1 and mon.world.stats()['pairs'] == solves,
+          'switched on again: the parts that moved meanwhile are checked', mon.status())
+    st.monitor_volume = False
+    a.location = (15.0, 100.0, 100.0)
+    b.location = (50.0, 100.0, 100.0)
+    update()
+    mon = settle()
+    s = mon.status()
+    check(s['partly_out'] == 0 and s['collisions'] == 1 and not s['volume'] and s['printer'] == ''
+          and 'Not checking the build volume' in badge(s)[2],
+          'the volume switched off: it is neither checked nor named, whatever its checkboxes say', s)
+    st.detect_collisions = True
+    a.location = (100.0, 100.0, 100.0)
+    b.location = (160.0, 100.0, 100.0)
+    update()
+    mon = settle()
+    check(badge(mon.status())[:2] == ('OK', 'No Collisions'), 'collisions only: a clean build is "no collisions"',
+          badge(mon.status()))
+    st.monitor_volume = True
+    st.use_volume = False
+    mon = settle()
+    s = mon.status()
+    check(not s['volume'] and s['printer'] and props.volume_shown(st) and not props.volume_checked(st),
+          'under the main switch the two checkboxes still work on their own', s)
+    st.use_volume = True
+    b.location = (135.0, 100.0, 100.0)
+    update()
+    mon = settle()
+
+    # ---------------------------------------------------- ignoring a problem
+    c.location = (100.0, 147.0, 100.0)            # C 7 mm from A: nothing; then 3 mm: a warning
+    update()
+    c.location = (100.0, 143.0, 100.0)
+    update()
+    mon = settle()
+    kinds = [q['kind'] for q in mon.problems()]
+    check(kinds == ['COLLIDE', 'CLEAR'], 'a collision and a clearance warning to work with', kinds)
+
+    def row(kind):
+        q = next(q for q in mon.problems() if q['kind'] == kind)
+        return dict(kind=q['key'][0], a=q['names'][0], b=q['names'][1])
+
+    def level(kind):
+        return next(q['ignored'] for q in mon.problems() if q['kind'] == kind)
+
+    check(bpy.ops.bucketbuilder.ignore_problem(**row('COLLIDE')) == {'FINISHED'}, 'ignore the collision')
+    s = mon.status()
+    check(level('COLLIDE') == 1 and s['collisions'] == 0 and s['clearance'] == 1 and s['ignored_problems'] == 1
+          and len(mon.problems()) == 2, 'it stays in the list, marked, and no longer counts', s)
+    check(badge(s)[:2] == ('WARN', '1 Clearance Warning') and '1 problem ignored' in badge(s)[2],
+          'the verdict is about what is left, and says that something is ignored', badge(s))
+    check(bpy.ops.bucketbuilder.ignore_problem(**row('CLEAR')) == {'FINISHED'}, 'ignore the warning too')
+    s = mon.status()
+    check(badge(s)[:2] == ('OK', 'Build OK') and '2 problems ignored' in badge(s)[2],
+          'nothing left that counts: the build is fine, with a reminder', badge(s))
+    r1 = bpy.ops.bucketbuilder.step_problem(direction=1)
+    check(r1 == {'FINISHED'}, 'Next still goes somewhere when every problem is ignored')
+    # both parts moved together: it is still the same problem
+    for o in (a, b):
+        o.location.z += 12.5
+    update()
+    mon = settle()
+    check(level('COLLIDE') == 1, 'moved together, the collision is the one that was ignored', mon.status())
+    check(level('CLEAR') == 0, 'the warning with the part that stayed behind has changed, and counts again')
+    c.location.z += 12.5
+    update()
+    mon = settle()
+    check(level('CLEAR') == 1, 'as it was when it was ignored, it is ignored again')
+    # one part moved against the other: the problem has changed
+    b.location.x += 1.0
+    update()
+    mon = settle()
+    check(level('COLLIDE') == 0 and mon.status()['collisions'] == 1,
+          'a part moved against the other: the collision counts again', mon.status())
+    # for good
+    check(bpy.ops.bucketbuilder.ignore_problem(lock=True, **row('COLLIDE')) == {'FINISHED'}, 'lock it')
+    b.location.x -= 3.0
+    update()
+    mon = settle()
+    check(level('COLLIDE') == 2 and mon.status()['collisions'] == 0, 'locked, it stays ignored when the parts move')
+    check(bpy.ops.bucketbuilder.ignore_problem(lock=True, **row('COLLIDE')) == {'FINISHED'}
+          and level('COLLIDE') == 1, 'the lock taken off: ignored as it is now')
+    check(bpy.ops.bucketbuilder.ignore_problem(**row('COLLIDE')) == {'FINISHED'}
+          and level('COLLIDE') == 0 and mon.status()['collisions'] == 1, 'and switched off: it counts')
+    # a part and the build volume
+    a.location.x = 10.0
+    update()
+    mon = settle()
+    check(bpy.ops.bucketbuilder.ignore_problem(**row('PARTIAL')) == {'FINISHED'} and level('PARTIAL') == 1
+          and mon.status()['partly_out'] == 0 and mon.walls()[0] == (False,) * 6,
+          'a part outside the volume can be ignored: no wall is marked for it', mon.status())
+    a.location.x = 9.0
+    update()
+    mon = settle()
+    check(level('PARTIAL') == 0 and mon.status()['partly_out'] == 1, 'moved, it counts again')
+    # the list is saved with the scene, undone with it, and forgets parts that are gone
+    check(len(st.ignored_problems) == 2, 'two entries are kept', len(st.ignored_problems))
+    extra = add_cube('Leaver', (300.0, 100.0, 15.0), 40.0)            # through the floor
+    update()
+    mon.need_resync = True            # (the timer does this every second or two: it is how a new name is seen)
+    mon = settle()
+    check(bpy.ops.bucketbuilder.ignore_problem(kind='V', a='Leaver', b='') == {'FINISHED'}
+          and len(st.ignored_problems) == 3, 'a third one', len(st.ignored_problems))
+    bpy.data.objects.remove(extra)
+    update()
+    mon = settle()
+    check(bc.ops.prune_ignored(sc) == 1 and len(st.ignored_problems) == 2,
+          'an entry about a part that is gone is dropped', len(st.ignored_problems))
+    check(bpy.ops.bucketbuilder.count_all_problems() == {'FINISHED'} and len(st.ignored_problems) == 0
+          and mon.status()['ignored_problems'] == 0, 'and all of them at once')
+    a.location = (100.0, 100.0, 100.0)
+    b.location = (135.0, 100.0, 100.0)
+    c.location = (100.0, 200.0, 100.0)
+    update()
+    mon = settle()
+    # parts left out with the Ignore switch are counted where nobody can miss it
+    c.bucket_builder_ignore = True
+    mon = settle()
+    s = mon.status()
+    check(s['ignored_parts'] == 1 and '1 part ignored' in badge(s)[2], 'an ignored part is in the verdict', badge(s))
+    c.bucket_builder_ignore = False
+    mon = settle()
+    check(mon.status()['ignored_parts'] == 0 and mon.status()['collisions'] == 1, 'and gone from it')
+
+    # ------------------------------------------------- a scene from 1.0 / 1.1
+    st.detect_collisions = False
+    st.monitor_volume = False
+    st.property_unset('detect_collisions')
+    st.property_unset('monitor_volume')
+    st.enabled = True                              # what such a file holds
+    monitor.migrate_scenes()
+    check(st.detect_collisions and st.monitor_volume and not st.enabled,
+          'a scene saved with one switch for everything has both switches on')
+    mon = settle()
+    check(mon.status()['collisions'] == 1, 'and is monitored as before')
+
+    # ------------------------------------------------------- off / on / reload
+    geoms = mon.world.stats()['geoms']
+    st.detect_collisions = False
+    st.monitor_volume = False
+    check(monitor.get(scene()) is None and mon.paused and mon.world.pose_bytes == 0,
+          'both switches off: the monitor is paused')
+    b.location.x = 200.0                           # things happen while it is paused
+    me = a.data
+    co = np.empty(len(me.vertices) * 3, dtype=np.float32)
+    me.vertices.foreach_get('co', co)
+    me.vertices.foreach_set('co', co * 1.5)
+    me.update()
+    update()
+    check(a.session_uid in mon.stale and mon.paused, 'a paused monitor only notes what changes')
+    st.detect_collisions = True
+    st.monitor_volume = True
+    mon2 = settle()
+    lo, hi = mon2.world.part_bounds(mon2.world.slot(a.session_uid))
+    check(mon2 is mon and not mon.paused and mon.status()['objects'] == 3 and mon.status()['collisions'] == 0
+          and abs(float(hi[0] - lo[0]) - 60.0) < 0.5,
+          'switched on again it picks up where it was, with what changed meanwhile',
+          (mon.status(), float(hi[0] - lo[0])))
+    me.vertices.foreach_set('co', co)
+    me.update()
+    b.location.x = 135.0
+    update()
+    mon = settle()
+    check(mon.status()['collisions'] == 1 and mon.world.stats()['geoms'] == geoms, 'and goes on as before')
 
     import addon_utils
     addon_utils.disable(PKG)
