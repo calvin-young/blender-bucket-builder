@@ -198,23 +198,22 @@ Interface (1.1.0, from the owner's list after his first trial):
 
 ## State
 
-Last updated: 2026-10-09, about 01:30 (session 2, the night after the owner's
-first trial).
+Last updated: 2026-10-09, afternoon (session 2 continued; the owner's second
+list, of 11:14, is being worked through as version 1.2.0).
 
-* `main` is version **1.1.0**: the owner's list of 2026-10-08 23:56 (thirty-odd
-  points on the interface) is done except the two items that are
-  conversations (below). 1.0.0 was his first trial build, 1.0.1 fixed the
-  crash he found.
-* Tests at 1.1.0: 143 checks in `blender_test.py`, 47 in
-  `blender_large_test.py`, the UI test (panels with a checking stand-in,
-  ignore list, report), the off-screen overlay test with sampled colours, and
-  in a window: `blender_gui_test.py` (drag, badge position beside the open
-  sidebar and in the corner, isolate through the real local view, hidden
-  part), `blender_gui_undo.py`, `blender_gui_stress.py` (now fails if the
-  overlay raises: a failed draw is noted in `mon.error`), and
-  `blender_upgrade_test.py` (1.1.0 installed over a 1.0.1 in use, in one
-  session; needs an empty profile and the old zip, kept in
-  `scratchpad/old_zips` or rebuilt from commit bb79c38).
+* `main` is **1.2.0 in progress** (not sent yet; the owner has 1.1.0). Done
+  and tested (commit 275749c): two switches, ignored problems, the sidebar
+  in five panels, the badge at the right edge, smooth icons, the display
+  switches, the printer names, meshes that enter the world unsorted, pause
+  instead of discard. **Still to do before it is sent**: the user guide and
+  README for 1.2.0, new screenshots, `tests/blender_upgrade_test.py` from
+  1.1.0 (zip in `scratchpad/old_zips`, or build it from b9e2464), a clean
+  profile install, the performance report for the owner, and then a first
+  cut of the "3D Printing" application template (task list items 36, 37).
+* Tests at this point: `test_world.py` (about 8 minutes now), 183 checks in
+  `blender_test.py`, 48 in `blender_large_test.py`, the UI test, the
+  off-screen overlay test, and in a window `blender_gui_test.py`,
+  `blender_gui_undo.py`, `blender_gui_stress.py`.
 * The owner runs **Blender 5.2.0, Windows 11, NVIDIA GPU, OpenGL backend** on
   an HP ZBook Firefly 14 G11 with 32 GB. Verdict on 1.0.0: delighted; snappy
   on small builds, "a bit laggy for real world large complicated buckets".
