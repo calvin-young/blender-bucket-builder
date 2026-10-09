@@ -181,6 +181,7 @@ def _shaders():
             print("Bucket Builder: part shading unavailable, using outlines:", ex)
             sh['tint'] = None
         sh['flat'] = gpu.shader.from_builtin('UNIFORM_COLOR')
+        sh['smooth'] = gpu.shader.from_builtin('SMOOTH_COLOR')
         sh['line'] = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
         _state['shaders'] = sh
     return sh
@@ -349,6 +350,13 @@ def _groups(mon, shaders, only=None, view=0):
         cache[ckey] = entry
     w = mon.world
     hot_slots = mon.hot
+    # Nothing changed since the last redraw (the user is turning the view):
+    # the same batches, without a look at a single problem.
+    quick = (w.version, mon.move_serial, mon.cold_serial, w.wall_margin,
+             frozenset(hot_slots) if hot_slots else None, None if only is None else frozenset(only))
+    if entry.get('quick') == quick:
+        return entry['static'], entry['hot']
+    entry['quick'] = quick
     hidden = mon.hidden_slots()
     vol = w.volume
     stat_pairs, hot_pairs, stat_oob, hot_oob, stat_wall, hot_wall = [], [], [], [], [], []
@@ -473,6 +481,55 @@ def _colliding(mon, only=None, view=0):
     return entry[2]
 
 
+def _tint_list(mon, p, shaders, only=None, view=0):
+    """What the shading pass draws: ([(batch, matrix), ...] for the parts that
+    are shaded, a batch of outline boxes for those beyond the triangle budget
+    or None, the number of triangles).  Worked out when results or positions
+    change, not on every redraw."""
+    lists = _state.setdefault('tint_list', {})
+    w = mon.world
+    budget = int((p.tint_budget if p else 4.0) * 1e6)
+    sh = shaders.get('tint')
+    stamp = (w.version, mon.move_serial, mon.cold_serial, None if only is None else frozenset(only),
+             budget, sh is None)
+    ckey = (mon.scene_uid, view)
+    entry = lists.get(ckey)
+    if entry is not None and entry[0] is mon and entry[1] == stamp:
+        return entry[2], entry[3], entry[4]
+    cache = _state.setdefault('tint', {})
+    frame = _state['frame'] = _state.get('frame', 0) + 1
+    items = []
+    boxed = []
+    used = 0
+    # lightest first, so that as many parts as possible fit the budget
+    for slot in _colliding(mon, only, view):
+        n = w.part_triangles(slot)
+        if sh is None or used + n > budget:
+            boxed.append(slot)
+            continue
+        used += n
+        key, verts, tris = w.part_mesh(slot)
+        mesh = cache.get(key)
+        if mesh is None:
+            batch = batch_for_shader(sh, 'TRIS', {"pos": verts}, indices=np.ascontiguousarray(tris))
+            mesh = cache[key] = [batch, n, frame]
+        mesh[2] = frame
+        items.append((mesh[0], Matrix(w.part_matrix(slot).tolist())))
+    box_batch = None
+    if boxed:
+        segs = np.concatenate([_box_edges(*w.part_bounds(s)) for s in boxed]).reshape(-1, 3)
+        box_batch = batch_for_shader(shaders['line'], 'LINES', {"pos": np.ascontiguousarray(segs)})
+    # forget meshes that have not been needed for a while once the cache is large
+    if len(cache) > 8 and sum(e[1] for e in cache.values()) > 3 * budget:
+        for key in sorted(cache, key=lambda k: cache[k][2])[:len(cache) // 2]:
+            if cache[key][2] != frame:
+                del cache[key]
+    if len(lists) > 16:
+        lists.clear()
+    lists[ckey] = (mon, stamp, items, box_batch, used)
+    return items, box_batch, used
+
+
 def _draw_tint(mon, p, shaders, persp_matrix, bias, srgb, viewport, ui, color, only=None, view=0):
     """Shade every colliding part so the parts at fault stand out.
 
@@ -480,46 +537,21 @@ def _draw_tint(mon, p, shaders, persp_matrix, bias, srgb, viewport, ui, color, o
     rest get an outline box, so this pass cannot be what slows a viewport down.
     Returns the number of triangles drawn.
     """
-    slots = _colliding(mon, only, view)
     strength = p.tint_strength if p else 0.5
-    if not slots or strength <= 0.0:
+    if strength <= 0.0:
         return 0
-    w = mon.world
-    budget = int((p.tint_budget if p else 4.0) * 1e6)
-    sh = shaders.get('tint')
-    cache = _state.setdefault('tint', {})
-    frame = _state['frame'] = _state.get('frame', 0) + 1
-    boxed = []
-    used = 0
-    if sh is not None:
-        P = np.array(persp_matrix, dtype=np.float64)
+    items, box_batch, used = _tint_list(mon, p, shaders, only, view)
+    if items:
+        sh = shaders['tint']
         sh.bind()
         sh.uniform_float("u_color", (color[0], color[1], color[2], 0.5 * strength))
         sh.uniform_float("u_bias", (bias[0], bias[1], bias[2], srgb))
         gpu.state.depth_test_set('LESS_EQUAL')
-    for slot in slots:
-        n = w.part_triangles(slot)
-        if sh is None or used + n > budget:
-            boxed.append(slot)
-            continue
-        used += n
-        key, verts, tris = w.part_mesh(slot)
-        entry = cache.get(key)
-        if entry is None:
-            batch = batch_for_shader(sh, 'TRIS', {"pos": verts}, indices=np.ascontiguousarray(tris))
-            entry = cache[key] = [batch, n, frame]
-        entry[2] = frame
-        sh.uniform_float("u_mvp", Matrix((P @ w.part_matrix(slot)).tolist()))
-        entry[0].draw(sh)
-    if boxed:
-        segs = np.concatenate([_box_edges(*w.part_bounds(s)) for s in boxed]).reshape(-1, 3)
-        batch = batch_for_shader(shaders['line'], 'LINES', {"pos": np.ascontiguousarray(segs)})
-        _draw_lines(shaders, batch, _rgba(color, 0.9), 1.5 * ui, viewport, xray=False)
-    # forget meshes that have not been needed for a while once the cache is large
-    if len(cache) > 8 and sum(e[1] for e in cache.values()) > 3 * budget:
-        for key in sorted(cache, key=lambda k: cache[k][2])[:len(cache) // 2]:
-            if cache[key][2] != frame:
-                del cache[key]
+        for batch, matrix in items:
+            sh.uniform_float("u_mvp", persp_matrix @ matrix)
+            batch.draw(sh)
+    if box_batch is not None:
+        _draw_lines(shaders, box_batch, _rgba(color, 0.9), 1.5 * ui, viewport, xray=False)
     return used
 
 
@@ -1082,6 +1114,32 @@ def _draw_badge(mon, st, p, shaders, ui, right, bottom):
 
 _MARK_COLLISION = ('COLLIDE', 'PARTIAL', 'OUTSIDE')
 _MARK_CLEARANCE = ('CLEAR', 'WALL')
+# kinds of problems in the order their markers are drawn (the worst on top)
+_MARK_ORDER = ('WALL', 'CLEAR', 'OUTSIDE', 'PARTIAL', 'COLLIDE')
+_MARK_INDEX = {kind: i for i, kind in enumerate(_MARK_ORDER)}
+
+
+def _marker_data(mon, problems, n):
+    """What the markers of the first ``n`` problems need on every redraw,
+    worked out once per list of problems: their places (n, 4), their kinds as
+    indices into ``_MARK_ORDER`` and the slots of the parts they are about."""
+    cache = _state.setdefault('markers', {})
+    hit = cache.get(mon.scene_uid)
+    if hit is not None and hit[0] is problems and hit[1].shape[0] == n:
+        return hit[1], hit[2], hit[3]
+    w = mon.world
+    pts = np.ones((n, 4))
+    kinds = np.empty(n, dtype=np.int64)
+    slots = []
+    for i in range(n):
+        pr = problems[i]
+        pts[i, :3] = pr['center']
+        kinds[i] = _MARK_INDEX[pr['kind']]
+        slots.append(tuple(w.slot(u) for u in pr['key'][1:]))
+    if len(cache) > 8:
+        cache.clear()
+    cache[mon.scene_uid] = (problems, pts, kinds, slots)
+    return pts, kinds, slots
 
 
 def _draw_markers(mon, st, p, shaders, ui, persp_matrix, width, height, only=None):
@@ -1093,74 +1151,63 @@ def _draw_markers(mon, st, p, shaders, ui, persp_matrix, width, height, only=Non
     if not kinds_on:
         return
     n = min(len(problems), MAX_MARKERS)
-    pts = np.ones((n, 4))
-    for i in range(n):
-        pts[i, :3] = problems[i]['center']
+    pts, kinds, slots = _marker_data(mon, problems, n)
     clip = pts @ np.array(persp_matrix).T
     wv = clip[:, 3]
     ok = wv > 1e-9
-    w = mon.world
+    if len(kinds_on) < len(_MARK_ORDER):
+        ok &= np.isin(kinds, [_MARK_INDEX[k] for k in kinds_on])
     if only is not None:
         # a viewport in local view: only what is among the parts it shows
         hidden = mon.hidden_slots()
         for i in range(n):
-            if not ok[i]:
-                continue
-            slots = [w.slot(u) for u in problems[i]['key'][1:]]
-            if len(slots) == 2:
-                ok[i] = _shown(slots[0], slots[1], only, hidden)
-            else:
-                ok[i] = slots[0] in only
-    ndc = clip[:, :2] / np.where(ok, wv, 1.0)[:, None]
+            if ok[i]:
+                sl = slots[i]
+                ok[i] = _shown(sl[0], sl[1], only, hidden) if len(sl) == 2 else sl[0] in only
+    shown = np.nonzero(ok)[0]
+    if shown.shape[0] == 0:
+        return
+    ndc = clip[shown, :2] / wv[shown, None]
     px = (ndc[:, 0] * 0.5 + 0.5) * width
     py = (ndc[:, 1] * 0.5 + 0.5) * height
     red = tuple(p.color_collision) if p else (1.0, 0.08, 0.05, 1.0)
     amber = tuple(p.color_clearance) if p else (1.0, 0.72, 0.0, 1.0)
     mag = tuple(p.color_outside) if p else (0.95, 0.1, 0.85, 1.0)
     colors = {'COLLIDE': red, 'CLEAR': amber, 'WALL': amber, 'PARTIAL': mag, 'OUTSIDE': mag}
-    flat = shaders['flat']
-    gpu.state.blend_set('ALPHA')
     active = st.problem_index
-    kinds = np.array([pr['kind'] for pr in problems[:n]])
-    radius = np.full(n, 7.0 * ui, dtype=np.float32)
+    radius = np.full(shown.shape[0], 7.0 * ui, dtype=np.float32)
     if 0 <= active < n:
-        radius[active] = 11.0 * ui
-    flat.bind()
-    for kind in ('WALL', 'CLEAR', 'OUTSIDE', 'PARTIAL', 'COLLIDE'):
-        if kind not in kinds_on:
-            continue
-        m = ok & (kinds == kind)
-        if not m.any():
-            continue
-        flat.uniform_float("color", colors[kind])
-        batch_for_shader(flat, 'TRIS', {"pos": _rings(px[m], py[m], radius[m])}).draw(flat)
+        radius[shown == active] = 11.0 * ui
+    # all rings in one batch, the worst kind last so that it lies on top
+    order = np.argsort(kinds[shown], kind='stable')
+    ring = _rings(px[order], py[order], radius[order])
+    per = ring.shape[0] // order.shape[0]
+    palette = np.array([colors[k] for k in _MARK_ORDER], dtype=np.float32)
+    col = np.repeat(palette[kinds[shown][order]], per, axis=0)
+    smooth = shaders['smooth']
+    gpu.state.blend_set('ALPHA')
+    smooth.bind()
+    batch_for_shader(smooth, 'TRIS', {"pos": ring, "color": np.ascontiguousarray(col)}).draw(smooth)
     # Distances are worth reading for the parts in hand; in a crowded build a
     # label on every near pair is only clutter (the rings and the list remain).
-    measured = [i for i in range(n) if ok[i] and problems[i]['kind'] in _MARK_CLEARANCE]
+    clear_wall = (_MARK_INDEX['WALL'], _MARK_INDEX['CLEAR'])
+    measured = [j for j in range(shown.shape[0]) if kinds[shown[j]] in clear_wall]
     if len(measured) > MAX_LABELS:
         hot = mon.hot
-        measured = [i for i in measured
-                    if i == active or any(w.slot(u) in hot for u in problems[i]['key'][1:])]
-    measured = set(measured)
+        measured = [j for j in measured
+                    if shown[j] == active or any(sl in hot for sl in slots[shown[j]])]
+    labels = [(j, None) for j in measured]
+    if 0 <= active < n and ok[active] and kinds[active] not in clear_wall:
+        labels.append((int(np.nonzero(shown == active)[0][0]), "collision"
+                       if problems[active]['kind'] == 'COLLIDE' else "outside volume"))
+    if not labels:
+        return
     _text_shadow(True)
-    for i in range(n):
-        pr = problems[i]
-        if not ok[i] or pr['kind'] not in kinds_on:
-            continue
-        if pr['kind'] == 'CLEAR':
-            if i not in measured:
-                continue
-            label = f"{pr['dist_mm']:.2f} mm"
-        elif pr['kind'] == 'WALL':
-            if i not in measured:
-                continue
-            label = f"{pr['dist_mm']:.2f} mm to wall"
-        elif i == active:
-            label = {'COLLIDE': "collision", 'PARTIAL': "outside volume",
-                     'OUTSIDE': "outside volume"}[pr['kind']]
-        else:
-            continue
-        _text(px[i] + 12.0 * ui, py[i] - 4.0 * ui, label, 12.0 * ui, colors[pr['kind']])
+    for j, text in labels:
+        pr = problems[shown[j]]
+        if text is None:
+            text = f"{pr['dist_mm']:.2f} mm" + (" to wall" if pr['kind'] == 'WALL' else "")
+        _text(px[j] + 12.0 * ui, py[j] - 4.0 * ui, text, 12.0 * ui, colors[pr['kind']])
     _text_shadow(False)
 
 
