@@ -247,6 +247,28 @@ def step_closeup_shot():
     return 0.5
 
 
+def step_view_idle():
+    # Turning the view is something the user does that the dependency graph
+    # does not report; the overlay notices it by the view matrix, and the
+    # background work then makes room.  A redraw alone is not the user.
+    PROBE['user'] = monitor._pace['user']
+    view_area().tag_redraw()
+    return 0.5
+
+
+def step_view_turn():
+    assert monitor._pace['user'] == PROBE['user'], 'a mere redraw was taken for the user turning the view'
+    look((180, 130, 60), (0.60, -0.64, 0.48), 760)
+    return 0.5
+
+
+def step_view_seen():
+    assert monitor._pace['user'] > PROBE['user'], 'turning the view went unnoticed'
+    log('turning the view is noticed (and a redraw alone is not taken for it)')
+    look((180, 130, 60), (0.62, -0.62, 0.48), 760)
+    return 0.5
+
+
 def step_drag_begin():
     w = win()
     ring = bpy.data.objects['Ring']
@@ -491,7 +513,7 @@ def step_final():
 
 
 STEPS = [step_setup, step_enable, step_check_initial, step_sidebar_closed, step_closeup, step_closeup_shot,
-         step_drag_begin, step_drag_grab]
+         step_view_idle, step_view_turn, step_view_seen, step_drag_begin, step_drag_grab]
 for i, dx in enumerate([-30, -30, -30, -30, 30, 40, 40, 40, 40, 40, 40]):
     STEPS += make_drag_step(dx, 'gui_3_mid_drag' if i == 2 else None)
 STEPS += [step_drag_confirm, step_after_drag, step_fix, step_clean_shot, step_wall, step_wall_shot,

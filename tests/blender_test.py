@@ -625,6 +625,107 @@ def main():
     update()
     mon = settle()
 
+    # ------------------------------------------------------- the timer's pace
+    # How much of the main thread the background work takes depends on what
+    # the user is doing: short slices with pauses while they edit or turn the
+    # view, long ones back to back while they wait; and the viewport is asked
+    # to show progress only every so often.  The decisions, with the work
+    # itself replaced by a stand-in that never finishes:
+    vl = bpy.context.view_layer
+    seen = {}
+    real_tick, real_tag = monitor.Monitor.tick, monitor.tag_redraw_all
+
+    def fake_tick(self, scene_, depsgraph, view_layer, live, relaxed=False, pace=0.0):
+        seen.update(relaxed=relaxed, pace=pace)
+        self.need_resync = self.params_dirty = False
+        self.world._dirty[0] = True               # work that is still there afterwards
+        self.last_tick_ms = seen.get('took', 5.0)
+        return seen.get('changed', False)
+
+    def fake_tag():
+        seen['tags'] = seen.get('tags', 0) + 1
+        real_tag()
+
+    monitor.Monitor.tick, monitor.tag_redraw_all = fake_tick, fake_tag
+    try:
+        mon.last_hot = 0.0
+        monitor._pace['user'] = 0.0
+        wish = monitor._tick_scene(sc, vl)
+        check(seen['relaxed'] and wish == 0.0, 'nobody doing anything: long slices, one after the other',
+              (seen, wish))
+        monitor.user_active()                      # (the overlay calls this when a view is turned)
+        wish = monitor._tick_scene(sc, vl)
+        check(not seen['relaxed'] and wish == monitor.ACTIVE_PAUSE,
+              'the view is being turned: short slices with pauses', (seen, wish))
+        monitor._pace['user'] = 0.0
+        mon.last_hot = time.perf_counter()
+        wish = monitor._tick_scene(sc, vl)
+        check(not seen['relaxed'] and wish == monitor.ACTIVE_PAUSE, 'the same just after an edit', (seen, wish))
+        mon.last_hot = 0.0
+        seen['took'] = 0.05                        # a slice that did nothing
+        wish = monitor._tick_scene(sc, vl)
+        check(wish == monitor.ACTIVE_PAUSE, 'a slice that gets nothing done does not spin', wish)
+        seen['took'] = 5.0
+        # progress is shown at a limited rate while the work goes on ...
+        seen.update(changed=True, tags=0)
+        monitor._pace['shown'] = 0.0
+        monitor._pace['redraw'] = 0.0
+        monitor._tick_scene(sc, vl)
+        check(seen['tags'] == 1 and not mon.redraw_due, 'a first result is shown at once', seen)
+        monitor._pace['shown'] = time.perf_counter()      # (the redraw has happened)
+        for _ in range(5):
+            monitor._tick_scene(sc, vl)
+        check(seen['tags'] == 1 and mon.redraw_due, 'the next ones wait: no redraw after every slice', seen)
+        monitor._pace['shown'] = time.perf_counter() - monitor.REDRAW_MIN - 0.01
+        monitor._tick_scene(sc, vl)
+        check(seen['tags'] == 2 and not mon.redraw_due, 'until a tenth of a second has passed', seen)
+        # ... less often when a redraw is slow ...
+        monitor._pace['redraw'] = 0.3
+        check(abs(monitor.redraw_gap() - 0.6) < 1e-9, 'a slow redraw is asked for less often',
+              monitor.redraw_gap())
+        monitor._pace['redraw'] = 30.0
+        check(monitor.redraw_gap() == monitor.REDRAW_MAX, 'but once a second at least', monitor.redraw_gap())
+        monitor._pace['redraw'] = 0.0
+        # ... and the final state at once
+        monitor._pace['shown'] = time.perf_counter()
+        seen.update(changed=True)
+
+        def last_tick(self, scene_, depsgraph, view_layer, live, relaxed=False, pace=0.0):
+            self.world._dirty.clear()
+            self.last_tick_ms = 5.0
+            return True
+
+        monitor.Monitor.tick = last_tick
+        wish = monitor._tick_scene(sc, vl)
+        check(seen['tags'] == 3 and not mon.busy and wish != 0.0, 'the finished result is shown without waiting',
+              (seen, wish))
+    finally:
+        monitor.Monitor.tick, monitor.tag_redraw_all = real_tick, real_tag
+    mon.world.invalidate_all()
+    mon = settle()
+    check(mon.status()['collisions'] == 1, 'and the real work still gets done', mon.status())
+    # the long slice: BOOST times the usual, or a share of what Blender takes for a pass
+    p = props.prefs()
+    base = p.budget_ms / 1000.0
+    got = {}
+    real_step = mon.world.step
+    mon.world.step = lambda budget=0.01, hot_budget=0.016, idle=True: got.update(budget=budget, hot=hot_budget)
+    try:
+        dg = vl.depsgraph
+        mon.tick(sc, dg, vl, live=False)
+        check(abs(got['budget'] - base) < 1e-9 and got['hot'] >= base, 'a normal slice has the time set in '
+              'the preferences', got)
+        mon.tick(sc, dg, vl, live=False, relaxed=True, pace=0.004)
+        check(abs(got['budget'] - monitor.BOOST * base) < 1e-9 and got['hot'] == got['budget'],
+              'a relaxed one is longer', got)
+        mon.tick(sc, dg, vl, live=False, relaxed=True, pace=0.2)
+        check(abs(got['budget'] - monitor.SHARE * 0.2) < 1e-9,
+              'and follows Blender\'s own pace when redraws are slow', got)
+        mon.tick(sc, dg, vl, live=False, relaxed=True, pace=5.0)
+        check(abs(got['budget'] - monitor.MAX_SLICE) < 1e-9, 'up to a limit', got)
+    finally:
+        mon.world.step = real_step
+
     # ---------------------------------------------------------- save / reload
     path = os.path.join(tempfile.mkdtemp(), 'build.blend')
     bpy.ops.wm.save_as_mainfile(filepath=path)

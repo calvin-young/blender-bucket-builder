@@ -279,6 +279,7 @@ def step_import():
     win().scene.collection.objects.link(ob)
     S['target'] = ob.name
     S['t_import'] = time.perf_counter()
+    S['draws_import'] = PREP['n']
     log(f'imported a part of {S["new_tris"] // 1000}k triangles into the middle of the build')
     return 0.05
 
@@ -295,8 +296,12 @@ def step_import_wait():
     hits = sum(1 for o in w.adj[slot]
                if w.pairs[(slot, o) if slot < o else (o, slot)].state == core.COLLIDE)
     S['hits0'] = hits
-    log(f'verdict {time.perf_counter() - S["t_import"]:.2f} s after it appeared: it collides with '
-        f'{hits} of {n} neighbouring parts; status {m.status()}')
+    redraws = PREP['n'] - S['draws_import']
+    log(f'verdict {time.perf_counter() - S["t_import"]:.2f} s after it appeared, {redraws} redraws later: '
+        f'it collides with {hits} of {n} neighbouring parts; status {m.status()}')
+    # The work is a fraction of a second.  Showing every step of it used to
+    # take a redraw per slice, and the redraws were most of the wait.
+    assert redraws <= 8, f'{redraws} redraws while one part was being checked'
     return 0.8
 
 

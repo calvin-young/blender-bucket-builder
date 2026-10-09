@@ -49,7 +49,7 @@ Version 1.1.0. Declared for Blender 4.2 and newer. Its tests run on
 * the geometry engine agrees with brute-force references on random and
   hand-picked cases, and with Blender's own `BVHTree.overlap` on which
   triangles intersect,
-* 175 end-to-end checks pass inside Blender (live updates on move / rotate /
+* 190 end-to-end checks pass inside Blender (live updates on move / rotate /
   scale, moving a selection, mesh edits, modifiers, linked duplicates, hidden
   parts, the build volume and which of its walls are exceeded, printer
   profiles and a library made by version 1.0, units, the wording of the
@@ -141,6 +141,12 @@ To build the zip from this repository:
 * **Nothing blocks.** Fitted trees are built in slices between redraws, and
   pairs whose trees are ready are solved first, so the results of a new scene
   appear as the work gets done.
+* **Background work paces itself by what the user is doing.** While they edit
+  or turn the view, its slices are short and come with pauses. While they
+  wait, slices are longer and follow each other directly, and the viewport is
+  asked to show progress about ten times a second, not after every slice: a
+  redraw of a heavy scene costs more than a slice, and used to be most of the
+  time a result took to appear.
 * **Memory is bounded.** The fitted trees (55 bytes per triangle and part) are
   a cache with a limit; the least recently used are dropped and built again
   when needed. A part without neighbours never gets one.

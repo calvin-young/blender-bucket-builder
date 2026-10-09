@@ -49,6 +49,15 @@ _pool = None            # worker threads, made when first needed
 _stop = threading.Event()   # set to make running sorts give up (add-on switched off)
 HOT_SECONDS = 0.35      # an object counts as "being edited" this long after a change
 IDLE_SECONDS = 0.15     # quiet time before quick results get their exact pass
+# How the background work shares the main thread with the user (see _tick_scene):
+ACTIVE_SECONDS = 0.4    # the user counts as busy this long after an edit or after turning the view
+ACTIVE_PAUSE = 0.02     # pause between background slices while the user is busy
+BOOST = 2.5             # background slices are this much longer while the user is not ...
+SHARE = 0.5             # ... or this share of what Blender itself takes for a pass of its main loop,
+MAX_SLICE = 0.2         # if that is more (a heavy scene on a slow graphics card), up to this
+REDRAW_MIN = 0.1        # while analysing, the viewport is redrawn at most this often ...
+REDRAW_MAX = 1.0        # ... but this often at least, however long a redraw takes
+WORKER_POLL = 0.03      # how often finished worker jobs are looked for when nothing else is to do
 RESYNC_SECONDS = 1.5    # safety net: compare the scene with the mirror this often
 LIVE_RESYNC_SECONDS = 0.25   # at most this often while something is being edited
 SYNC_TRIS = 60000       # meshes up to this size are sorted at once, larger ones by a worker
@@ -221,6 +230,8 @@ class Monitor:
         self.printer = ''         # what the badge says about the printer
         self._hidden_slots = None     # world slots of the hidden parts (None: work it out)
         self._redraw = False          # the overlay is out of date although no result changed
+        self.redraw_due = False       # results changed that the viewport has not been asked to show
+        self._queue_stalled = False   # nothing in the geometry queue can be read right now
         self._instancers = set()      # parts seen with instances (for when they are hidden)
         self._walls = (None, None)
         self.need_scan = True
@@ -340,6 +351,11 @@ class Monitor:
             self.hot.pop(self.world.slot(uid), None)
             self.world.remove_object(uid)
 
+    def _enqueue(self, uid):
+        """Have an object's geometry read (again)."""
+        self.queue[uid] = None
+        self._queue_stalled = False
+
     def _waiting(self):
         """Objects whose geometry is not in the world yet."""
         return len(self.queue) + sum(len(j.uids) for j in self.jobs.values())
@@ -378,7 +394,7 @@ class Monitor:
                 os = ObjState(uid, obj.name)
                 os.hidden = hidden
                 self.objs[uid] = os
-                self.queue[uid] = None
+                self._enqueue(uid)
                 self._hidden_slots = None
                 continue
             os.name = obj.name
@@ -390,11 +406,11 @@ class Monitor:
                 self._redraw = True
             if not os.in_world:
                 if check_sigs and uid not in self.queue and not os.skipped:
-                    self.queue[uid] = None
+                    self._enqueue(uid)
                 continue
             if check_sigs and uid not in self.queue and _signature(obj) != os.sig:
                 self.data_geom.pop(os.data_uid, None)
-                self.queue[uid] = None
+                self._enqueue(uid)
             ob_eval = obj.evaluated_get(depsgraph)
             if w.set_matrix(uid, _matrix(ob_eval), hot=False):
                 self.move_serial += 1
@@ -460,7 +476,7 @@ class Monitor:
             return
         if geometry:
             self.data_geom.pop(os.data_uid, None)
-            self.queue[uid] = None
+            self._enqueue(uid)
             self._count_waiting()
             self.need_scan = True
         if transform and os.in_world:
@@ -592,6 +608,7 @@ class Monitor:
                     os.skipped = 'error'
                     self.error = f'{os.name}: {ex}'
         self.world.drop_unused_geoms()
+        self._queue_stalled = False       # the workers can take more
         self._count_waiting()
         self._expect()
         return len(done)
@@ -628,6 +645,8 @@ class Monitor:
             if time.perf_counter() > deadline:
                 break
         self._count_waiting()
+        # (what is left may be waiting for Edit Mode to be left, or for the workers)
+        self._queue_stalled = done == 0
         return done
 
     # ------------------------------------------------------- what is not checked
@@ -744,13 +763,21 @@ class Monitor:
         return False
 
     # ----------------------------------------------------------------- tick
-    def tick(self, scene, depsgraph, view_layer, live):
+    def tick(self, scene, depsgraph, view_layer, live, relaxed=False, pace=0.0):
         """One update slice.  ``live`` is True when called from the dependency
         graph handler in the middle of an edit: then only the changed objects
-        are handled, quickly; background work is left to the timer."""
+        are handled, quickly; background work is left to the timer.
+
+        ``relaxed``: the user is not doing anything, so background work may
+        take longer slices: ``BOOST`` times the usual, or a share of ``pace``,
+        the time Blender itself needs for a pass of its main loop, if that is
+        more.  (With redraws that take a second, a slice of a few
+        milliseconds between them gets nowhere, and one of a few tenths of a
+        second is not what makes Blender slow.)"""
         st = props.settings(scene)
         p = props.prefs()
-        budget = (p.budget_ms if p else 12.0) / 1000.0
+        base = (p.budget_ms if p else 12.0) / 1000.0
+        budget = max(base * BOOST, min(SHARE * pace, MAX_SLICE)) if relaxed else base
         max_tris = int((p.max_tris_millions if p else 50.0) * 1e6)
         t0 = time.perf_counter()
         now = t0
@@ -773,7 +800,8 @@ class Monitor:
         if had == 0 and self.world._slot_of:
             self.apply_params(scene, st)        # units may now be detectable
         idle = (not live) and (time.perf_counter() - self.last_hot) > IDLE_SECONDS
-        self.world.step(budget=budget, hot_budget=max(0.016, budget), idle=idle)
+        # (what a live edit left unsolved gets the long slice too, once the user has let go)
+        self.world.step(budget=budget, hot_budget=budget if relaxed else max(0.016, base), idle=idle)
         if self.need_scan and idle and time.perf_counter() - self.last_scan > SCAN_SECONDS:
             if self.scan_unchecked(depsgraph, view_layer):
                 changed = True
@@ -822,6 +850,13 @@ class Monitor:
     def busy(self):
         return (bool(self.queue) or bool(self.jobs) or self.need_resync or self.params_dirty
                 or self.world.busy)
+
+    @property
+    def has_work(self):
+        """True while there is something for the main thread to do right now,
+        as opposed to waiting for worker threads or for Edit Mode to be left."""
+        return (self.need_resync or self.params_dirty or self.world.busy
+                or (bool(self.queue) and not self._queue_stalled))
 
     # -------------------------------------------------------------- reports
     def name_of(self, slot):
@@ -932,10 +967,24 @@ def get(scene, create=False):
     return mon
 
 
+# What the timer knows about the main loop it shares with the user.
+_pace = {
+    'user': 0.0,        # when the user was last seen turning a view
+    'tagged': False,    # a redraw was asked for since the timer last ran
+    'shown': 0.0,       # when the timer first ran again after a redraw: what was asked for is on screen
+    'left': 0.0,        # when the timer last returned
+    'asked': 0.0,       # the interval it asked for then
+    'redraw': 0.0,      # how long a redraw keeps the timer waiting (measured)
+    'pass': 0.0,        # how long Blender itself took between the timer's last two runs
+    'inside': False,    # the timer is running right now
+}
+
+
 def tag_redraw_all():
     wm = getattr(bpy.context, "window_manager", None)
     if wm is None:
         return
+    _pace['tagged'] = True
     for win in wm.windows:
         screen = win.screen
         if screen is None:
@@ -943,6 +992,19 @@ def tag_redraw_all():
         for area in screen.areas:
             if area.type == 'VIEW_3D':
                 area.tag_redraw()
+
+
+def user_active():
+    """The user is doing something the dependency graph does not report
+    (the overlay calls this when a view is turned, moved or zoomed)."""
+    _pace['user'] = time.perf_counter()
+
+
+def redraw_gap():
+    """While work is going on in the background, its results are shown this
+    often: ten times a second if redraws are cheap, less often if they are
+    not, so that drawing the progress never takes more time than making it."""
+    return min(REDRAW_MAX, max(REDRAW_MIN, 2.0 * _pace['redraw']))
 
 
 def on_enabled_changed(scene):
@@ -1022,6 +1084,7 @@ def _on_depsgraph_update(scene, depsgraph):
                 mon.need_scan = True
         view_layer = depsgraph.view_layer
         if mon.tick(scene, depsgraph, view_layer, live=True):
+            mon.redraw_due = False
             tag_redraw_all()
         if mon.busy:
             _ensure_timer()
@@ -1080,6 +1143,15 @@ def _tick_scene(scene, view_layer):
     of this file).  Updating costs nothing when nothing changed; when
     something did, it is the work Blender was about to do anyway.  (It makes
     ``_on_depsgraph_update`` run, here and now, before the slice below.)
+
+    How much of the main thread the slice takes depends on what the user is
+    doing.  While they edit or turn the view, slices are short and come with
+    pauses, so that Blender stays as smooth as it can be.  While they do
+    nothing (they wait for the result, most likely) slices are longer and
+    follow each other directly; Blender still handles its events between
+    them.  The viewport is asked to show progress only every so often
+    (``redraw_gap``): a redraw of a heavy scene costs more than a slice, and
+    one after every slice was most of the time a result took to appear.
     """
     try:
         view_layer.update()
@@ -1091,24 +1163,48 @@ def _tick_scene(scene, view_layer):
     quiet = now - mon.last_hot > HOT_SECONDS
     if quiet and now - mon.last_resync > max(RESYNC_SECONDS, 2e-5 * 50 * len(mon.objs)):
         mon.need_resync = True
+    relaxed = now - max(mon.last_hot, _pace['user']) > ACTIVE_SECONDS
     had_hot = bool(mon.hot)
-    changed = mon.tick(scene, depsgraph, view_layer, live=False)
-    if changed or (had_hot and not mon.hot):
+    if mon.tick(scene, depsgraph, view_layer, live=False, relaxed=relaxed, pace=_pace['pass']):
+        mon.redraw_due = True
+    if had_hot and not mon.hot:
+        mon.redraw_due = True
+    if mon.redraw_due and (not mon.busy or time.perf_counter() - _pace['shown'] >= redraw_gap()):
+        mon.redraw_due = False
         tag_redraw_all()
-    if mon.busy:
-        return 0.02
+    if mon.has_work:
+        # (a slice that did next to nothing must not turn into a spinning loop)
+        return 0.0 if relaxed and mon.last_tick_ms > 1.0 else ACTIVE_PAUSE
+    if mon.jobs:
+        return WORKER_POLL
     if mon.hot:
         return 0.1
-    if mon.need_scan:
-        return 0.25
+    if mon.busy or mon.need_scan:
+        return 0.25                   # (a queue that waits for Edit Mode to be left)
     return None
 
 
 def _timer():
     """Background slice: runs often while there is work, slowly otherwise."""
     global _timer_running
+    t_in = time.perf_counter()
+    _pace['pass'] = 0.0
+    if _pace['left'] > 0.0 and _pace['asked'] <= 0.05:
+        # What kept the timer from coming back when it wanted to is what
+        # Blender did in between: handling events, and above all redrawing.
+        # (Only measured while the timer is cycling quickly: a long sleep can
+        # hold anything.)
+        late = t_in - _pace['left'] - _pace['asked']
+        if 0.0 <= late < 3.0:
+            _pace['pass'] = late
+            if _pace['tagged']:
+                _pace['redraw'] = late if late > _pace['redraw'] else 0.5 * (_pace['redraw'] + late)
+    if _pace['tagged']:
+        _pace['shown'] = t_in
+    _pace['tagged'] = False
+    _pace['inside'] = True
+    interval = 0.5
     try:
-        interval = 0.5
         any_enabled = False
         rendering = _rendering()
         for scene in bpy.data.scenes:
@@ -1137,18 +1233,26 @@ def _timer():
             del _monitors[uid]
         if not any_enabled:
             _timer_running = False
-            return None
-        return interval
+            interval = None
     except Exception:
         import traceback
         traceback.print_exc()
-        return 1.0
+        interval = 1.0
+    _pace['inside'] = False
+    _pace['left'] = time.perf_counter()
+    _pace['asked'] = interval or 0.0
+    return interval
 
 
 def _ensure_timer():
+    """Make sure the timer runs, and soon: one that is in the middle of a
+    long sleep (nothing was going on) is started afresh."""
     global _timer_running
     if _timer_running and bpy.app.timers.is_registered(_timer):
-        return
+        due = _pace['left'] + _pace['asked'] - time.perf_counter()
+        if due < 0.12 or _pace['inside']:
+            return
+        bpy.app.timers.unregister(_timer)
     _timer_running = True
     if not bpy.app.timers.is_registered(_timer):
         bpy.app.timers.register(_timer, first_interval=0.01, persistent=True)

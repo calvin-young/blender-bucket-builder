@@ -764,11 +764,25 @@ def draw_view():
     if mon is None or rv3d is None:
         return
     t0 = time.perf_counter()
+    rid = context.region.as_pointer()
+    # A view that has been turned, moved or zoomed since it was last drawn:
+    # the user is navigating.  The background work then makes room (the
+    # dependency graph says nothing about this; the view matrix does).
+    try:
+        vm = rv3d.view_matrix
+        view = tuple(vm[0]) + tuple(vm[1]) + tuple(vm[2])
+    except Exception:
+        view = None
+    views = _state.setdefault('views', {})
+    if views.get(rid) != view:
+        if len(views) > 64:
+            views.clear()
+        views[rid] = view
+        monitor.user_active()
     if mon.hot:
         # how often the viewport gets redrawn while something is being moved:
         # the frame rate the user sees, whoever it is that takes the time
         last = _state.setdefault('last_draw', {})
-        rid = context.region.as_pointer()
         prev = last.get(rid)
         if prev is not None and t0 - prev < 1.0:
             mon.frame_ms.append((t0 - prev) * 1000.0)
