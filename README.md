@@ -10,20 +10,23 @@ rotate and scale parts as usual. While you drag, the viewport shows:
 * where parts are closer than your **minimum clearance** (amber hatching and the
   measured gap),
 * what reaches **outside the printer's build volume** (magenta hatching on just
-  the geometry that is out),
-* which parts are at fault: every colliding part is **shaded light red**,
+  the geometry that is out, and the wall it goes through in magenta),
+* which parts are at fault: every colliding part is **shaded red**,
 * optionally, parts that sit too close to the **side walls** of the volume,
-* a large **green tick** when there are no collisions and every part is inside
-  the volume, with a warning mark when the scene holds something that is not
-  being checked.
+* the verdict in the corner of the viewport: a large **green tick** when there
+  are no collisions and every part is inside the volume, an amber triangle for
+  warnings, a red cross for what has to be fixed.
 
-Nothing in the scene is modified; everything is drawn on top of it.
+Every problem is listed; one click frames it, and **Isolate** shows its parts
+on their own. Nothing in the scene is modified; everything is drawn on top of
+it.
 
 ![A part being dragged: the collision hatching follows it](docs/images/dragging.png)
 
 | | |
 | --- | --- |
 | ![Colliding parts are shaded, the overlap is hatched](docs/images/collision.png) | ![A clean build](docs/images/build-ok.png) |
+| ![A problem's parts shown on their own](docs/images/isolated.png) | ![A part too close to a side wall](docs/images/wall-gap.png) |
 
 A large part imported into the middle of a full build, and being dragged out
 of it (50 parts; the new one lands on 33 of them):
@@ -40,29 +43,38 @@ The user guide is in [bucket_builder/README.md](bucket_builder/README.md).
 
 ## Status
 
-Version 1.0.1. Declared for Blender 4.2 and newer. Its tests run on
+Version 1.1.0. Declared for Blender 4.2 and newer. Its tests run on
 **Blender 5.2.2** (Linux, software OpenGL), where:
 
 * the geometry engine agrees with brute-force references on random and
   hand-picked cases, and with Blender's own `BVHTree.overlap` on which
   triangles intersect,
-* 127 end-to-end checks pass inside Blender (live updates on move / rotate /
-  scale, moving a selection, mesh edits, modifiers, linked duplicates, hiding,
-  the build volume, printer profiles, units, undo, save and reload; and for
-  large parts: worker threads, the memory limit, the warnings about unchecked
-  geometry),
-* the overlay has been rendered off-screen and inspected,
-* in an interactive Blender window on a virtual display, a part dragged with
-  simulated mouse input updates the overlay on every step of the drag
-  (`tests/gui_on_xvfb.sh`), and undo, redo and delete, triggered with
-  simulated key presses, leave Blender standing (`tests/blender_gui_undo.py`,
-  see below).
+* 175 end-to-end checks pass inside Blender (live updates on move / rotate /
+  scale, moving a selection, mesh edits, modifiers, linked duplicates, hidden
+  parts, the build volume and which of its walls are exceeded, printer
+  profiles and a library made by version 1.0, units, the wording of the
+  verdict, undo, save and reload; and for large parts: worker threads, the
+  memory limit, the warnings about unchecked geometry),
+* every panel and menu is drawn against a stand-in for Blender's layout that
+  rejects what a real one would,
+* the overlay is rendered off-screen and its colours sampled where the walls
+  and the badge are,
+* in an interactive Blender window on a virtual display (`tests/gui_on_xvfb.sh`)
+  a part dragged with simulated mouse input updates the overlay on every step
+  of the drag; the badge is found in the corner the sidebar leaves free;
+  problems are isolated one after the other with Blender's real local view;
+  and undo, redo and delete, triggered with simulated key presses, leave
+  Blender standing (`tests/blender_gui_undo.py`, see below),
+* version 1.1.0 installed over a 1.0.1 that is in use, in the same session,
+  keeps the settings and the user's printers and carries on
+  (`tests/blender_upgrade_test.py`).
 
 The owner runs it on Blender 5.2.0 on Windows with an NVIDIA GPU (OpenGL).
 Version 1.0.0 crashed Blender there: the add-on's timer read the dependency
 graph in the moment between an operator freeing objects and Blender
-rebuilding the graph. 1.0.1 brings the graph up to date before the timer
-reads it; the crash is reproduced by the tests without that line.
+rebuilding the graph. Since 1.0.1 the graph is brought up to date before the
+timer reads it; the crash is reproduced by the tests without that line.
+Version 1.1.0 is the interface as he asked for it after his first trial.
 
 Not yet tried: Blender 4.2 - 5.1, macOS, the Vulkan and Metal backends.
 
@@ -82,7 +94,7 @@ longest Blender would not respond. `tests/blender_bench_large.py` and
 
 ## Install
 
-Download or build `bucket_builder-1.0.1.zip`, then in Blender:
+Download or build `bucket_builder-1.1.0.zip`, then in Blender:
 Edit > Preferences > Get Extensions > the arrow in the top right >
 *Install from Disk*.
 
@@ -175,12 +187,14 @@ With the add-on installed and enabled in Blender:
 
     blender --background --python tests/blender_test.py             # end to end
     blender --background --python tests/blender_large_test.py       # large parts, memory, warnings
-    blender --background --python tests/blender_ui_test.py          # panels and menus
-    tests/gui_on_xvfb.sh blender out blender_gui_undo.py            # undo, redo, delete in a window
+    blender --background --python tests/blender_ui_test.py          # panels, menus, the report
     blender --background --python tests/blender_gpu_test.py -- out  # overlay, off-screen PNGs
     blender --background --python tests/blender_bvhtree_compare.py  # against BVHTree
     blender --background --python tests/blender_bench_large.py -- 20 1500000   # timings, large build
-    blender --enable-event-simulate --python tests/blender_gui_test.py -- out   # in a window
+    tests/gui_on_xvfb.sh blender out                                # in a window: drag, badge, isolate
+    tests/gui_on_xvfb.sh blender out blender_gui_undo.py            # undo, redo, delete in a window
+    tests/gui_on_xvfb.sh blender out blender_gui_stress.py          # a full build under the mouse
+    blender --background --python tests/blender_upgrade_test.py -- old.zip new.zip   # in an empty profile
 
 ## Layout
 
@@ -194,8 +208,8 @@ With the add-on installed and enabled in Blender:
       monitor.py          mirrors the Blender scene into the engine: handlers, timer, workers
       overlay.py          viewport drawing
       props.py            settings, preferences, printer profiles
-      ops.py              operators: navigation, printer profiles
-      ui.py               sidebar panels
+      ops.py              operators: navigation, isolating, printer profiles, the report
+      ui.py               sidebar panels, entries in Blender's own menus
     tests/
     tools/test-blender/   building Blender from source where it cannot be downloaded
     CLAUDE.md             working notes: state, decisions, what is next

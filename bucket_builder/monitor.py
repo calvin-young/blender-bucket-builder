@@ -234,6 +234,7 @@ class Monitor:
         # recent cost of live updates and of drawing, in milliseconds (shown in
         # the Parts panel so slow scenes can be diagnosed)
         self.live_ms = deque(maxlen=240)
+        self.live_parts = deque(maxlen=240)   # how many parts were being edited at each of those
         self.draw_ms = deque(maxlen=240)
         self.frame_ms = deque(maxlen=240)     # time from one redraw to the next while editing
         self.bg_ms = deque(maxlen=240)        # background slices that had work to do
@@ -1026,6 +1027,7 @@ def _on_depsgraph_update(scene, depsgraph):
             _ensure_timer()
         if mon.hot:
             mon.live_ms.append((time.perf_counter() - now) * 1000.0)
+            mon.live_parts.append(len(mon.hot))
     except Exception as ex:          # a handler must never raise into Blender
         mon.error = str(ex)
         import traceback

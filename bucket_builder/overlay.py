@@ -263,7 +263,7 @@ def _build_group(mon, pairs, oobs, walls, vol, shaders, hidden):
     clip_parts = {'collide': [], 'clear': []}
     # lines: 'collide' the curves along which parts cut through each other,
     # 'clear' the closest points of parts that are too close, 'inside' the
-    # same for a part that lies inside another one
+    # box around a part that lies inside another one
     line_parts = {'collide': [], 'clear': [], 'inside': [], 'outside': [], 'wall': []}
     inner = w.inner_box()
     for (a, b), pr in pairs:
@@ -279,7 +279,9 @@ def _build_group(mon, pairs, oobs, walls, vol, shaders, hidden):
             else:
                 clip_parts[kind].append((tris, own, clip[0] + off, clip[1] + off))
         if pr.segs is not None and len(pr.segs):
-            line_parts['collide'].append((pr.segs, off))          # the intersection curve
+            # the intersection curve; for a part that lies inside another one,
+            # its outline box, which is not an outline to switch off
+            line_parts['inside' if pr.enclosed else 'collide'].append((pr.segs, off))
         elif pr.pa is not None and pr.pb is not None and pr.dist > 0.0:
             seg = np.array([[pr.pa, pr.pb]], dtype=np.float64)    # the closest points
             line_parts['inside' if pr.state == COLLIDE else 'clear'].append((seg, off))

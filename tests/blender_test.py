@@ -281,6 +281,16 @@ def main():
     update()
     mon = settle()
     check(mon.status()['objects'] == 5, 'included again, its part returns')
+    tray.hide_viewport = True         # the collection disabled in viewports (the screen icon)
+    update()
+    mon = settle()
+    check(mon.status()['objects'] == 4 and mon.disabled == 1,
+          'a collection that is disabled in viewports takes its parts out of the check',
+          (mon.status()['objects'], mon.disabled))
+    tray.hide_viewport = False
+    update()
+    mon = settle()
+    check(mon.status()['objects'] == 5 and mon.disabled == 0, 'enabled again, its part returns')
     # Disabled in viewports is different: Blender does not work such an object
     # out at all (its place, its modifiers), so there is nothing to check.
     d.hide_viewport = True
@@ -412,12 +422,12 @@ def main():
           'a volume set by hand is described by its size', mon.status()['printer'])
     idx = names.index('HP MJF 580+')
     check(bpy.ops.bucketbuilder.profile_apply(index=idx) == {'FINISHED'}, 'profile applied')
-    check(np.allclose(st.volume_size, (198.7, 332.6, 267.8), atol=1e-4) and st.printer == 'HP MJF 580+',
+    check(np.allclose(st.volume_size, (332.6, 198.7, 267.8), atol=1e-4) and st.printer == 'HP MJF 580+',
           'volume and name follow the profile', (tuple(st.volume_size), st.printer))
     mon = settle()
     check(mon.status()['printer'] == 'HP MJF 580+', 'the verdict names the printer', mon.status()['printer'])
     lo, hi = mon.volume_box(st)
-    check(np.allclose(hi - lo, (198.7, 332.6, 267.8), atol=1e-4), 'and the checked volume is that printer\'s')
+    check(np.allclose(hi - lo, (332.6, 198.7, 267.8), atol=1e-4), 'and the checked volume is that printer\'s')
     st.show_volume = False
     st.use_volume = False
     mon = settle()
@@ -472,9 +482,12 @@ def main():
     check(bpy.ops.bucketbuilder.profile_update() == {'FINISHED'} and st.printer == 'HP MJF 4XXX/5XXX',
           'the profile operators find it under the new name', st.printer)
     bc.ops.apply_volume(st, 'HP Jet Fusion 580 / 540', (332.0, 190.0, 248.0))
+    check(props.current_printer_name(st) == 'HP MJF 5XX', 'the same for the 500 series',
+          props.current_printer_name(st))
+    bc.ops.apply_volume(st, 'HP Jet Fusion 5000', (380.0, 284.0, 250.0))
     mon = settle()
     lo, hi = mon.volume_box(st)
-    check(np.allclose(hi - lo, (332, 190, 248)) and props.current_printer_name(st) == 'HP Jet Fusion 580 / 540',
+    check(np.allclose(hi - lo, (380, 284, 250)) and props.current_printer_name(st) == 'HP Jet Fusion 5000',
           'a scene whose old printer has no successor keeps its volume and its name',
           (hi - lo, props.current_printer_name(st)))
     p.profiles.remove(5)

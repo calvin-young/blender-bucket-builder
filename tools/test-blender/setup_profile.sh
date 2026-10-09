@@ -12,7 +12,8 @@ mkdir -p "$BLENDER_USER_RESOURCES" "$REPO/dist"
 find "$REPO/bucket_builder" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 "$BLENDER" --command extension build --source-dir "$REPO/bucket_builder" --output-dir "$REPO/dist"
 "$BLENDER" --command extension remove bucket_builder > /dev/null 2>&1 || true
-"$BLENDER" --command extension install-file -r user_default -e "$REPO"/dist/bucket_builder-*.zip
+# (the newest package: dist may hold older versions too)
+"$BLENDER" --command extension install-file -r user_default -e "$(ls -t "$REPO"/dist/bucket_builder-*.zip | head -n 1)"
 # without this the first simulated key press in a window test only closes the splash
 "$BLENDER" --background --python-expr "
 import bpy
