@@ -1,7 +1,7 @@
-schema_version = "1.0.0"
+schema_version = "1.0.1"
 
 id = "bucket_builder"
-version = "1.0.0"
+version = "1.0.1"
 name = "Bucket Builder"
 tagline = "Live collision, clearance and build-volume monitor"
 maintainer = "Bucket Builder contributors"

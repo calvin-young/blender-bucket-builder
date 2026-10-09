@@ -8,6 +8,7 @@ that is in the scene but is not checked.
 
 import importlib
 import sys
+import threading
 import time
 
 import bpy
@@ -51,6 +52,37 @@ def tick():
 
 def update():
     bpy.context.view_layer.update()
+
+
+class held_workers:
+    """While this is open the worker threads take meshes but do not start
+    sorting them, so that what happens "while a mesh is being sorted" does
+    not depend on how fast the machine is."""
+
+    def __enter__(self):
+        self.go = threading.Event()
+        self.real = monitor._sort_job
+
+        def held(co, tri):
+            self.go.wait(60.0)
+            return self.real(co, tri)
+
+        monitor._sort_job = held
+        return self
+
+    def __exit__(self, *exc):
+        monitor._sort_job = self.real
+        self.go.set()
+
+
+def read_all(mon):
+    """Tick until every queued mesh has been read (that can take more than
+    one slice)."""
+    for _ in range(500):
+        if not mon.queue:
+            break
+        mon = tick()
+    return mon
 
 
 def blob(name, tris, radius, loc, seed=0):
@@ -149,14 +181,15 @@ def main():
     check(len(a.data.polygons) > monitor.SYNC_TRIS, 'test meshes are large enough for the workers',
           len(a.data.polygons))
     st.enabled = True
-    mon = tick()
-    s = mon.status()
-    check(len(mon.jobs) == 2 and mon.world.slot(a.session_uid) is None,
-          'large meshes go to worker threads, one job per mesh', (len(mon.jobs), s['preparing']))
-    check(mon.world.slot(small.session_uid) is not None, 'a small mesh is taken in at once')
-    check(s['busy'] and s['preparing'] is not None and s['preparing'][1] == 4
-          and overlay.badge_text(s)[0] == 'BUSY', 'status shows the preparation',
-          (s['preparing'], overlay.badge_text(s)))
+    with held_workers():
+        mon = read_all(tick())
+        s = mon.status()
+        check(len(mon.jobs) == 2 and mon.world.slot(a.session_uid) is None,
+              'large meshes go to worker threads, one job per mesh', (len(mon.jobs), s['preparing']))
+        check(mon.world.slot(small.session_uid) is not None, 'a small mesh is taken in at once')
+        check(s['busy'] and s['preparing'] is not None and s['preparing'][1] == 4
+              and overlay.badge_text(s)[0] == 'BUSY', 'status shows the preparation',
+              (s['preparing'], overlay.badge_text(s)))
     t0 = time.perf_counter()
     mon = settle()
     stats = mon.world.stats()
@@ -170,15 +203,19 @@ def main():
     d = blob('BigD', 150000, 30.0, (0, -150, 0), seed=3)
     e = blob('BigE', 150000, 30.0, (150, -150, 0), seed=4)
     update()
-    mon = tick()
-    check(len(mon.jobs) == 2, 'two more jobs', len(mon.jobs))
-    co = np.empty(len(d.data.vertices) * 3, dtype=np.float32)
-    d.data.vertices.foreach_get('co', co)
-    d.data.vertices.foreach_set('co', co * 1.5)
-    d.data.update()
-    d.update_tag()
-    bpy.data.objects.remove(e)
-    update()
+    with held_workers():
+        mon = read_all(tick())
+        check(len(mon.jobs) == 2, 'two more jobs', len(mon.jobs))
+        co = np.empty(len(d.data.vertices) * 3, dtype=np.float32)
+        d.data.vertices.foreach_get('co', co)
+        d.data.vertices.foreach_set('co', co * 1.5)
+        d.data.update()
+        d.update_tag()
+        bpy.data.objects.remove(e)
+        update()
+        mon = read_all(tick())
+        check(len(mon.jobs) == 3, 'the edited mesh is on its way as well, the old one still being sorted',
+              len(mon.jobs))
     mon = settle()
     lo, hi = mon.world.part_bounds(mon.world.slot(d.session_uid))
     ref = slow_read(d)[0]

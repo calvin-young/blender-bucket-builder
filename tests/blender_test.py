@@ -419,6 +419,40 @@ def main():
     mon = settle()
     check(mon.status()['collisions'] == 1, 'and the build is as it was', mon.status())
 
+    # ------------------------------------------- the timer and freed objects
+    # Timers run at the start of a pass of Blender's main loop; the dependency
+    # graph is only refreshed at its end.  After an operator that freed
+    # objects (delete, undo, a change in "Adjust Last Operation") the graph
+    # still lists them when the timer comes, and reading it then crashed
+    # Blender (seen on Windows, in the search for instances).  This is that
+    # state, and the slice the timer runs.
+    extra = [add_cube(f'Gone{i}', (300.0, 40.0 * i, 300.0), 10.0) for i in range(5)]
+    update()
+    mon = settle()
+    n0 = mon.status()['objects']
+    for o in extra:
+        bpy.data.objects.remove(o)               # freed, and nothing is told
+    late = bpy.data.objects.new('Latecomer', c.data)
+    late.location = (300.0, 250.0, 300.0)
+    bpy.context.collection.objects.link(late)    # ... and one the graph has not seen
+    scan_seconds = monitor.SCAN_SECONDS
+    monitor.SCAN_SECONDS = 0.0
+    mon.need_scan = True                         # the search for instances is due
+    mon.last_scan = 0.0
+    time.sleep(monitor.IDLE_SECONDS + 0.05)
+    mon.error = ''
+    wish = monitor._tick_scene(sc, bpy.context.view_layer)
+    check(not mon.error and not mon.need_scan, 'the timer copes with objects freed behind its back',
+          (mon.error, wish))
+    mon = settle()
+    monitor.SCAN_SECONDS = scan_seconds
+    s = mon.status()
+    check(s['objects'] == n0 - 5 + 1 and mon.world.slot(late.session_uid) is not None,
+          'and sees the scene as it is', s['objects'])
+    bpy.data.objects.remove(late)
+    update()
+    mon = settle()
+
     # ---------------------------------------------------------- save / reload
     path = os.path.join(tempfile.mkdtemp(), 'build.blend')
     bpy.ops.wm.save_as_mainfile(filepath=path)

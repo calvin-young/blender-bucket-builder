@@ -12,11 +12,21 @@ to date from three sources:
 * undo / redo / file load -- full resync.
 
 Taking in a mesh has an expensive part, sorting its triangles into a tree
-(about half a microsecond per triangle).  For large meshes that is done by
+(a quarter of a microsecond per triangle).  For large meshes that is done by
 worker threads, which only ever see NumPy arrays: Blender data is read, and
 the scene is touched, on the main thread alone.
 
 Blender data is only ever read here; the scene is never modified.
+
+When it may be read is a matter of life and death.  A dependency graph is
+only safe to read while it matches the data: between an operator that frees
+objects (delete, undo, a change in the "Adjust Last Operation" panel) and the
+moment Blender rebuilds the graph, it still lists the freed objects, and
+walking it, its instances above all, reads freed memory.  Timers fire in
+exactly that gap: Blender runs them first in each pass of its main loop and
+refreshes the graph last.  So the handler works on the graph it is handed,
+which has just been evaluated, and the timer brings the graph up to date
+itself before it looks at anything (``_tick_scene``).
 """
 
 import concurrent.futures
@@ -301,7 +311,7 @@ class Monitor:
         seen = set()
         w = self.world
         for obj in view_layer.objects:
-            if not _eligible(obj, view_layer):
+            if obj is None or not _eligible(obj, view_layer):
                 continue
             uid = _uid(obj)
             seen.add(uid)
@@ -457,7 +467,8 @@ class Monitor:
                 continue                  # nobody wants it any more
             self.world.add_sorted(key, verts, tris)
             if by_uid is None:
-                by_uid = {_uid(o): o for o in view_layer.objects if o.type == 'MESH'}
+                by_uid = {_uid(o): o for o in view_layer.objects
+                          if o is not None and o.type == 'MESH'}
             for uid in waiting:
                 os = self.objs[uid]
                 os.pending = None
@@ -484,7 +495,7 @@ class Monitor:
     def process_queue(self, view_layer, depsgraph, deadline, max_tris, now):
         """Read queued geometry until the deadline (always at least one)."""
         done = 0
-        by_uid = {_uid(o): o for o in view_layer.objects if o.type == 'MESH'}
+        by_uid = {_uid(o): o for o in view_layer.objects if o is not None and o.type == 'MESH'}
         for uid in list(self.queue):
             os = self.objs.get(uid)
             obj = by_uid.get(uid)
@@ -552,10 +563,11 @@ class Monitor:
                 if n > SCAN_INSTANCES:
                     break
                 parent = inst.parent
-                if parent is None or inst.object.type != 'MESH':
+                ob = inst.object
+                if parent is None or ob is None or ob.type != 'MESH':
                     continue
                 po = parent.original
-                if po.bucket_builder_ignore:
+                if po is None or po.bucket_builder_ignore:
                     continue
                 uid = _uid(po)
                 if uid in self.objs:
@@ -567,7 +579,7 @@ class Monitor:
         other = 0
         seen = set()
         for obj in view_layer.objects:
-            if obj.type not in NON_MESH or obj.bucket_builder_ignore:
+            if obj is None or obj.type not in NON_MESH or obj.bucket_builder_ignore:
                 continue
             try:
                 if not obj.visible_get(view_layer=view_layer):
@@ -594,7 +606,7 @@ class Monitor:
         st = props.settings(scene)
         p = props.prefs()
         budget = (p.budget_ms if p else 12.0) / 1000.0
-        max_tris = int((p.max_tris_millions if p else 8.0) * 1e6)
+        max_tris = int((p.max_tris_millions if p else 50.0) * 1e6)
         t0 = time.perf_counter()
         now = t0
         changed = False
@@ -877,38 +889,79 @@ def _on_load_post(*_args):
     _ensure_timer()
 
 
+def _rendering():
+    """True while a render or a bake is running.  Blender may then have locked
+    the interface so that nothing touches the data the render reads, and it
+    leaves its dependency graphs alone; so do we."""
+    try:
+        return bpy.app.is_job_running('RENDER') or bpy.app.is_job_running('OBJECT_BAKE')
+    except Exception:
+        return False
+
+
+def _tick_scene(scene, view_layer):
+    """One background slice for a monitored scene.  Returns the number of
+    seconds after which the timer should come back, or None if it has no
+    wish of its own.
+
+    The dependency graph is brought up to date first.  Blender does that
+    itself at the end of every pass of its main loop, but timers run at the
+    start of the pass: after an operator that freed objects the graph still
+    lists them, and reading it then is how Blender is crashed (see the top
+    of this file).  Updating costs nothing when nothing changed; when
+    something did, it is the work Blender was about to do anyway.  (It makes
+    ``_on_depsgraph_update`` run, here and now, before the slice below.)
+    """
+    try:
+        view_layer.update()
+    except RuntimeError:
+        return 0.1                    # the graph is being evaluated: later
+    mon = get(scene, create=True)
+    depsgraph = view_layer.depsgraph
+    now = time.perf_counter()
+    quiet = now - mon.last_hot > HOT_SECONDS
+    if quiet and now - mon.last_resync > max(RESYNC_SECONDS, 2e-5 * 50 * len(mon.objs)):
+        mon.need_resync = True
+    had_hot = bool(mon.hot)
+    changed = mon.tick(scene, depsgraph, view_layer, live=False)
+    if changed or (had_hot and not mon.hot):
+        tag_redraw_all()
+    if mon.busy:
+        return 0.02
+    if mon.hot:
+        return 0.1
+    if mon.need_scan:
+        return 0.25
+    return None
+
+
 def _timer():
     """Background slice: runs often while there is work, slowly otherwise."""
     global _timer_running
     try:
         interval = 0.5
         any_enabled = False
-        now = time.perf_counter()
+        rendering = _rendering()
         for scene in bpy.data.scenes:
             st = props.settings(scene)
             if st is None or not st.enabled:
                 _monitors.pop(_uid(scene), None)
                 continue
             any_enabled = True
-            win = _window_for(scene)
+            win = None if rendering else _window_for(scene)
             if win is None:
                 continue
-            mon = get(scene, create=True)
-            view_layer = win.view_layer
-            depsgraph = view_layer.depsgraph
-            quiet = now - mon.last_hot > HOT_SECONDS
-            if quiet and now - mon.last_resync > max(RESYNC_SECONDS, 2e-5 * 50 * len(mon.objs)):
-                mon.need_resync = True
-            had_hot = bool(mon.hot)
-            changed = mon.tick(scene, depsgraph, view_layer, live=False)
-            if changed or (had_hot and not mon.hot):
-                tag_redraw_all()
-            if mon.busy:
-                interval = min(interval, 0.02)
-            elif mon.hot:
-                interval = min(interval, 0.1)
-            elif mon.need_scan:
-                interval = min(interval, 0.25)
+            try:
+                wish = _tick_scene(scene, win.view_layer)
+            except Exception as ex:      # one scene in trouble must not stop the others
+                mon = get(scene)
+                if mon is not None:
+                    mon.error = str(ex)
+                import traceback
+                traceback.print_exc()
+                wish = 1.0
+            if wish is not None:
+                interval = min(interval, wish)
         # monitors of scenes that no longer exist
         alive = {_uid(s) for s in bpy.data.scenes}
         for uid in [u for u in _monitors if u not in alive]:
