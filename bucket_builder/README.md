@@ -13,7 +13,7 @@ Requires Blender 4.2 or newer.
 ## Install
 
 Edit > Preferences > Get Extensions (or Add-ons) > the down arrow in the top
-right > Install from Disk, and pick `bucket_builder-1.0.0.zip`.
+right > Install from Disk, and pick the `bucket_builder` zip file.
 
 ## Use
 

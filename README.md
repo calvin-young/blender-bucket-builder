@@ -40,23 +40,31 @@ The user guide is in [bucket_builder/README.md](bucket_builder/README.md).
 
 ## Status
 
-Version 1.0.0. Declared for Blender 4.2 and newer; so far it has only been run
-on **Blender 5.2.2** (Linux, software OpenGL), where:
+Version 1.0.1. Declared for Blender 4.2 and newer. Its tests run on
+**Blender 5.2.2** (Linux, software OpenGL), where:
 
 * the geometry engine agrees with brute-force references on random and
   hand-picked cases, and with Blender's own `BVHTree.overlap` on which
   triangles intersect,
-* 118 end-to-end checks pass inside Blender (live updates on move / rotate /
-  scale, mesh edits, modifiers, linked duplicates, hiding, the build volume,
-  printer profiles, units, undo, save and reload; and for large parts:
-  worker threads, the memory limit, the warnings about unchecked geometry),
+* 127 end-to-end checks pass inside Blender (live updates on move / rotate /
+  scale, moving a selection, mesh edits, modifiers, linked duplicates, hiding,
+  the build volume, printer profiles, units, undo, save and reload; and for
+  large parts: worker threads, the memory limit, the warnings about unchecked
+  geometry),
 * the overlay has been rendered off-screen and inspected,
 * in an interactive Blender window on a virtual display, a part dragged with
   simulated mouse input updates the overlay on every step of the drag
-  (`tests/gui_on_xvfb.sh`).
+  (`tests/gui_on_xvfb.sh`), and undo, redo and delete, triggered with
+  simulated key presses, leave Blender standing (`tests/blender_gui_undo.py`,
+  see below).
 
-Not yet tried: a real GPU, a person at the mouse, Blender 4.2 - 5.1, Windows
-or macOS.
+The owner runs it on Blender 5.2.0 on Windows with an NVIDIA GPU (OpenGL).
+Version 1.0.0 crashed Blender there: the add-on's timer read the dependency
+graph in the moment between an operator freeing objects and Blender
+rebuilding the graph. 1.0.1 brings the graph up to date before the timer
+reads it; the crash is reproduced by the tests without that line.
+
+Not yet tried: Blender 4.2 - 5.1, macOS, the Vulkan and Metal backends.
 
 ### Large builds
 
@@ -74,7 +82,7 @@ longest Blender would not respond. `tests/blender_bench_large.py` and
 
 ## Install
 
-Download or build `bucket_builder-1.0.0.zip`, then in Blender:
+Download or build `bucket_builder-1.0.1.zip`, then in Blender:
 Edit > Preferences > Get Extensions > the arrow in the top right >
 *Install from Disk*.
 
@@ -168,6 +176,7 @@ With the add-on installed and enabled in Blender:
     blender --background --python tests/blender_test.py             # end to end
     blender --background --python tests/blender_large_test.py       # large parts, memory, warnings
     blender --background --python tests/blender_ui_test.py          # panels and menus
+    tests/gui_on_xvfb.sh blender out blender_gui_undo.py            # undo, redo, delete in a window
     blender --background --python tests/blender_gpu_test.py -- out  # overlay, off-screen PNGs
     blender --background --python tests/blender_bvhtree_compare.py  # against BVHTree
     blender --background --python tests/blender_bench_large.py -- 20 1500000   # timings, large build
