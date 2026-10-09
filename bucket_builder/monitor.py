@@ -556,6 +556,7 @@ class Monitor:
             if w.set_geometry(os.uid, key):
                 self.hot[w.slot(os.uid)] = now
                 self.last_hot = now
+                self.move_serial += 1         # what is drawn for it changes
         else:
             w.add_object(os.uid, key, _matrix(ob_eval))
             os.in_world = True
