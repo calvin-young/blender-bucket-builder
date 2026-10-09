@@ -1416,7 +1416,12 @@ def capped_search_tests(rng):
                 while w.step(budget=0.002):
                     pr = w.pairs.get((0, 1))
                     if not w.unsettled and not borderline:
-                        assert (OK if pr is None else pr.state) == want, (name, trial, 'settled wrong')
+                        # settled: whether they collide is certain.  (How close
+                        # they are may still be waiting for its proof, which
+                        # is only made once the search has found no cut.)
+                        got = OK if pr is None else pr.state
+                        assert (got == COLLIDE) == (want == COLLIDE), (name, trial, 'settled wrong')
+                        assert got == want or (0, 1) in w._pend_refine, (name, trial, 'wrong at rest')
                 pr = w.pairs.get((0, 1))
                 got = OK if pr is None else pr.state
                 assert borderline or got == want, (name, trial, got, want, nhit, d,
@@ -1525,7 +1530,8 @@ def near_coincident_tests(rng):
             scan_steps += bool(w._pend_scan)
             pr = w.pairs.get(key)
             got = OK if pr is None else pr.state
-            assert w.unsettled or got == want, (label, 'settled as', got, 'wanted', want)
+            assert w.unsettled or (got == COLLIDE) == (want == COLLIDE), (label, 'settled as', got)
+            assert w.unsettled or got == want or key in w._pend_refine, (label, 'at rest', got, want)
             if not more:
                 break
         pr = w.pairs.get(key)
@@ -1643,6 +1649,173 @@ def near_coincident_tests(rng):
     print(f'  six nudged copies, fifteen pairs: all found colliding in {time.perf_counter() - t0:.2f} s '
           f'(longest step {longest * 1000:.0f} ms)')
     print('nearly coincident surfaces: ok')
+
+
+def live_budget_tests(rng):
+    """A live solve has a budget for its search for intersections as a whole.
+    Parts duplicated in place, and their copies as they are first nudged
+    away, would otherwise stall a step for seconds: every such pair has
+    hundreds of thousands of candidate triangle pairs.
+
+    What a step says while the budget is in the way may be too mild, but then
+    the world must not call it settled; and at rest the verdict is the
+    brute-force one."""
+    gens = [
+        lambda: meshes.grid_box((1.0, 0.8, 0.6), 3),
+        lambda: meshes.uv_sphere(0.6, 12, 6),
+        lambda: meshes.torus(0.6, 0.2, 12, 6),
+        lambda: meshes.blob(rng, 0.6, 12, 6, 0.3),
+        lambda: meshes.cylinder(0.3, 1.4, 12),
+    ]
+    saved = narrow.LIVE_BOX, narrow.LIVE_TESTS
+    try:
+        for box, tests, name in ((48, 10 ** 9, 'box tests'), (10 ** 9, 6, 'triangle tests'), (48, 6, 'both')):
+            narrow.LIVE_BOX, narrow.LIVE_TESTS = box, tests
+            pairs = wrong = contact = 0
+            stats = {}
+            for trial in range(60):
+                w = World()
+                w.set_scale(4.0, 0.01)
+                w.set_thresholds(0.0, float(rng.choice([0.0, 0.05, 0.15])))
+                w.set_detect_enclosed(bool(trial % 2))
+                shapes = [gens[rng.integers(len(gens))]() for _ in range(3)]
+                for k, (v, f) in enumerate(shapes):
+                    w.add_geom(k, v, f)
+                mats = {}
+                on_top = []
+                n = 0
+                for k in range(3):
+                    L = meshes.rot(rng)
+                    t = rng.uniform(-0.9, 0.9, 3)
+                    mats[n] = (k, meshes.matrix(L, t))
+                    n += 1
+                    # a copy exactly on it, or a hair away
+                    kind = trial % 3
+                    if kind < 2:
+                        d = np.zeros(3) if kind == 0 else rng.normal(size=3) * 0.01
+                        mats[n] = (k, meshes.matrix(L, t + d))
+                        if kind == 0:
+                            on_top.append((n - 1, n))
+                        n += 1
+                for uid, (k, M) in mats.items():
+                    w.add_object(uid, k, M)
+                P = {uid: posed_tris(w, uid) for uid in mats}
+                # live, as when the parts are dropped there
+                for _ in range(200):
+                    w.step(budget=0.002, hot_budget=0.002, idle=False)
+                    if not (w._pend_hot or w._pend_cold or w._dirty):
+                        break
+                want = {}
+                for a in range(n):
+                    for b in range(a + 1, n):
+                        nhit, _, d = brute(P[a], P[b], w.eps_exact)
+                        enclosed = (w.detect_enclosed and not nhit and d > max(w.coll_thr, w.eps_touch)
+                                    and expect_enclosed(P[a], P[b]))
+                        thr = max(w.clear_thr, w.eps_touch)
+                        borderline = (not nhit) and (abs(d - w.clear_thr) < 2e-3 * thr
+                                                     or abs(d - w.eps_touch) < 2e-3 * thr)
+                        want[(a, b)] = (expect_state(w, nhit, d, enclosed), borderline, nhit, d)
+                for key, (state, borderline, nhit, d) in want.items():
+                    pr = w.pairs.get(key)
+                    got = OK if pr is None else pr.state
+                    pairs += 1
+                    if got == COLLIDE and state != COLLIDE and not borderline:
+                        raise AssertionError((name, trial, key, 'a collision that is not there'))
+                    if state == COLLIDE and got != COLLIDE and not borderline:
+                        # too mild: allowed while moving, as long as nobody calls it final
+                        assert pr is not None and pr.unproven and pr.refine and key in w._pend_scan, (
+                            name, trial, key, 'missed and not flagged', got, nhit, d)
+                        assert w.unsettled
+                        wrong += 1
+                for key in on_top:
+                    # a copy lying exactly on its original is known to collide at once
+                    pr = w.pairs[key]
+                    assert pr.state == COLLIDE and not pr.unproven, (name, trial, key, pr.state)
+                    contact += 1
+                while w.step(budget=0.002):
+                    pass
+                assert not w._pend_scan and not w.unsettled
+                for key, (state, borderline, nhit, d) in want.items():
+                    pr = w.pairs.get(key)
+                    got = OK if pr is None else pr.state
+                    assert borderline or got == state, (name, trial, key, got, state, nhit, d)
+                    assert pr is None or not (pr.unproven or pr.refine or pr.lite or pr.stale)
+                    stats[state] = stats.get(state, 0) + 1
+            assert wrong >= 10 and contact >= 30, (name, wrong, contact)
+            print(f'  budget on {name}: {pairs} pairs live (OK/CLEAR/COLLIDE at rest = {stats.get(OK, 0)}/'
+                  f'{stats.get(CLEAR, 0)}/{stats.get(COLLIDE, 0)}), {wrong} collisions not seen while '
+                  f'moving, every one of them flagged; {contact} copies lying on their original seen at once')
+    finally:
+        narrow.LIVE_BOX, narrow.LIVE_TESTS = saved
+
+    # the real budget, on parts of a real size: twelve parts duplicated in
+    # place, and the copies then nudged away together
+    v, f = meshes.blob(rng, 12.0, 320, 160, 0.3)
+    w = World()
+    w.set_scale(400.0, 0.5)
+    w.set_thresholds(0.0, 1.0)
+    w.add_geom('g', v, f)
+    spots = [(40.0 * (i % 4), 40.0 * (i // 4), 20.0) for i in range(12)]
+    for i, t in enumerate(spots):
+        w.add_object(('o', i), 'g', meshes.matrix(None, t))
+    while w.step(budget=0.02):
+        pass
+    assert not w.pairs
+    counts = {'box': 0, 'tri': 0}
+    real_step, real_tt = narrow._step, tritri.tri_tri_intersect
+
+    def counted_step(w_, pid, ia, ib, sa_p, sb_p, *a, **k):
+        if pid.shape[0]:
+            counts['box'] += int(np.left_shift(1, np.take(sa_p + sb_p, pid)).sum())
+        return real_step(w_, pid, ia, ib, sa_p, sb_p, *a, **k)
+
+    def counted_tt(P, Q, eps):
+        counts['tri'] += P.shape[2]
+        return real_tt(P, Q, eps)
+
+    narrow._step, tritri.tri_tri_intersect = counted_step, counted_tt
+    try:
+        for i, t in enumerate(spots):
+            w.add_object(('c', i), 'g', meshes.matrix(None, t))
+        twins = [tuple(sorted((w.slot(('o', i)), w.slot(('c', i))))) for i in range(12)]
+        steps = 0
+        while w._pend_hot or w._dirty:
+            w.step(budget=0.012, hot_budget=0.016, idle=False)
+            steps += 1
+            assert steps < 50
+        # exactly on their originals: in contact, which is a collision, and known as one at once
+        assert all(w.pairs[k].state == COLLIDE and not w.pairs[k].unproven for k in twins)
+        assert not w.unsettled
+        at_rest = dict(counts)
+        worst = dict.fromkeys(counts, 0)
+        mild = 0
+        for d in (0.02, 0.05, 0.1, 0.2):
+            for i, t in enumerate(spots):
+                w.set_matrix(('c', i), meshes.matrix(None, (t[0] + d, t[1] + 0.4 * d, t[2] + 0.2 * d)))
+            before = dict(counts)
+            w.step(budget=0.012, hot_budget=0.016, idle=False)
+            for k in counts:
+                worst[k] = max(worst[k], counts[k] - before[k])
+            for k in twins:
+                pr = w.pairs[k]
+                if pr.stale:
+                    continue                      # its turn comes in the next step
+                if pr.state != COLLIDE:
+                    assert pr.unproven and pr.refine and w.unsettled, (d, k, pr.state)
+                    mild += 1
+        # one step of the solve is bounded in what it looks at (it was millions)
+        assert worst['box'] <= 3 * narrow.LIVE_BOX and worst['tri'] <= 2 * narrow.LIVE_TESTS, worst
+        assert mild > 0, 'the budget was never in the way: this test tests nothing'
+    finally:
+        narrow._step, tritri.tri_tri_intersect = real_step, real_tt
+    while w.step(budget=0.012):
+        pass
+    assert all(w.pairs[k].state == COLLIDE and w.pairs[k].nseg > 0 for k in twins)
+    assert not w.unsettled and not w._pend_scan
+    print(f'  twelve parts of {len(f):,} triangles duplicated in place: in contact, seen at once '
+          f'({at_rest["box"]:,} box tests); nudged away together, one live step looks at no more than '
+          f'{worst["box"]:,} boxes and {worst["tri"]:,} triangle pairs; at rest all twelve collide')
+    print('live budget: ok')
 
 
 def unsorted_tests(rng):
@@ -2013,6 +2186,7 @@ def main():
     dense_clearance_tests(rng)
     capped_search_tests(rng)
     near_coincident_tests(rng)
+    live_budget_tests(rng)
     cache_tests(rng)
     borrow_tests(rng)
     unsorted_tests(rng)

@@ -112,7 +112,18 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
   of such a pair waits until the scan has cleared it (`no_cut`). Tests:
   `capped_search_tests` (tiny caps, against brute force) and
   `near_coincident_tests`; `scratchpad/mutate_scan.py` shows both fail
-  without the scan.
+  without the scan. `unsettled` means "whether they collide is not certain
+  yet"; a clearance warning may still be on its way while a pair is only in
+  `_pend_refine` (the badge then says "measuring clearances").
+* **A live solve has a budget for its whole search** (`narrow.LIVE_BOX` box
+  tests, `LIVE_TESTS` triangle tests; ordinary steps reach 210 k / 21 k).
+  Duplicating a dozen parts in place and nudging them cost 0.5 - 4 s per
+  step before, now 30 - 50 ms. As the budget runs out the pairs with the
+  most rows stop first (`_fine(work=)`); pairs cut short are `unproven` and
+  `refine`, and when things are quiet `_scan_step` moves them to the cold
+  queue, ahead of all refinement. Contact found by the sketch's dive
+  (`touch`) proves a collision: a copy lying exactly on its original is red
+  at once, without any search. Test: `live_budget_tests`.
 * **The hatched collision region** is the surface of both parts within a few
   millimetres of the other (from the coarse traversal), not the triangles the
   intersection curve crosses, which are an invisible sliver on dense meshes.

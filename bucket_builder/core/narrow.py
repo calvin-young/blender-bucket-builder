@@ -75,6 +75,13 @@ BOX_CAP = 1200               # proxy boxes handed to the overlay per side
 BOX_CAP_LIVE = 300
 SCAN_BLOCK = 2048            # node pairs the exhaustive search expands at a time
 SCAN_SEGS = 4000             # intersection segments it keeps once it has found some
+# What the search for intersections may cost in one live solve, all pairs
+# together: box tests on the way down, and exact triangle tests at the bottom.
+# Ordinary steps stay well below (a part dragged through a dense build: up to
+# 210,000 and 21,000); these are for surfaces that nearly coincide, which
+# would otherwise take seconds (see ``solve``).
+LIVE_BOX = 320000
+LIVE_TESTS = 32000
 BIG = np.float32(1e30)
 
 
@@ -481,7 +488,7 @@ def _dive(w, rows, h_a, h_b, pose_a, pose_b, relt, beam, xf=None):
 
 
 def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=None, truncate=False,
-          xf=None):
+          xf=None, work=None):
     """Descend the given rows to triangle pairs.
 
     A row survives while its boxes overlap (within ``eps2``) or its box
@@ -492,6 +499,11 @@ def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=None, truncat
     * ``truncate=True`` (used for the distance search): only its ``cap`` most
       promising rows continue, and the pair is flagged as cut short.
 
+    ``work`` (with ``truncate=False``) is a budget for the whole call, in box
+    tests.  As it runs out, the pairs with the most rows are stopped as dense
+    and those with few go on: the small ones are finished for little, and it
+    is the large ones that the budget is there for.
+
     Returns (leaf rows, dense rows, flagged pairs, heights a, heights b,
     left2): ``left2`` is, per pair, the smallest squared box distance among
     the rows that truncation left out (inf if none), i.e. a proven lower
@@ -499,6 +511,7 @@ def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=None, truncat
     """
     if cap is None:
         cap = CAP_FINE
+    spent = 0
     npid = pose_a.shape[0]
     pid, ia, ib, lb2 = rows
     keep = lb2 <= np.maximum(np.take(thr2, pid), eps2)
@@ -530,6 +543,15 @@ def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=None, truncat
                 ahead = cnt[b] * np.exp2(np.clip(rate, 0.0, 2.0) * (h_a[b] + h_b[b]))
                 too_many[b[ahead > 4.0 * cap]] = True
         prev = cnt
+        if work is not None:
+            go = live & ~at_leaf & ~too_many
+            # rows that may be expanded in this pass, at four tests each (a
+            # little is always allowed, so that small pairs get to the end)
+            allow = max(work - spent, work >> 3) >> 2
+            if int(cnt[go].sum()) > allow:
+                idx = np.flatnonzero(go)
+                order = idx[np.argsort(cnt[idx], kind='stable')]
+                too_many[order[np.cumsum(cnt[order]) > allow]] = True
         if truncate and too_many.any():
             m_over = np.take(too_many, pid)
             over = np.flatnonzero(m_over)
@@ -558,11 +580,43 @@ def _fine(w, rows, h_a, h_b, pose_a, pose_b, relt, thr2, eps2, cap=None, truncat
                 break
         sa, sb, _ = _steps(w, pose_a, pose_b, h_a, h_b, live, pid.shape[0], -1.0)
         lev = sa + sb
+        if work is not None:
+            spent += int(np.take(np.left_shift(1, lev), pid).sum())
         h_a = h_a - sa
         h_b = h_b - sb
         pid, ia, ib, lb2 = _step(w, pid, ia, ib, sa, sb,
                                  w.LVL[pose_a, h_a], w.LVL[pose_b, h_b], relt, thr2, eps2, xf=xf)
     return _cat(leaves), _cat(dense_rows), flagged, h_a, h_b, left2
+
+
+def _share(cnt, budget):
+    """Split ``budget`` among pairs that ask for ``cnt`` each: the modest ones
+    get what they ask for, the others equal shares of what is left."""
+    order = np.argsort(cnt, kind='stable')
+    take = cnt.copy()
+    left = int(budget)
+    n = order.shape[0]
+    for i in range(n):
+        p = order[i]
+        quota = left // (n - i)
+        if cnt[p] > quota:
+            take[order[i:]] = quota
+            break
+        left -= int(cnt[p])
+    return take
+
+
+def _thin(pid, cnt, take):
+    """Indices of the rows to keep so that pair ``p`` keeps ``take[p]`` of its
+    ``cnt[p]`` rows, spread evenly over them (rows of a pair are neighbours in
+    space: the first so many would all be from one corner of the part)."""
+    order = np.argsort(pid, kind='stable')
+    ps = np.take(pid, order)
+    j = np.arange(ps.shape[0]) - np.take(np.cumsum(cnt) - cnt, ps)
+    t = np.take(take, ps)
+    c = np.take(cnt, ps)
+    keep = (j * t) // c != ((j - 1) * t) // c
+    return np.sort(order[keep])
 
 
 class _Best:
@@ -827,6 +881,14 @@ def solve(w, keys, exact=True, detail=None):
     ``refine`` so the caller redoes them with ``exact=True`` once the objects
     stop moving.
 
+    A live solve also has a budget for the search as a whole (``LIVE_BOX``,
+    ``LIVE_TESTS``).  It is far above what parts that cut through each other
+    need, and far below what surfaces that nearly coincide would take: a
+    dozen parts duplicated in place and nudged used to stall a step for
+    seconds.  Pairs it cuts short are ``unproven`` and ``refine``: what is
+    shown for them while they move may be too mild, the exact pass that
+    follows says how it is.
+
     * The clearance distance of pairs that do not intersect is the best value
       found by a capped search (an upper bound, usually within a few percent).
     * ``detail`` (a boolean per pair, or None for all) says which pairs get the
@@ -854,6 +916,7 @@ def solve(w, keys, exact=True, detail=None):
     eps = w.eps_len
     eps2 = np.float32(eps * eps)
     coll = max(w.coll_thr, w.eps_touch)
+    coll2 = coll * coll
     clear = w.clear_thr if w.clear_thr > coll else 0.0
     dmax = max(coll, clear)
     dlim2 = (dmax + eps) ** 2
@@ -885,6 +948,7 @@ def solve(w, keys, exact=True, detail=None):
         lite = ~np.asarray(detail, dtype=bool)
     full = ~lite
     sketch = np.zeros(npid, dtype=bool)     # sketched and found to intersect
+    touch = np.zeros(npid, dtype=bool)      # sketched and found to be in contact
     sk_rows = None
     live = not exact
     tri_cap = TRI_CAP_LIVE if live else w.tri_cap
@@ -907,24 +971,40 @@ def solve(w, keys, exact=True, detail=None):
                 if seg.shape[0]:
                     sk_rows = (d_pid[hit], d_ia[hit], d_ib[hit], seg.astype(np.float32))
                     sketch[sk_rows[0]] = True
+                # Contact proves a collision as well: a copy lying exactly on
+                # its original touches it everywhere and cuts it nowhere.
+                sel = np.flatnonzero(~np.take(sketch, d_pid) & (tritri.plane_gap2(P, Q) <= coll2))
+                if sel.shape[0]:
+                    d2, cp, cq = tritri.tri_tri_distance(np.take(P, sel, axis=2),
+                                                         np.take(Q, sel, axis=2))
+                    best.update(d_pid[sel], d2, cp, cq)
+                    touch[d_pid[sel[d2 <= coll2]]] = True
 
         # 1. every triangle pair whose boxes touch -> intersection segments
-        # (all pairs except those just proven to intersect)
-        if sketch.any():
-            pids = np.flatnonzero(~sketch)
+        # (all pairs except those just proven to collide)
+        if sketch.any() or touch.any():
+            pids = np.flatnonzero(~(sketch | touch))
             zs = np.zeros(pids.shape[0], dtype=np.int64)
             start = (pids, zs, zs, np.zeros(pids.shape[0], dtype=np.float32))
         else:
             start = (np.arange(npid), zero, zero, np.zeros(npid, dtype=np.float32))
         leaf, dense_rows, dense, h_ad, h_bd, _ = _fine(
             w, start, w.PH[pose_a], w.PH[pose_b], pose_a, pose_b, relt,
-            np.full(npid, -1.0, dtype=np.float32), eps2, xf=xf)
+            np.full(npid, -1.0, dtype=np.float32), eps2, xf=xf, work=LIVE_BOX if live else None)
         l_pid, l_ia, l_ib, l_lb2 = leaf
         approx |= dense
         capped |= dense
         if l_pid.shape[0]:
             cnt = np.bincount(l_pid, minlength=npid)
-            if (cnt > CAP_OVERLAP).any():
+            if live and l_pid.shape[0] > LIVE_TESTS:
+                # more candidates than a live step may test: every pair gets
+                # its share, taken from all over its candidates
+                take = _share(cnt, LIVE_TESTS)
+                approx |= take < cnt
+                capped |= take < cnt
+                sel = _thin(l_pid, cnt, take)
+                l_pid, l_ia, l_ib = l_pid[sel], l_ia[sel], l_ib[sel]
+            elif (cnt > CAP_OVERLAP).any():
                 approx |= cnt > CAP_OVERLAP
                 capped |= cnt > CAP_OVERLAP
                 sel = np.sort(_top_k(l_pid, (np.arange(l_pid.shape[0]),), CAP_OVERLAP))
@@ -1001,12 +1081,13 @@ def solve(w, keys, exact=True, detail=None):
                 _eval_rows(w, pose_a, pose_b, rel64t, o_pid[sel], o_ia[sel], o_ib[sel],
                            w.eps_exact, best, xf)
             lf = np.flatnonzero(~collided & lite)
-            if lf.shape[0] and clear > 0.0:
+            ld = lf[~touch[lf]]
+            if ld.shape[0] and clear > 0.0:
                 # sketched: the closest triangles a guided search comes across.
                 # A value below the clearance is a true violation; anything
                 # else is unproven and is checked properly later.
-                zs = np.zeros(lf.shape[0], dtype=np.int64)
-                d_pid, d_ia, d_ib = _dive(w, (lf, zs, zs, np.zeros(lf.shape[0], dtype=np.float32)),
+                zs = np.zeros(ld.shape[0], dtype=np.int64)
+                d_pid, d_ia, d_ib = _dive(w, (ld, zs, zs, np.zeros(ld.shape[0], dtype=np.float32)),
                                           w.PH[pose_a], w.PH[pose_b], pose_a, pose_b, relt, BEAM, xf)
                 if d_pid.shape[0]:
                     _eval_rows(w, pose_a, pose_b, rel64t, d_pid, d_ia, d_ib, w.eps_exact, best, xf)
@@ -1246,6 +1327,8 @@ def solve(w, keys, exact=True, detail=None):
         d = float(dist[p])
         # no intersection found, but not every candidate was looked at
         res.unproven = bool(capped[p] and not cleared[p]) and d > coll
+        if res.unproven and live:
+            res.refine = True         # (cut short by the budget of a live solve, perhaps)
         if d <= coll:
             state, thr_v = COLLIDE, coll
         elif clear > 0.0 and d < clear:

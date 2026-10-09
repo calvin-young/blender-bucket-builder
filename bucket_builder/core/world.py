@@ -1458,13 +1458,14 @@ class World:
             elif idle and self._virt_todo:
                 self._upgrade()
                 continue
-            elif idle and self._pend_refine:
-                src, exact, limit = self._pend_refine, True, budget
             elif idle and self._pend_scan:
+                # (before any refinement: these are verdicts that are not certain)
                 if (solved and time.perf_counter() - t0 > budget) or not self._scan_step(t0 + budget):
                     break
                 solved += 1
                 continue
+            elif idle and self._pend_refine:
+                src, exact, limit = self._pend_refine, True, budget
             else:
                 break
             if solved and time.perf_counter() - t0 > limit:
@@ -1522,7 +1523,8 @@ class World:
                     self._pend_refine[key] = None
                 if pr.unproven:
                     self._pend_scan[key] = None
-                    self.scans += 1
+                else:
+                    self._pend_scan.pop(key, None)
             solved += len(keys)
             self.version += 1
         if self._oob_dirty or self._oob_all:
@@ -1543,11 +1545,20 @@ class World:
             if pr is None or pr.stale or not pr.unproven:
                 del self._pend_scan[key]
                 continue
+            if pr.refine:
+                # It was a live solve that could not say, perhaps only because
+                # of its budget: the exact one comes first, ahead of every
+                # refinement that is waiting.
+                del self._pend_scan[key]
+                self._pend_refine.pop(key, None)
+                self._pend_cold[key] = None
+                return True
             if not self._prepare(set(key), deadline, False):
                 return False
             state = self._pend_scan[key]
             if state is None:
                 state = self._pend_scan[key] = narrow.scan_start(self, key)
+                self.scans += 1
             found = narrow.scan(self, key, state, deadline)
             if found is None:
                 return False
