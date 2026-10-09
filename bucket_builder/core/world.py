@@ -32,6 +32,14 @@ hand, are always worked out with fitted poses: proving a clearance with the
 looser boxes of a borrowed one can take ten times as long as fitting.  The
 extents of an object do not need its pose.
 
+A mesh can be put in before it is sorted (``add_raw``): its objects have their
+extents at once, so what is far from everything else, and what is inside the
+build volume, is known without waiting.  Only the pairs that involve such a
+mesh wait, until ``set_sorted`` delivers its triangles in tree order.
+
+A mesh that no object uses any more can be kept as long as there is room
+(``keep_unused``): hiding a part and showing it again then costs nothing.
+
 Results are kept per object pair and are only recomputed for pairs that involve
 an object that changed.
 """
@@ -66,8 +74,10 @@ POS_TOL = 1e-6
 
 
 class Geom:
+    """One unique mesh.  ``ready``: its triangles are in tree order (until then
+    only its vertices are of use).  ``users``: the slots of its objects."""
     __slots__ = ('key', 'nv', 'nt', 'lbase', 'tbase', 'H', 'nreal', 'npad', 'off',
-                 'rows', 'refs', 'ext', 'poses', 'rad')
+                 'rows', 'refs', 'ext', 'poses', 'rad', 'ready', 'users')
 
 
 class Pose:
@@ -152,6 +162,11 @@ class World:
         self._pose_free = []
         self._poses = {}
         self._geoms = {}
+        self._idle = {}           # keys of meshes no object uses, least recently used first
+        # Whether a sorted mesh is kept when its last object goes (see
+        # ``_geom_unused``).  Whoever switches this on must be sure that a
+        # key still stands for the same geometry when the mesh is used again.
+        self.keep_unused = False
         self.cache_limit = None   # bytes the cached data may take (None: no limit)
         self.pose_bytes = 0       # bytes of the poses that exist right now
         self.geom_bytes = 0       # bytes of the unique meshes
@@ -201,9 +216,11 @@ class World:
         self._pend_hot = {}       # pairs touched by a live edit: solved first, quickly
         self._pend_cold = {}      # background work: solved exactly
         self._pend_refine = {}    # quick results waiting for their exact pass
+        self._pend_wait = {}      # pairs waiting for a mesh to be sorted -> came from the hot queue
         self._oob_dirty = set()
         self._oob_all = False
         self._oob_geom = {}       # slots whose out-of-volume geometry is still to be collected
+        self._oob_wait = {}       # ... and those that wait for their mesh to be sorted for it
         self._param_stamp = 0
         self.version = 0          # bumps whenever any result changes
         self._serial = 0
@@ -289,21 +306,39 @@ class World:
     def add_geom(self, key, verts, tris):
         """Register a triangle mesh (local coordinates) under ``key``."""
         g = self._geoms.get(key)
-        if g is not None:
-            return g
-        return self.add_sorted(key, *bvh.sort_mesh(verts, tris))
+        if g is None:
+            return self.add_sorted(key, *bvh.sort_mesh(verts, tris))
+        if not g.ready:
+            self.set_sorted(key, bvh.order_mesh(*self.geom_views(key)))
+        return g
 
     def add_sorted(self, key, verts, tris):
-        """Register a mesh that ``bvh.sort_mesh`` has prepared."""
+        """Register a mesh that ``bvh.sort_mesh`` has prepared.  If it is
+        there already but unsorted, this sorts it."""
+        g = self._geoms.get(key)
+        if g is not None:
+            if not g.ready:
+                self.set_sorted(key, tris)
+            return g
+        return self._geom_new(key, verts, tris, True)
+
+    def add_raw(self, key, verts, tris):
+        """Register a mesh whose triangles are not in tree order yet, as
+        ``bvh.clean_mesh`` returns it.  Objects can use it at once; what
+        needs its tree waits for ``set_sorted``."""
         g = self._geoms.get(key)
         if g is not None:
             return g
+        return self._geom_new(key, verts, tris, False)
+
+    def _geom_new(self, key, verts, tris, ready):
         nt = tris.shape[0]
         g = Geom()
         g.key = key
         g.nv = verts.shape[0]
         g.nt = nt
         g.H, g.nreal, g.npad, g.off, g.rows = bvh.level_layout(nt)
+        self._make_way(self._geom_size(g))
         self.TIDX.want = self.TIDX.top + max(g.npad[0], self.incoming[0])
         self.LVERT.want = self.LVERT.top + max(g.nv, self.incoming[1])
         g.tbase = self.TIDX.alloc(g.npad[0])
@@ -314,11 +349,70 @@ class World:
         self.LVERT.data[g.lbase:g.lbase + g.nv] = verts
         g.rad = float(np.abs(verts).max()) if g.nv else 0.0
         g.refs = 0                # objects using this mesh
+        g.users = set()           # ... and their slots
         g.ext = {}                # rotation/scale bytes -> extents
         g.poses = []
+        g.ready = bool(ready)
         self._geoms[key] = g
         self.geom_bytes += self._geom_size(g)
         return g
+
+    def geom_ready(self, key):
+        """True if the mesh is there and sorted."""
+        g = self._geoms.get(key)
+        return g is not None and g.ready
+
+    def geom_views(self, key):
+        """(vertices, triangles) of a mesh as views of the shared storage, for
+        handing an unsorted mesh to ``bvh.order_mesh``.  They stay valid for
+        reading (the storage is replaced, never rewritten, when it grows),
+        but only describe the mesh for as long as it is registered."""
+        g = self._geoms[key]
+        return (self.LVERT.data[g.lbase:g.lbase + g.nv],
+                self.TIDX.data[g.tbase:g.tbase + g.nt])
+
+    def set_sorted(self, key, tris):
+        """The triangles of an unsorted mesh in tree order (what
+        ``bvh.order_mesh`` made of ``geom_views``).  Everything that was
+        waiting for the mesh is taken up again.  Returns False if there is
+        no such mesh waiting."""
+        g = self._geoms.get(key)
+        if g is None or g.ready:
+            return False
+        if tris.shape[0] != g.nt:
+            raise ValueError('not the triangles of this mesh')
+        self.TIDX.data[g.tbase:g.tbase + g.nt] = tris
+        g.ready = True
+        obj = self._obj
+        wait = self._pend_wait
+        for slot in g.users:
+            if slot in self._oob_wait:
+                del self._oob_wait[slot]
+                self._oob_geom[slot] = None
+            if not wait:
+                continue
+            for o in self.adj[slot]:
+                pair = (slot, o) if slot < o else (o, slot)
+                hot = wait.get(pair)
+                if hot is not None and obj[o][1].ready:
+                    del wait[pair]
+                    (self._pend_hot if hot else self._pend_cold)[pair] = None
+        return True
+
+    def wanted(self):
+        """The unsorted meshes that results are waiting for: key -> how many
+        pairs and out-of-volume pictures each holds up."""
+        out = {}
+        obj = self._obj
+        for pair in self._pend_wait:
+            for slot in pair:
+                g = obj[slot][1]
+                if not g.ready:
+                    out[g.key] = out.get(g.key, 0) + 1
+        for slot in self._oob_wait:
+            g = obj[slot][1]
+            out[g.key] = out.get(g.key, 0) + 1
+        return out
 
     @staticmethod
     def _geom_size(g):
@@ -332,8 +426,54 @@ class World:
     def _geom_drop(self, g):
         self.TIDX.release(g.tbase, g.npad[0])
         self.LVERT.release(g.lbase, g.nv)
+        self._idle.pop(g.key, None)
         if self._geoms.pop(g.key, None) is not None:
             self.geom_bytes -= self._geom_size(g)
+
+    def _geom_unused(self, g):
+        """The last object using a mesh is gone.  A sorted mesh is kept for
+        as long as there is room, in case the part comes back (hidden and
+        shown again, say); sorting is what takes the time."""
+        if g.ready and self.keep_unused:
+            self._idle[g.key] = None
+            self._trim_idle()
+        else:
+            self._geom_drop(g)
+
+    def _trim_idle(self, need=0):
+        """Drop meshes that no object uses, the longest unused first, until
+        ``need`` more bytes fit the limit (counting the pose storage as it
+        is, used or not: giving that back means copying it)."""
+        limit = self.cache_limit
+        if limit is None:
+            return
+        while self._idle and (self.geom_bytes + max(self.pose_bytes, self.BOX.nbytes)
+                              + need > limit):
+            self._geom_drop(self._geoms[next(iter(self._idle))])
+
+    def _make_way(self, need):
+        """Room for ``need`` more bytes of mesh data within the limit.  Meshes
+        nobody uses go first, then poses, the least recently used first (they
+        are fitted again when they are needed).  A mesh in use never goes: if
+        those alone are more than the limit, the limit gives way."""
+        limit = self.cache_limit
+        if limit is None:
+            return
+        self._trim_idle(need)
+        fixed = self.geom_bytes + need
+        if fixed + max(self.pose_bytes, self.BOX.nbytes) <= limit:
+            return
+        for p in sorted(self._poses.values(), key=lambda q: q.used):
+            if fixed + self.pose_bytes <= limit:
+                break
+            self._pose_drop(p)
+            self.evictions += 1
+        # the storage itself: hand back its unused end, or start afresh
+        self.BOX.shrink(max(self.BOX.top, 1 << 14))
+        if self._poses and fixed + self.BOX.nbytes > limit:
+            self.evictions += len(self._poses)
+            self.flushes += 1
+            self.flush_poses()
 
     def drop_unused_geoms(self):
         for g in [g for g in self._geoms.values() if g.refs == 0]:
@@ -427,6 +567,12 @@ class World:
         caller builds the ones it needs again."""
         if self._room_for(g):
             return
+        if self._idle:
+            # meshes nobody uses go before any pose does
+            while self._idle and not self._room_for(g):
+                self._geom_drop(self._geoms[next(iter(self._idle))])
+            if self._room_for(g):
+                return
         # least recently used first; a pose that others borrow, or the only
         # one of its mesh, is worth more than its age says
         virt = self.O_VIRT
@@ -732,11 +878,18 @@ class World:
         Lowering it below what is in use drops poses; they are fitted again
         on demand."""
         self.cache_limit = None if nbytes is None else max(0, int(nbytes))
+        self._trim_idle()
         room = self.pose_room()
         if room is not None and self.BOX.nbytes > room:
-            for p in list(self._poses.values()):
-                self._pose_drop(p)
-            self.BOX.shrink(1 << 14)
+            self.flush_poses()
+
+    def flush_poses(self):
+        """Drop every pose and give their memory back (the monitor is being
+        paused, or the limit was lowered).  Results stay; poses are fitted
+        again when they are next needed."""
+        for p in list(self._poses.values()):
+            self._pose_drop(p)
+        self.BOX.shrink(1 << 14)
 
     def _fit(self, p):
         """(Re)compute posed vertices and every node box of a pose."""
@@ -900,6 +1053,8 @@ class World:
             self._obj.append([uid, g, L32, None])
             self._grow_objects(slot + 1)
         g.refs += 1
+        g.users.add(slot)
+        self._idle.pop(g.key, None)
         self._demand += self._pose_rows(g.nv, g.rows)[1]
         self._slot_of[uid] = slot
         self.O_T[slot] = M[:3, 3]
@@ -970,10 +1125,14 @@ class World:
         o[1] = g
         self.O_LB[slot] = g.lbase
         g.refs += 1
+        g.users.add(slot)
+        self._idle.pop(g.key, None)
         old.refs -= 1
+        old.users.discard(slot)
         self._demand += self._pose_rows(g.nv, g.rows)[1] - self._pose_rows(old.nv, old.rows)[1]
         if old.refs == 0:
-            self._geom_drop(old)
+            self._geom_unused(old)
+        self._oob_wait.pop(slot, None)
         self._set_extents(slot)
         self._mark(slot, hot)
         return True
@@ -986,9 +1145,10 @@ class World:
         self._detach(slot)
         g = self._obj[slot][1]
         g.refs -= 1
+        g.users.discard(slot)
         self._demand -= self._pose_rows(g.nv, g.rows)[1]
         if g.refs == 0:
-            self._geom_drop(g)
+            self._geom_unused(g)
         self._obj[slot] = None
         self.O_ALIVE[slot] = False
         self.O_POSE[slot] = -1
@@ -996,6 +1156,7 @@ class World:
         self._dirty.pop(slot, None)
         self._oob_dirty.discard(slot)
         self._oob_geom.pop(slot, None)
+        self._oob_wait.pop(slot, None)
         self.oob.pop(slot, None)
         self.wall.pop(slot, None)
         self.version += 1
@@ -1063,6 +1224,7 @@ class World:
         self._pend_hot.pop(key, None)
         self._pend_cold.pop(key, None)
         self._pend_refine.pop(key, None)
+        self._pend_wait.pop(key, None)
         if self.pairs.pop(key, None) is not None and self.viol.pop(key, None) is not None:
             self.version += 1
 
@@ -1139,7 +1301,8 @@ class World:
                 if not hot and self.viol.pop(key, None) is not None:
                     self.version += 1
             self._pend_refine.pop(key, None)
-            if hot:
+            was_hot = self._pend_wait.pop(key, False)
+            if hot or was_hot:
                 self._pend_cold.pop(key, None)
                 self._pend_hot[key] = None
             elif key not in self._pend_hot:
@@ -1148,18 +1311,26 @@ class World:
     # ------------------------------------------------------------------- step
     @property
     def busy(self):
+        """True while ``step`` has something to do.  (What waits for a mesh
+        to be sorted does not count: see ``waiting``.)"""
         return bool(self._dirty or self._pend_hot or self._pend_cold or self._pend_refine
                     or self._virt_todo or self._oob_geom)
+
+    @property
+    def waiting(self):
+        """True while something waits for a mesh to be sorted."""
+        return bool(self._pend_wait or self._oob_wait)
 
     @property
     def unsettled(self):
         """True while a pair has no result yet.  (Pairs waiting only for their
         exact distance already have a complete collision answer.)"""
-        return bool(self._dirty or self._pend_hot or self._pend_cold)
+        return bool(self._dirty or self._pend_hot or self._pend_cold or self._pend_wait)
 
     @property
     def pending(self):
-        return len(self._pend_hot) + len(self._pend_cold) + len(self._pend_refine)
+        return (len(self._pend_hot) + len(self._pend_cold) + len(self._pend_refine)
+                + len(self._pend_wait))
 
     def _batch(self, src, size, borrow):
         """The next pairs of a queue to solve together (they stay queued).
@@ -1182,6 +1353,15 @@ class World:
         for key in src:
             if key not in pairs:
                 dead.append(key)
+                continue
+            if not (obj[key[0]][1].ready and obj[key[1]][1].ready):
+                # A mesh is still to be sorted: out of the queue until it is.
+                # That can take a while, so what is on screen for the pair
+                # (worked out for another shape or place) goes now.
+                dead.append(key)
+                self._pend_wait[key] = src is self._pend_hot
+                if self.viol.pop(key, None) is not None:
+                    self.version += 1
                 continue
             wait = None
             for slot in key:
@@ -1424,6 +1604,7 @@ class World:
                 self.version += 1
             self._oob_dirty.clear()
             self._oob_geom.clear()
+            self._oob_wait.clear()
             self._oob_all = False
             return
         if self._oob_all:
@@ -1458,6 +1639,7 @@ class World:
         todo = self._oob_geom
         for i, slot in enumerate(cand):
             todo.pop(slot, None)
+            self._oob_wait.pop(slot, None)
             if near[i]:
                 r = WallResult()
                 r.dist = max(0.0, float(gap[i]))
@@ -1502,6 +1684,9 @@ class World:
         todo = self._oob_geom
         vlo, vhi = self.volume
         inner = self.inner_box()
+        for slot in [s for s in todo if not self._obj[s][1].ready]:
+            del todo[slot]                  # its mesh is still to be sorted
+            self._oob_wait[slot] = None
         while todo:
             room = self.pose_room()
             group = []
@@ -1587,4 +1772,6 @@ class World:
             'evictions': self.evictions,
             'flushes': self.flushes,
             'borrowing': int(len(self._virt_todo) + len(self._borrowing)),
+            'unsorted': sum(1 for g in self._geoms.values() if not g.ready),
+            'unused_bytes': sum(self._geom_size(self._geoms[k]) for k in self._idle),
         }

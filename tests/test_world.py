@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(HERE, '..', 'bucket_builder'))   # import the co
 sys.path.insert(0, HERE)
 
 from core import World, OK, CLEAR, COLLIDE, PARTIAL, OUTSIDE  # noqa: E402
-from core import narrow, tritri  # noqa: E402
+from core import bvh, narrow, tritri  # noqa: E402
 import meshes  # noqa: E402
 
 
@@ -93,6 +93,19 @@ def check_pair(w, ua, ub, label, stats):
         # the reported closest points must be that far apart
         assert abs(np.linalg.norm(pr.pa - pr.pb) - pr.dist) < 1e-9, label
         assert pr.tri_a is not None and len(pr.tri_a) and len(pr.tri_b), (label, 'no region')
+
+
+def same_pairs(got, want, label):
+    """Two sets of pair results, key -> (state, distance, ...), are the same:
+    states and everything else exactly, distances to what a proof promises.
+    (The search for the smallest gap stops when nothing can be more than a
+    ten-thousandth closer, so the last digits of a distance depend on the
+    order in which the pairs of a batch were looked at, and that on timing.)"""
+    assert set(got) == set(want), (label, sorted(set(got) ^ set(want))[:6])
+    for key, g in got.items():
+        w_ = want[key]
+        assert g[0] == w_[0] and g[2:] == w_[2:], (label, key, g, w_)
+        assert abs(g[1] - w_[1]) <= 2e-4 * max(g[1], w_[1]) + 1e-9, (label, key, g, w_)
 
 
 def random_pair_tests(rng):
@@ -195,11 +208,12 @@ def special_pair_tests():
     print('special cases: ok')
 
 
-def incremental_tests(rng, borrow=False, room=0, edits_wanted=140):
+def incremental_tests(rng, borrow=False, room=0, edits_wanted=140, raw=False):
     """Many objects, random edits; results must equal a world built from scratch.
 
     ``borrow``: every mesh may borrow a pose when it is turned (normally only
-    large ones do).  ``room``: memory for about that many poses only."""
+    large ones do).  ``room``: memory for about that many poses only.
+    ``raw``: meshes are put in unsorted and sorted later, at random moments."""
     parts = {
         'box': meshes.box((1.0, 0.7, 0.5)),
         'gbox': meshes.grid_box((0.9, 0.6, 0.6), 5),
@@ -219,11 +233,17 @@ def incremental_tests(rng, borrow=False, room=0, edits_wanted=140):
             w.set_volume(*vol)
         if borrow and not plain:
             w.fit_now = 0
+        w.keep_unused = raw and not plain
         for k, (v, f) in parts.items():
-            w.add_geom(k, v, f)
+            if raw and not plain:
+                w.add_raw(k, *bvh.clean_mesh(v, f))
+            else:
+                w.add_geom(k, v, f)
         if room and not plain:
             w.set_cache_limit(w.geom_bytes + room * one)
         for uid, (g, M) in objs.items():
+            if not w.has_geom(g):
+                w.add_geom(g, *mesh_of(g))        # (a second copy of a mesh, see register)
             w.add_object(uid, g, M)
         while w.step(budget=10.0):
             pass
@@ -236,10 +256,58 @@ def incremental_tests(rng, borrow=False, room=0, edits_wanted=140):
             flip = ua > ub
             key = (ub, ua) if flip else (ua, ub)
             nseg = 0 if pr.segs is None else len(pr.segs)
-            out[key] = (pr.state, round(pr.dist, 6), nseg)
+            out[key] = (pr.state, pr.dist, nseg)
         oob = {w.uid(s): (r.state, None if r.tris is None else len(r.tris))
                for s, r in w.oob.items()}
         return out, oob
+
+    copies = [0]
+
+    def mesh_of(key):
+        return parts[key[0] if isinstance(key, tuple) else key]
+
+    def register(w, k):
+        """Put a mesh (back) in and return its key.  With ``raw`` it is often
+        a new, unsorted copy under a key of its own."""
+        if raw and rng.random() < 0.5:
+            copies[0] += 1
+            k = (k, copies[0])
+            w.add_raw(k, *bvh.clean_mesh(*mesh_of(k)))
+        elif not w.has_geom(k):
+            w.add_geom(k, *parts[k])
+        return k
+
+    def unsorted(w):
+        return [k for k, g in w._geoms.items() if not g.ready]
+
+    def sort_one(w, k):
+        assert w.set_sorted(k, bvh.order_mesh(*w.geom_views(k)))
+
+    def partial_check(w, ref_w, label):
+        """With meshes still unsorted: what is shown is right, and nothing is
+        missing but what waits for one of those meshes."""
+        waiting = set(unsorted(w))
+        got, got_oob = snapshot(w)
+        want, want_oob = snapshot(ref_w)
+        geom_of = {uid: g for uid, (g, M) in objs.items()}
+        same_pairs(got, {k: v for k, v in want.items() if k in got}, label)
+        for key in want:
+            if key not in got:
+                assert geom_of[key[0]] in waiting or geom_of[key[1]] in waiting, (label, key)
+        assert set(got_oob) == set(want_oob), (label, got_oob, want_oob)
+        for uid, (state, ntri) in want_oob.items():
+            assert got_oob[uid][0] == state, (label, uid)
+            if geom_of[uid] in waiting:
+                assert got_oob[uid][1] is None, (label, uid, 'picture without a tree')
+            else:
+                assert got_oob[uid][1] == ntri, (label, uid)
+        # and the world says what it is waiting for
+        assert set(w.wanted()) <= waiting, (label, set(w.wanted()), waiting)
+        held = {geom_of[u] for key in want if key not in got for u in key} & waiting
+        held |= {geom_of[u] for u, (state, ntri) in want_oob.items()
+                 if ntri is not None and geom_of[u] in waiting}
+        assert held <= set(w.wanted()), (label, held, set(w.wanted()))
+        return len(waiting)
 
     objs = {}
     n_obj = 14
@@ -252,6 +320,11 @@ def incremental_tests(rng, borrow=False, room=0, edits_wanted=140):
     edits = 0
     nviol = 0
     borrowed = 0
+    partial = 0
+    if raw:
+        assert not w.busy and w.unsettled and len(unsorted(w)) == len(names)
+        assert w.pose_bytes == 0 and not w.viol          # nothing can have been solved
+        partial_check(w, fresh(objs, thr, vol), 'start')
     for it in range(edits_wanted):
         kind = rng.integers(8)
         uid = f'o{rng.integers(n_obj)}'
@@ -269,21 +342,19 @@ def incremental_tests(rng, borrow=False, room=0, edits_wanted=140):
             w.set_matrix(uid, M)
         elif kind == 5 and uid in objs:        # swap geometry
             g, M = objs[uid]
-            g2 = names[rng.integers(len(names))]
+            g2 = register(w, names[rng.integers(len(names))])
             objs[uid] = (g2, M)
-            w.add_geom(g2, *parts[g2])        # unused geometry is dropped, so re-register
             w.set_geometry(uid, g2)
         elif kind == 6:                        # remove / re-add
             if uid in objs:
                 del objs[uid]
                 w.remove_object(uid)
-                for k, (v, f) in parts.items():   # geoms may have been dropped
-                    w.add_geom(k, v, f)
+                if rng.random() < 0.5:
+                    w.drop_unused_geoms()         # (else they are kept for a while)
             else:
                 M = meshes.matrix(meshes.rot(rng), rng.uniform(-1.6, 1.6, 3))
-                g = names[rng.integers(len(names))]
+                g = register(w, names[rng.integers(len(names))])
                 objs[uid] = (g, M)
-                w.add_geom(g, *parts[g])
                 w.add_object(uid, g, M)
         elif kind == 7:                        # change thresholds / volume
             thr = (float(rng.choice([0.0, 0.03])), float(rng.choice([0.0, 0.1, 0.25])))
@@ -293,26 +364,57 @@ def incremental_tests(rng, borrow=False, room=0, edits_wanted=140):
             w.set_volume(*vol)
         else:
             continue
+        if raw and uid in objs and rng.random() < 0.35:
+            # ... and its mesh is read again at the same time: the same shape
+            # as a new, unsorted mesh
+            g, M = objs[uid]
+            copies[0] += 1
+            g2 = (g[0] if isinstance(g, tuple) else g, copies[0])
+            w.add_raw(g2, *bvh.clean_mesh(*mesh_of(g2)))
+            w.set_geometry(uid, g2)
+            objs[uid] = (g2, M)
         # sometimes a few frames of a drag first, as in a live edit; sometimes
         # with a tiny budget so work is spread over several steps
         if it % 4 == 1:
             for _ in range(int(rng.integers(1, 4))):
                 w.step(idle=False)
             borrowed += w.stats()['borrowing']
-        if it % 3 == 0:
-            steps = 0
-            while w.step(budget=0.0005, hot_budget=0.001):
-                steps += 1
-                assert steps < 10000
-        else:
-            while w.step():
-                pass
-        if room:
-            assert w.pose_bytes + w.geom_bytes <= w.cache_limit, (it, w.pose_bytes)
+        def settle():
+            if it % 3 == 0:
+                steps = 0
+                while w.step(budget=0.0005, hot_budget=0.001):
+                    steps += 1
+                    assert steps < 10000
+            else:
+                while w.step():
+                    pass
+
+        settle()
         ref_w = fresh(objs, thr, vol)
+        if raw:
+            # meshes arrive sorted one by one, in any order, some of them
+            # only after the next edit
+            todo = unsorted(w)
+            rng.shuffle(todo)
+            keep = int(rng.integers(0, 3)) if it % 5 else 0
+            while len(todo) > keep:
+                partial += bool(partial_check(w, ref_w, (it, kind, 'unsorted')))
+                sort_one(w, todo.pop())
+                if len(todo) > keep and rng.random() < 0.4:
+                    sort_one(w, todo.pop())           # two arrive between steps
+                settle()
+            if todo:
+                partial += bool(partial_check(w, ref_w, (it, kind, 'left unsorted')))
+                continue
+        if room and not raw:
+            # (with ``raw`` the meshes in use multiply and may by themselves
+            # be more than the limit, which then gives way)
+            assert w.pose_bytes + w.geom_bytes <= w.cache_limit, (it, w.pose_bytes)
+        if room:
+            assert not w._idle or w.pose_bytes + w.geom_bytes <= w.cache_limit, 'unused meshes kept over the limit'
         got, got_oob = snapshot(w)
         want, want_oob = snapshot(ref_w)
-        assert got == want, (it, kind, sorted(set(got.items()) ^ set(want.items())))
+        same_pairs(got, want, (it, kind))
         assert got_oob == want_oob, (it, kind, got_oob, want_oob)
         edits += 1
         nviol += len(want)
@@ -324,10 +426,13 @@ def incremental_tests(rng, borrow=False, room=0, edits_wanted=140):
         w.BOX.live, w.TIDX.live, w.pose_bytes)
     assert not w.pairs and not w.viol and not w.oob
     assert not (w._virt_todo or w._borrowing or w._oob_geom or w._demand), 'state left behind'
+    assert not (w._pend_wait or w._oob_wait or w._idle or w._geoms), 'state left behind'
     assert bool(borrowed) == bool(borrow), borrowed
     assert not room or w.evictions > 0
+    assert not raw or partial > 30, partial
     how = ('' if not borrow else ', every mesh borrowing when turned') + (
-        f', memory for {room} poses' if room else '')
+        f', memory for {room} poses' if room else '') + (
+        f', meshes arriving unsorted ({partial} checks with some still to be sorted)' if raw else '')
     print(f'incremental edits checked against a fresh world: {edits} '
           f'(violating pairs seen: {nviol}){how}')
 
@@ -809,7 +914,7 @@ def cache_tests(rng):
             ua, ub = w.uid(a), w.uid(b)
             # (how finely the hatched region is resolved depends on what else
             # is solved in the same batch, so it is not compared)
-            out[(min(ua, ub), max(ua, ub))] = (pr.state, round(pr.dist, 6), pr.nseg,
+            out[(min(ua, ub), max(ua, ub))] = (pr.state, pr.dist, pr.nseg,
                                                pr.tri_a is not None and len(pr.tri_a) > 0)
         oob = {w.uid(s): (r.state, None if r.tris is None else len(r.tris)) for s, r in w.oob.items()}
         wall = {w.uid(s): (round(r.dist, 6), None if r.tris is None else len(r.tris))
@@ -846,7 +951,8 @@ def cache_tests(rng):
             while w.step(budget=0.002):
                 pass
         got, want = snapshot(lim), snapshot(ref)
-        for k in range(3):
+        same_pairs(got[0], want[0], it)
+        for k in (1, 2):
             assert got[k] == want[k], (it, k, sorted(set(got[k].items()) ^ set(want[k].items()))[:6])
         peak = max(peak, lim.pose_bytes)
         assert lim.pose_bytes + lim.geom_bytes <= lim.cache_limit, (it, lim.pose_bytes)
@@ -1003,8 +1109,8 @@ def borrow_tests(rng):
         fr = f.pairs.get((f.slot('A'), f.slot('B')))
         assert (pr is None or pr.state == OK) == (fr is None or fr.state == OK), trial
         if pr is not None and pr.state != OK:
-            assert (pr.state, round(pr.dist, 6), pr.nseg, pr.enclosed) == (
-                fr.state, round(fr.dist, 6), fr.nseg, fr.enclosed), (trial, pr.dist, fr.dist)
+            assert (pr.state, pr.nseg, pr.enclosed) == (fr.state, fr.nseg, fr.enclosed), trial
+            assert abs(pr.dist - fr.dist) <= 2e-4 * fr.dist + 1e-9, (trial, pr.dist, fr.dist)
     print(f'borrowed poses: {n_borrow} turned or scaled parts ({n_small_angle} only slightly), '
           f'states OK/CLEAR/COLLIDE = {stats.get(OK, 0)}/{stats.get(CLEAR, 0)}/{stats.get(COLLIDE, 0)} '
           f'(enclosed: {stats.get("enclosed", 0)}), {n_quick} quick answers consistent, '
@@ -1248,6 +1354,217 @@ def dense_clearance_tests(rng):
     print('dense clearance: ok')
 
 
+def unsorted_tests(rng):
+    """A mesh can be put in before it is sorted.  What can be said without
+    its tree is said at once: where it is, what it is far from, whether it is
+    inside the build volume.  Only what needs the tree waits, and the world
+    says which meshes that is."""
+    shapes = {
+        'blob': meshes.blob(rng, 0.5, 40, 20, 0.3),
+        'tor': meshes.torus(0.5, 0.18, 40, 20),
+        'sph': meshes.uv_sphere(0.5, 40, 20),
+    }
+
+    def sort(w, key):
+        assert not w.geom_ready(key)
+        assert w.set_sorted(key, bvh.order_mesh(*w.geom_views(key)))
+        assert w.geom_ready(key) and not w.set_sorted(key, w.geom_views(key)[1])
+
+    w = World()
+    w.set_scale(8.0, 0.01)
+    w.set_thresholds(0.0, 0.2)
+    w.set_volume((-2.0, -2.0, -2.0), (2.0, 2.0, 2.0))
+    for k, (v, f) in shapes.items():
+        # (with a vertex no triangle uses, far away: it must not count)
+        v2 = np.concatenate([v, [[50.0, 0.0, 0.0]]])
+        w.add_raw(k, *bvh.clean_mesh(v2, f))
+    w.add_object('alone', 'blob', meshes.matrix(meshes.rot(rng), (-1.0, -1.0, -1.0)))
+    w.add_object('through', 'tor', meshes.matrix(meshes.rot(rng), (1.9, 1.0, 1.0)))
+    w.add_object('gone', 'sph', meshes.matrix(meshes.rot(rng), (9.0, 0.0, 0.0)))
+    steps = 0
+    while w.step():
+        steps += 1
+        assert steps < 100
+    # nothing is sorted, and the verdict is complete all the same
+    assert not w.unsettled and not w.busy and not w.pairs and w.pose_bytes == 0
+    assert w.oob[w.slot('through')].state == PARTIAL and w.oob[w.slot('gone')].state == OUTSIDE
+    assert w.slot('alone') not in w.oob and w.counts() == (0, 0, 1, 1, 0)
+    # only the picture of what sticks out needs a tree
+    assert w.waiting and w.wanted() == {'tor': 1}, w.wanted()
+    assert w.oob[w.slot('through')].tris is None
+    assert w.stats()['unsorted'] == 3
+    sort(w, 'tor')
+    assert w.busy
+    while w.step():
+        pass
+    assert not w.waiting and not w.wanted()
+    assert check_volume(w, 'through', 'sorted later') == 1
+
+    # a part is moved next to another: their pair waits for both meshes
+    w.set_matrix('gone', meshes.matrix(meshes.rot(rng), (-1.0, -1.0, -0.2)))
+    w.step(idle=False)
+    while w.step():
+        pass
+    key = (w.slot('alone'), w.slot('gone'))
+    assert key in w.pairs and w.pairs[key].state < OK and w.unsettled and not w.busy
+    assert w.wanted() == {'blob': 1, 'sph': 1} and not w.viol and len(w._poses) == 1
+    sort(w, 'sph')
+    while w.step():
+        pass
+    assert w.unsettled and w.wanted() == {'blob': 1}             # one of the two is not enough
+    # ... and it is moved on while it waits: nothing is lost, nothing is solved twice
+    w.set_matrix('gone', meshes.matrix(w.part_matrix(w.slot('gone'))[:3, :3], (-1.0, -1.0, -0.25)))
+    w.step(idle=False)
+    assert w.unsettled and not w.busy and w.wanted() == {'blob': 1}
+    sort(w, 'blob')
+    assert w.busy
+    w.step(idle=False)                                           # the quick answer first
+    assert not w.unsettled and w.pairs[key].state == COLLIDE
+    while w.step():
+        pass
+    check_pair(w, 'alone', 'gone', 'pair of meshes sorted later', {})
+    assert w.stats()['unsorted'] == 0
+
+    # a mesh that is sorted when nobody waits for it, and one that goes away unsorted
+    w.add_raw('late', *bvh.clean_mesh(*shapes['tor']))
+    w.add_raw('never', *bvh.clean_mesh(*shapes['sph']))
+    w.add_object('x', 'late', meshes.matrix(None, (0.0, 1.2, -1.2)))
+    w.add_object('y', 'never', meshes.matrix(None, (0.0, 1.2, -1.0)))
+    while w.step():
+        pass
+    assert w.wanted() == {'late': 1, 'never': 1}
+    w.remove_object('y')
+    assert not w.has_geom('never') and not w.waiting and not w.unsettled     # unsorted and unused: gone
+    sort(w, 'late')
+    assert not w.busy                                                        # nobody was waiting for it
+    w.add_geom('never', *shapes['sph'])
+    w.add_object('y', 'never', meshes.matrix(None, (0.0, 1.2, -1.0)))
+    while w.step():
+        pass
+    check_pair(w, 'x', 'y', 'after all', {})
+    # switching to a mesh that is not sorted takes the old result off the screen
+    assert (w.slot('x'), w.slot('y')) in w.viol or (w.slot('y'), w.slot('x')) in w.viol
+    w.add_raw('other', *bvh.clean_mesh(*shapes['blob']))
+    w.set_geometry('y', 'other')
+    w.step(idle=False)
+    assert not any(w.slot('y') in k for k in w.viol) and w.unsettled
+    sort(w, 'other')
+    while w.step():
+        pass
+    check_pair(w, 'x', 'y', 'mesh replaced by an unsorted one', {})
+    for uid in ('alone', 'through', 'gone', 'x', 'y'):
+        w.remove_object(uid)
+    w.drop_unused_geoms()
+    assert w.TIDX.live == 0 and w.LVERT.live == 0 and w.BOX.live == 0 and not w._pend_wait and not w._oob_wait
+    print('unsorted meshes: the verdict does not wait for meshes nothing depends on; pairs wait '
+          'for exactly the meshes they need')
+
+
+def unused_mesh_tests(rng):
+    """A mesh no object uses any more is kept while there is room, so that a
+    part that is hidden and shown again is not sorted twice; it is the first
+    thing to go when room is needed."""
+    # (large enough for a pose to be more than the smallest size of the storage)
+    shapes = [meshes.blob(rng, 0.5, 96, 48, 0.3), meshes.torus(0.5, 0.18, 96, 48),
+              meshes.uv_sphere(0.5, 96, 48), meshes.grid_box((0.9, 0.6, 0.6), 40)]
+    size = [World.geom_size(*bvh.clean_mesh(v, f)[0].shape[:1], len(f)) for v, f in shapes]
+    pose = [World.pose_size(len(v), len(f)) for v, f in shapes]
+
+    def build(limit=None):
+        w = World()
+        w.keep_unused = True
+        w.set_scale(8.0, 0.01)
+        w.set_thresholds(0.0, 0.2)
+        for k, (v, f) in enumerate(shapes):
+            w.add_geom(k, v, f)
+            w.add_object(k, k, meshes.matrix(meshes.rot(rng), (0.6 * k, 0.0, 0.0)))
+        if limit is not None:
+            w.set_cache_limit(limit)
+        while w.step():
+            pass
+        return w
+
+    w = build()
+    w.keep_unused = False
+    w.remove_object(3)
+    assert not w.has_geom(3) and not w._idle          # (not kept unless asked for)
+    w.keep_unused = True
+    g0 = w._geoms[0]
+    w.remove_object(0)
+    assert w.has_geom(0) and w.stats()['unused_bytes'] == size[0] and w.geom_bytes == sum(size[:3])
+    slot = w.add_object(0, 0, meshes.matrix(w._obj[1][2] * 0 + np.eye(3), (0.0, 0.0, 0.0)))
+    assert w._geoms[0] is g0 and w.stats()['unused_bytes'] == 0 and g0.users == {slot}
+    w.remove_object(0)
+    w.remove_object(1)
+    assert list(w._idle) == [0, 1]
+    w.drop_unused_geoms()
+    assert not w._idle and not w.has_geom(0) and w.geom_bytes == size[2]
+    assert w.TIDX.live * 12 + w.LVERT.live * 12 >= w.geom_bytes
+
+    # under a limit: unused meshes go before any pose does, the longest unused first
+    w = build(sum(size) + sum(pose) + (1 << 16))
+    assert w.evictions == 0 and len(w._poses) == 4
+    w.remove_object(0)
+    w.remove_object(1)
+    while w.step():
+        pass
+    assert list(w._idle) == [0, 1] and len(w._poses) == 2
+    w.set_cache_limit(max(w.geom_bytes + w.pose_bytes, w.geom_bytes + w.BOX.nbytes) + 16)
+    assert list(w._idle) == [0, 1] and w.evictions == 0          # everything fits, just
+    tiny = meshes.box((0.1, 0.1, 0.1))
+    w.add_geom('tiny', *tiny)                                    # a few hundred bytes: one mesh goes
+    assert not w.has_geom(0) and w.has_geom(1) and w.evictions == 0 and len(w._poses) == 2
+    limit = w.cache_limit
+    assert w.geom_bytes + w.pose_bytes <= limit
+    # a mesh larger than everything that is unused: those go, and then poses
+    big = meshes.blob(rng, 0.5, 320, 160, 0.3)
+    assert World.geom_size(len(big[0]), len(big[1])) > size[1] + limit - w.geom_bytes - w.pose_bytes
+    w.add_geom('big', *big)
+    assert not w._idle and not w.has_geom(1) and w.evictions >= 1, (list(w._idle), w.evictions)
+    assert w.geom_bytes + w.pose_bytes <= limit and w.geom_bytes + w.BOX.nbytes <= limit
+    # (the new part stands apart, so it needs no pose; one of its own would
+    # not fit, and then the limit gives way rather than the check)
+    w.add_object('big', 'big', meshes.matrix(None, (40.0, 0.0, 0.0)))
+    while w.step():
+        pass
+    assert w.geom_bytes + w.pose_bytes <= limit and w.geom_bytes + w.BOX.nbytes <= limit
+    def against_fresh(w, uids, label):
+        """What the world shows is what a new one makes of the same parts."""
+        ref = World()
+        ref.set_scale(8.0, 0.01)
+        ref.set_thresholds(0.0, 0.2)
+        for uid in uids:
+            k, verts, tris = w.part_mesh(w.slot(uid))
+            ref.add_sorted(k, verts.copy(), tris.copy())
+            ref.add_object(uid, k, w.part_matrix(w.slot(uid)))
+        while ref.step():
+            pass
+        got = {(w.uid(a), w.uid(b)): (pr.state, pr.dist, pr.nseg) for (a, b), pr in w.viol.items()}
+        want = {(ref.uid(a), ref.uid(b)): (pr.state, pr.dist, pr.nseg) for (a, b), pr in ref.viol.items()}
+        assert want, label
+        same_pairs(got, want, label)
+
+    # results are untouched by all of this, and still right
+    against_fresh(w, (2, 3, 'big'), 'after making room')
+
+    # pausing: every pose is dropped, the results stay, and work goes on as before
+    w = build()
+    viol = {k: (pr.state, pr.dist, pr.nseg) for k, pr in w.viol.items()}
+    assert w.pose_bytes > 0 and viol
+    w.flush_poses()
+    assert w.pose_bytes == 0 and not w._poses and w.BOX.nbytes <= (1 << 14) * 24 and not w.busy
+    assert {k: (pr.state, pr.dist, pr.nseg) for k, pr in w.viol.items()} == viol
+    M = w.part_matrix(w.slot(1))
+    M[:3, 3] += (0.05, 0.02, 0.0)
+    w.set_matrix(1, M)
+    while w.step():
+        pass
+    assert w.pose_bytes > 0
+    against_fresh(w, (0, 1, 2, 3), 'after a pause')
+    print('unused meshes: kept while there is room, first to go when there is not; poses make '
+          'way for a new mesh; a pause drops the poses and keeps the results')
+
+
 def group_move_tests(rng):
     """Parts that are moved together keep their results: nothing between them
     is solved again, although their positions arrive rounded to single
@@ -1341,7 +1658,7 @@ def group_move_tests(rng):
                     # one part moved against the other: solved for exactly
                     # where they are now
                     assert got[key][0] == state and got[key][2] == nseg, (origin, trial, key)
-                    assert abs(got[key][1] - dist) <= 1e-9, (origin, trial, key, got[key], dist)
+                    assert abs(got[key][1] - dist) <= 2e-4 * dist + 1e-9, (origin, trial, key, got[key], dist)
                     redone += 1
                 else:
                     # moved together, now or earlier: worked out for positions
@@ -1405,10 +1722,14 @@ def main():
     dense_clearance_tests(rng)
     cache_tests(rng)
     borrow_tests(rng)
+    unsorted_tests(rng)
+    unused_mesh_tests(rng)
     group_move_tests(rng)
     incremental_tests(rng)
     incremental_tests(rng, borrow=True)
     incremental_tests(rng, borrow=True, room=3)
+    incremental_tests(rng, raw=True)
+    incremental_tests(rng, borrow=True, room=3, raw=True)
     print('OK')
 
 
