@@ -1354,6 +1354,297 @@ def dense_clearance_tests(rng):
     print('dense clearance: ok')
 
 
+def capped_search_tests(rng):
+    """The search for intersections is bounded per pair.  A pair that runs
+    into a bound without a hit is settled by an exhaustive search
+    (``narrow.scan``).  Here the bounds are set absurdly low, so that nearly
+    every pair of small parts runs into them, and the verdict is compared
+    with brute force.  (With the real bounds only large, nearly coincident
+    meshes get there: see ``near_coincident_tests``.)"""
+    gens = [
+        lambda: meshes.grid_box((1.0, 0.8, 0.6), 6),
+        lambda: meshes.uv_sphere(0.6, 20, 10),
+        lambda: meshes.torus(0.6, 0.2, 20, 10),
+        lambda: meshes.blob(rng, 0.6, 18, 9, 0.3),
+        lambda: meshes.cylinder(0.3, 1.4, 20),
+    ]
+    saved = narrow.CAP_FINE, narrow.CAP_OVERLAP
+    total = {}
+    try:
+        for cap_fine, cap_overlap, name in ((24, 10 ** 9, 'rows'), (10 ** 9, 4, 'triangle pairs'),
+                                            (24, 4, 'both')):
+            narrow.CAP_FINE, narrow.CAP_OVERLAP = cap_fine, cap_overlap
+            scans = hits = wrong_before = 0
+            stats = {}
+            for trial in range(150):
+                w = World()
+                w.set_scale(2.0, 0.01)
+                w.set_thresholds(0.0, float(rng.choice([0.0, 0.05, 0.15])))
+                w.set_detect_enclosed(bool(trial % 2))
+                same = trial % 5 == 0                    # a part and its copy, nearly on top of it
+                va, fa = gens[rng.integers(len(gens))]()
+                vb, fb = (va, fa) if same else gens[rng.integers(len(gens))]()
+                w.add_geom('a', va, fa)
+                w.add_geom('b', vb, fb)
+                La = meshes.rot(rng)
+                direction = rng.normal(size=3)
+                direction /= np.linalg.norm(direction)
+                if same:
+                    Mb = meshes.matrix(La, direction * rng.uniform(0.0, 0.03))
+                else:
+                    Mb = meshes.matrix(meshes.rot(rng), direction * rng.uniform(0.0, 1.5))
+                w.add_object('A', 'a', meshes.matrix(La))
+                w.add_object('B', 'b', Mb)
+                PA, PB = posed_tris(w, 'A'), posed_tris(w, 'B')
+                nhit, _, d = brute(PA, PB, w.eps_exact)
+                enclosed = (w.detect_enclosed and not nhit and d > max(w.coll_thr, w.eps_touch)
+                            and expect_enclosed(PA, PB))
+                want = expect_state(w, nhit, d, enclosed)
+                thr = max(w.clear_thr, w.eps_touch)
+                borderline = (not nhit) and (abs(d - w.clear_thr) < 2e-3 * thr
+                                             or abs(d - w.eps_touch) < 2e-3 * thr)
+                # live first, as when the part is dropped there, then at rest
+                while w.busy:
+                    w.step(budget=0.002, hot_budget=0.002, idle=False)
+                    if not (w._pend_hot or w._pend_cold or w._dirty):
+                        break
+                pr = w.pairs.get((0, 1))
+                if (OK if pr is None else pr.state) != want and not borderline:
+                    # a provisional answer may be wrong, but then it must not count as final
+                    assert w.unsettled, (name, trial, 'final but wrong', pr.state, want)
+                    wrong_before += 1
+                while w.step(budget=0.002):
+                    pr = w.pairs.get((0, 1))
+                    if not w.unsettled and not borderline:
+                        assert (OK if pr is None else pr.state) == want, (name, trial, 'settled wrong')
+                pr = w.pairs.get((0, 1))
+                got = OK if pr is None else pr.state
+                assert borderline or got == want, (name, trial, got, want, nhit, d,
+                                                   None if pr is None else (pr.dist, pr.approx))
+                assert pr is None or not pr.unproven, (name, trial)
+                assert not w._pend_scan
+                if pr is not None and got == COLLIDE:
+                    # where it is, for the list and the marker
+                    assert pr.center is not None and np.isfinite(pr.center).all(), (name, trial)
+                    if pr.nseg:
+                        assert pr.segs is not None and len(pr.segs) == min(pr.nseg, len(pr.segs))
+                stats[want] = stats.get(want, 0) + 1
+                scans += w.scans
+                hits += w.scan_hits
+            # (enough of both kinds for the test to mean something)
+            assert scans >= 20 and hits >= 10 and scans - hits >= 3, (name, scans, hits)
+            total[name] = (scans, hits, wrong_before)
+            print(f'  bound on {name}: 150 pairs (OK/CLEAR/COLLIDE = {stats.get(OK, 0)}/'
+                  f'{stats.get(CLEAR, 0)}/{stats.get(COLLIDE, 0)}), {scans} exhaustive searches, {hits} of '
+                  f'them found a collision the bounded search had missed ({wrong_before} provisional '
+                  f'answers were wrong, none of them final)')
+    finally:
+        narrow.CAP_FINE, narrow.CAP_OVERLAP = saved
+    print('capped intersection search: the verdict is the brute-force one in every case')
+
+
+def _first_cut(PA, PB, eps):
+    """Reference for large meshes: do any two triangles of the soups ``PA``
+    and ``PB`` cut each other?  A uniform grid finds the candidates (no tree
+    involved); the search ends at the first hit.  Returns (hit, pairs tested)."""
+    alo, ahi = PA.min(axis=1), PA.max(axis=1)
+    blo, bhi = PB.min(axis=1), PB.max(axis=1)
+    cell = 2.0 * max(float(np.median(ahi - alo)), 1e-9)
+    lo = np.minimum(alo.min(axis=0), blo.min(axis=0))
+    ga = np.floor((0.5 * (alo + ahi) - lo) / cell).astype(np.int64)
+    dims = np.maximum(ga.max(axis=0), np.floor((bhi.max(axis=0) - lo) / cell).astype(np.int64)) + 3
+    key_a = (ga[:, 0] * dims[1] + ga[:, 1]) * dims[2] + ga[:, 2]
+    order = np.argsort(key_a, kind='stable')
+    ks = key_a[order]
+    # a triangle of A lies within one cell of its centre's cell, so B looks
+    # at the cells its box touches and one more on each side
+    g0 = np.floor((blo - lo) / cell).astype(np.int64) - 1
+    g1 = np.floor((bhi - lo) / cell).astype(np.int64) + 1
+    span = g1 - g0 + 1
+    assert int(span.max()) <= 6, 'triangles of very different sizes: use brute() instead'
+    tested = 0
+    for dx in range(int(span[:, 0].max())):
+        for dy in range(int(span[:, 1].max())):
+            for dz in range(int(span[:, 2].max())):
+                m = (dx < span[:, 0]) & (dy < span[:, 1]) & (dz < span[:, 2])
+                bi = np.flatnonzero(m)
+                c = g0[bi] + (dx, dy, dz)
+                ok = (c >= 0).all(axis=1) & (c < dims).all(axis=1)
+                bi, c = bi[ok], c[ok]
+                k = (c[:, 0] * dims[1] + c[:, 1]) * dims[2] + c[:, 2]
+                s0 = np.searchsorted(ks, k, 'left')
+                n = np.searchsorted(ks, k, 'right') - s0
+                tot = int(n.sum())
+                if tot == 0:
+                    continue
+                ai = order[np.repeat(s0, n) + (np.arange(tot) - np.repeat(np.cumsum(n) - n, n))]
+                bj = np.repeat(bi, n)
+                mm = (alo[ai] <= bhi[bj]).all(axis=1) & (ahi[ai] >= blo[bj]).all(axis=1)
+                ai, bj = ai[mm], bj[mm]
+                for q in range(0, ai.shape[0], 100000):
+                    hit, _ = tritri.tri_tri_intersect(tritri.to_soa(PA[ai[q:q + 100000]]),
+                                                      tritri.to_soa(PB[bj[q:q + 100000]]), eps)
+                    tested += int(hit.shape[0])
+                    if hit.any():
+                        return True, tested
+    return False, tested
+
+
+def near_coincident_tests(rng):
+    """Large, finely tessellated surfaces that nearly coincide: a part and its
+    copy a fraction of a millimetre away, a shell closely inside another.
+    Millions of their triangle pairs have overlapping boxes, far more than
+    the search of one pass may look at, and the few it does look at are the
+    twins, which never cut each other.  Before the exhaustive search existed
+    such a pair came out as a clearance warning, and as nothing at all with
+    the clearance check off, although the surfaces cut through each other
+    all over."""
+    v, f = meshes.blob(rng, 40.0, 320, 160, 0.3)
+    s1, sf = meshes.uv_sphere(50.0, 320, 160)
+    s2, _ = meshes.uv_sphere(50.05, 320, 160)        # the same sphere scaled about its centre
+
+    def world(clear, enclosed=True):
+        w = World()
+        w.set_scale(400.0, 0.5)
+        w.set_thresholds(0.0, clear)
+        w.set_detect_enclosed(enclosed)
+        return w
+
+    def run(w, want, label):
+        """Step to the end.  Whenever the pair counts as settled it has to be
+        right already: a wrong answer may only ever be a provisional one."""
+        key = (0, 1)
+        steps = scan_steps = 0
+        t0 = time.perf_counter()
+        longest = 0.0
+        while True:
+            t1 = time.perf_counter()
+            more = w.step(budget=0.012)
+            longest = max(longest, time.perf_counter() - t1)
+            steps += 1
+            scan_steps += bool(w._pend_scan)
+            pr = w.pairs.get(key)
+            got = OK if pr is None else pr.state
+            assert w.unsettled or got == want, (label, 'settled as', got, 'wanted', want)
+            if not more:
+                break
+        pr = w.pairs.get(key)
+        assert (OK if pr is None else pr.state) == want and not w._pend_scan, (label, pr and pr.state)
+        assert pr is None or not pr.unproven
+        return pr, time.perf_counter() - t0, steps, scan_steps, longest
+
+    # a part and its copy, moved by less than a triangle: they cut each other
+    # (two closed surfaces of the same volume that overlap must cross)
+    for off in ((0.3, 0.1, 0.2), (0.03, 0.02, 0.03)):
+        for clear in (5.0, 0.0):
+            w = world(clear)
+            w.add_geom('g', v, f)
+            w.add_object('A', 'g', meshes.matrix(None, (100, 100, 100)))
+            w.add_object('B', 'g', meshes.matrix(None, tuple(100 + x for x in off)))
+            pr, dt, steps, _, longest = run(w, COLLIDE, ('copy', off, clear))
+            assert w.scans >= 1 and w.scan_hits >= 1, (w.scans, w.scan_hits)
+            assert pr.nseg > 0 and pr.segs is not None and pr.tri_a is not None and len(pr.tri_a)
+            assert np.isfinite(pr.center).all() and pr.radius > 0
+            # the segments it shows are where both surfaces are
+            mid = pr.segs.reshape(-1, 3).astype(np.float64).mean(axis=0)
+            assert (np.abs(mid) < 60.0).all(), mid
+    hit, tested = _first_cut(v[f].astype(np.float64), v[f].astype(np.float64) + (0.3, 0.1, 0.2), 1e-12)
+    assert hit, 'the reference finds no cut either'
+    print(f'  a part of {len(f):,} triangles and its copy a fraction of a triangle away: collision found '
+          f'({dt:.2f} s in {steps} steps, longest {longest * 1000:.0f} ms; with and without the clearance '
+          f'check; an independent grid search agrees after {tested:,} triangle pairs)')
+
+    # a shell in a slightly larger one, pushed off centre until it pokes through
+    for clear in (5.0, 0.0):
+        for enclosed in (True, False):
+            w = world(clear, enclosed)
+            w.add_geom('a', s1, sf)
+            w.add_geom('b', s2, sf)
+            w.add_object('A', 'a', meshes.matrix(None, (100.1, 100, 100)))
+            w.add_object('B', 'b', meshes.matrix(None, (100, 100, 100)))
+            pr, dt, steps, _, longest = run(w, COLLIDE, ('poking through', clear, enclosed))
+            assert not pr.enclosed, 'two surfaces that cross are not one inside the other'
+    print(f'  a sphere poking through one 0.05 larger: collision found ({dt:.2f} s)')
+
+    # ... and centred, where it touches nowhere (the outer one is the inner
+    # one scaled about its centre: every ray from there meets the inner one
+    # first).  Inside counts as a collision; with that check off the pair is
+    # only close, and saying so takes looking at every candidate.
+    for clear, want in ((5.0, CLEAR), (0.0, OK)):
+        w = world(clear, False)
+        w.add_geom('a', s1, sf)
+        w.add_geom('b', s2, sf)
+        w.add_object('A', 'a', meshes.matrix(None, (100, 100, 100)))
+        w.add_object('B', 'b', meshes.matrix(None, (100, 100, 100)))
+        pr, dt, steps, scan_steps, longest = run(w, want, ('centred', clear))
+        assert w.scans >= 1 and w.scan_hits == 0 and scan_steps >= 3, (w.scans, w.scan_hits, scan_steps)
+        if want == CLEAR:
+            assert 0.03 < pr.dist < 0.051, pr.dist
+    print(f'  the same sphere centred in the larger one (0.05 apart everywhere): no collision, said '
+          f'after every candidate was looked at ({dt:.2f} s in {steps} steps, {scan_steps} of them '
+          f'searching, longest {longest * 1000:.0f} ms)')
+    w = world(5.0, True)
+    w.add_geom('a', s1, sf)
+    w.add_geom('b', s2, sf)
+    w.add_object('A', 'a', meshes.matrix(None, (100, 100, 100)))
+    w.add_object('B', 'b', meshes.matrix(None, (100, 100, 100)))
+    pr = run(w, COLLIDE, 'centred, inside')[0]
+    assert pr.enclosed == 1, pr.enclosed
+
+    # the part is moved while the search is under way: the search is dropped
+    # with the result it belonged to, and the new place is judged afresh
+    w = world(0.0, False)
+    w.add_geom('a', s1, sf)
+    w.add_geom('b', s2, sf)
+    w.add_object('A', 'a', meshes.matrix(None, (100, 100, 100)))
+    w.add_object('B', 'b', meshes.matrix(None, (100, 100, 100)))
+    while not w._pend_scan:
+        w.step(budget=0.004)
+    w.step(budget=0.004)
+    assert w._pend_scan and w.unsettled
+    w.set_matrix('A', meshes.matrix(None, (100.1, 100, 100)), hot=True)       # now it pokes through
+    w.step(budget=0.004, hot_budget=0.004, idle=False)
+    assert (0, 1) not in w._pend_scan or w._pend_scan[(0, 1)] is None, 'the old search survived the move'
+    pr = run(w, COLLIDE, 'moved during the search')[0]
+    w.set_matrix('A', meshes.matrix(None, (300, 100, 100)), hot=False)        # and far away
+    while w.step():
+        pass
+    assert (0, 1) not in w.pairs and not w._pend_scan and not w.viol
+
+    # with memory for the two poses only, and a third part that wants one too
+    w = world(0.0, False)
+    w.add_geom('a', s1, sf)
+    w.add_geom('b', s2, sf)
+    w.add_object('A', 'a', meshes.matrix(None, (100, 100, 100)))
+    w.add_object('B', 'b', meshes.matrix(None, (100, 100, 100)))
+    w.add_object('C', 'a', meshes.matrix(meshes.rot(rng), (100.0, 100, 195.0)))  # near A and B, not touching
+    one = World.pose_size(len(s1), len(sf))
+    w.set_cache_limit(sum(World.geom_size(len(x), len(sf)) for x in (s1, s2)) + int(2.3 * one))
+    while w.step(budget=0.012):
+        pass
+    assert w.pairs[(0, 1)].state == OK and not w.pairs[(0, 1)].unproven and w.scans >= 1
+    assert w.evictions >= 1, 'the third pose was meant not to fit'
+    print('  the search is dropped when a part moves, and gets its poses back when memory is short')
+
+    # six copies of the part, each nudged from the one before: fifteen such pairs at once
+    w = world(5.0)
+    w.add_geom('g', v, f)
+    for i in range(6):
+        w.add_object(i, 'g', meshes.matrix(None, (100 + 0.07 * i, 100 + 0.05 * i, 100 - 0.04 * i)))
+    t0 = time.perf_counter()
+    longest = 0.0
+    while True:
+        t1 = time.perf_counter()
+        more = w.step(budget=0.012)
+        longest = max(longest, time.perf_counter() - t1)
+        if not more:
+            break
+    assert len(w.pairs) == 15 and all(pr.state == COLLIDE for pr in w.pairs.values())
+    print(f'  six nudged copies, fifteen pairs: all found colliding in {time.perf_counter() - t0:.2f} s '
+          f'(longest step {longest * 1000:.0f} ms)')
+    print('nearly coincident surfaces: ok')
+
+
 def unsorted_tests(rng):
     """A mesh can be put in before it is sorted.  What can be said without
     its tree is said at once: where it is, what it is far from, whether it is
@@ -1720,6 +2011,8 @@ def main():
     quick_mode_tests(rng)
     sketch_tests(rng)
     dense_clearance_tests(rng)
+    capped_search_tests(rng)
+    near_coincident_tests(rng)
     cache_tests(rng)
     borrow_tests(rng)
     unsorted_tests(rng)

@@ -893,7 +893,7 @@ class Monitor:
             'busy': bool(self.queue) or bool(self.jobs) or self.params_dirty or w.unsettled,
             'preparing': (max(self.queue_total - waiting, 0), self.queue_total) if waiting else None,
             'unchecked': self.unchecked,
-            'pending': len(w._pend_hot) + len(w._pend_cold),
+            'pending': len(w._pend_hot) + len(w._pend_cold) + len(w._pend_scan),
             'refining': len(w._pend_refine),
             'clearance_on': w.clear_thr > 0.0,
         }

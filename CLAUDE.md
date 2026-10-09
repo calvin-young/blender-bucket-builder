@@ -98,6 +98,21 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
   `approx` when not proven to 1 % (shown as "~").
 * **Quick vs exact**: during a live edit intersections are complete but the
   clearance search is capped; pairs cut short are redone exactly when idle.
+* **Whether two parts intersect is never left to a capped search.** The
+  search of one pass is bounded per pair (`CAP_FINE`, `CAP_OVERLAP`). Two fine
+  meshes that nearly coincide (a part and its copy a fraction of a triangle
+  away, a shell closely inside another) have millions of triangle pairs with
+  overlapping boxes, and the few the beam picks are the twins, which never
+  cut each other: up to 1.1.0 such a collision came out as a clearance
+  warning, or as nothing with the clearance check off. Now a pair that runs
+  into a cap without a hit is flagged `PairResult.unproven` and settled by
+  `narrow.scan`: exhaustive, depth first over blocks, stops at the first cut
+  or contact, resumable (`World._pend_scan`, done when idle, counted in
+  `unsettled`, so the badge says "Checking" until then). The distance proof
+  of such a pair waits until the scan has cleared it (`no_cut`). Tests:
+  `capped_search_tests` (tiny caps, against brute force) and
+  `near_coincident_tests`; `scratchpad/mutate_scan.py` shows both fail
+  without the scan.
 * **The hatched collision region** is the surface of both parts within a few
   millimetres of the other (from the coarse traversal), not the triangles the
   intersection curve crosses, which are an invisible sliver on dense meshes.
