@@ -929,6 +929,10 @@ def solve(w, keys, exact=True, detail=None):
     # pairs an exhaustive search has already shown not to intersect or touch
     cleared = np.fromiter((getattr(w.pairs.get(k), 'no_cut', False) for k in keys), dtype=bool,
                           count=npid)
+    # ... and which are known to keep the clearance
+    proved = np.fromiter((getattr(w.pairs.get(k), 'no_near', False) for k in keys), dtype=bool,
+                         count=len(keys))
+    unsure = np.zeros(len(keys), dtype=bool)
     short = np.zeros(npid, dtype=bool)      # distance search was cut short
     near = np.zeros(npid, dtype=bool)
     hit_rows = None
@@ -1152,7 +1156,13 @@ def solve(w, keys, exact=True, detail=None):
                     return left2
 
                 if not exact:
-                    short |= np.isfinite(prove(region, CAP_SEARCH_QUICK, CAP_EXACT_QUICK))
+                    left2 = prove(region, CAP_SEARCH_QUICK, CAP_EXACT_QUICK)
+                    cut = np.isfinite(left2)
+                    short |= cut
+                    # (what the quick search left out may hold a contact: the
+                    # pair is not settled until the exact pass has been made)
+                    capped |= (cut & (np.where(cut, left2, 0.0) <= coll * coll)
+                               & (best.d2 > coll * coll) & ~cleared & ~collided)
                 else:
                     # A pair whose search for an intersection was capped goes
                     # to ``scan`` next.  Most such pairs turn out to cut each
@@ -1180,8 +1190,8 @@ def solve(w, keys, exact=True, detail=None):
                         # (whether a pair whose intersection search was capped
                         # touches is for ``scan`` to say, and it has said no
                         # if the pair is here)
-                        open_ = cut & (((u > coll) & (lo <= coll) & ~capped)
-                                       | ((clear > 0.0) & (u >= clear) & (lo < clear)))
+                        open_ = cut & (((u > coll) & (lo <= coll) & ~capped & ~cleared)
+                                       | ((clear > 0.0) & (u >= clear) & (lo < clear) & ~proved))
                         if open_.any():
                             w.proofs_repeated += int(open_.sum())
                             m = np.take(open_, region_p[0])
@@ -1190,6 +1200,13 @@ def solve(w, keys, exact=True, detail=None):
                             cut = np.isfinite(left2)
                             lo = np.sqrt(np.where(cut, left2, 0.0))
                             u = np.sqrt(np.minimum(best.d2, dlim2))
+                        # Still cut short, and what was left out could hold a
+                        # contact, or a gap under the clearance: then nothing
+                        # found is not an answer.  ``scan`` goes through all
+                        # of it (the same rule as for intersections: a verdict
+                        # is never left to a search that was cut short).
+                        capped |= cut & (lo <= coll) & (u > coll) & ~cleared & ~collided
+                        unsure = cut & (clear > 0.0) & (u >= clear) & (lo < clear) & ~proved & ~collided
                         # the value is flagged approximate if it is not proven
                         # to within a hundredth
                         short |= cut & (lo < u - np.maximum(eps, 1e-2 * u))
@@ -1244,8 +1261,11 @@ def solve(w, keys, exact=True, detail=None):
         res.stale = False
         res.approx = bool(approx[p])
         res.lite = bool(lite[p])
-        res.refine = bool(lite[p])
+        # (a live solve that the budget cut short has more to find when things
+        # are quiet, also where it has found a collision: the rest of the curve)
+        res.refine = bool(lite[p]) or (live and bool(capped[p]))
         res.unproven = False
+        res.unsure = False
         res.enclosed = 0
         res.segs = None
         res.nseg = 0
@@ -1337,6 +1357,8 @@ def solve(w, keys, exact=True, detail=None):
             res.state = OK
             res.dist = d if np.isfinite(d) else float('inf')
             res.pa = res.pb = None
+            # nothing under the clearance found, but not everything looked at
+            res.unsure = bool(unsure[p]) and not res.unproven
             continue
         res.state = state
         res.dist = d
@@ -1377,11 +1399,14 @@ def solve(w, keys, exact=True, detail=None):
 # the exhaustive search for an intersection
 # ---------------------------------------------------------------------------
 
-def scan_start(w, key):
-    """State for ``scan``: the two roots, and nothing looked at yet."""
+def scan_start(w, key, near=False):
+    """State for ``scan``: the two roots, and nothing looked at yet.  With
+    ``near`` the search is for anything closer than the clearance, not only
+    for an intersection or a contact."""
     a, b = key
     root = np.zeros(1, dtype=np.int64)
-    return {'stack': [(root, root, int(w.PH[w.O_POSE[a]]), int(w.PH[w.O_POSE[b]]))], 'tested': 0}
+    return {'stack': [(root, root, int(w.PH[w.O_POSE[a]]), int(w.PH[w.O_POSE[b]]))], 'tested': 0,
+            'near': bool(near)}
 
 
 def scan(w, key, state, deadline):
@@ -1400,6 +1425,11 @@ def scan(w, key, state, deadline):
     nor touch, and otherwise what it found: ``('cut', segments (n, 2, 3)
     float32, triangles of a, triangles of b)`` or ``('touch', point on a,
     point on b, triangle of a, triangle of b)``, in the pair's frame.
+
+    A state made with ``near`` widens the search to the clearance: it also
+    stops at the first two triangles closer than that, with ``('near', point
+    on a, point on b, triangle of a, triangle of b, their distance)``, and
+    False then means that the parts keep the clearance everywhere.
     """
     a, b = key
     pose_a = w.O_POSE[[a]]
@@ -1410,7 +1440,10 @@ def scan(w, key, state, deadline):
     eps = w.eps_len
     coll = max(w.coll_thr, w.eps_touch)
     coll2 = coll * coll
-    thr2 = np.full(1, (coll + eps) ** 2, dtype=np.float32)
+    near = bool(state.get('near')) and w.clear_thr > coll
+    lim = w.clear_thr if near else coll
+    lim2 = lim * lim
+    thr2 = np.full(1, (lim + eps) ** 2, dtype=np.float32)
     eps2 = np.float32(eps * eps)
     live = np.ones(1, dtype=bool)
     stack = state['stack']
@@ -1436,12 +1469,15 @@ def scan(w, key, state, deadline):
                 if seg.shape[0]:
                     return 'cut', seg[:SCAN_SEGS].astype(np.float32), ia[hit][:SCAN_SEGS], ib[hit][:SCAN_SEGS]
                 # contact without one piercing the other (coplanar, edge on edge)
-                sel = np.flatnonzero(tritri.plane_gap2(P, Q) <= coll2)
+                sel = np.flatnonzero(tritri.plane_gap2(P, Q) <= lim2)
                 if sel.shape[0]:
                     d2, cp, cq = tritri.tri_tri_distance(np.take(P, sel, axis=2), np.take(Q, sel, axis=2))
                     k = int(np.argmin(d2))
                     if d2[k] <= coll2:
                         return 'touch', cp[:, k].copy(), cq[:, k].copy(), int(ia[sel[k]]), int(ib[sel[k]])
+                    if near and d2[k] < lim2:
+                        return ('near', cp[:, k].copy(), cq[:, k].copy(), int(ia[sel[k]]), int(ib[sel[k]]),
+                                float(np.sqrt(d2[k])))
                 continue
             if n > SCAN_BLOCK:
                 # depth first: one half now, the other waits
@@ -1465,17 +1501,33 @@ def scan(w, key, state, deadline):
 
 
 def scan_report(w, key, res, found):
-    """Turn a pair's result into a collision that ``scan`` has found."""
+    """Turn a pair's result into what ``scan`` has found: a collision, or
+    (``'near'``) two parts that are closer than the clearance."""
     a, b = key
     pose_a = int(w.O_POSE[a])
     pose_b = int(w.O_POSE[b])
     pad = w.viz_pad
-    res.state = COLLIDE
-    res.dist = 0.0
-    res.approx = True             # the curve is not complete
     res.unproven = False
+    res.unsure = False
     res.refine = False
     res.enclosed = 0
+    res.approx = True             # the curve is not complete, the distance is "at most"
+    if found[0] == 'near':
+        _, pa, pb, ta, tb, d = found
+        res.state = CLEAR
+        res.dist = d
+        res.segs = None
+        res.nseg = 0
+        res.pa = np.asarray(pa, dtype=np.float64)
+        res.pb = np.asarray(pb, dtype=np.float64)
+        res.center = 0.5 * (res.pa + res.pb)
+        res.radius = max(0.5 * d, pad)
+        res.tri_a = _node_tris(w, pose_a, 0, np.array([ta], dtype=np.int64))
+        res.tri_b = _node_tris(w, pose_b, 0, np.array([tb], dtype=np.int64))
+        res.clip_a = res.clip_b = None
+        return
+    res.state = COLLIDE
+    res.dist = 0.0
     if found[0] == 'cut':
         _, segs, ta, tb = found
         pts = segs.reshape(-1, 3)

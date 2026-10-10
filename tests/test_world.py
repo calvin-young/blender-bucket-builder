@@ -1426,7 +1426,7 @@ def capped_search_tests(rng):
                 got = OK if pr is None else pr.state
                 assert borderline or got == want, (name, trial, got, want, nhit, d,
                                                    None if pr is None else (pr.dist, pr.approx))
-                assert pr is None or not pr.unproven, (name, trial)
+                assert pr is None or not (pr.unproven or pr.unsure), (name, trial)
                 assert not w._pend_scan
                 if pr is not None and got == COLLIDE:
                     # where it is, for the list and the marker
@@ -1446,6 +1446,87 @@ def capped_search_tests(rng):
     finally:
         narrow.CAP_FINE, narrow.CAP_OVERLAP = saved
     print('capped intersection search: the verdict is the brute-force one in every case')
+
+
+def capped_proof_tests():
+    """The proof of the distance between two parts is bounded as well.  Two
+    parts that lie flat on each other without cutting (a flange on a plate),
+    or face each other over a large area at about the clearance, have more
+    candidate triangle pairs than it looks at; up to 1.2.0 such a contact
+    was reported as a gap ("~0.1 mm", or nothing with the clearance check
+    off), and a gap just under the clearance as fine.  What the proof leaves
+    out is now gone through by ``narrow.scan``.  Here the bounds of the proof
+    are tiny, the parts are turned so that their boxes are loose, and the
+    verdict is compared with brute force."""
+    rng = np.random.default_rng(31)
+    saved = narrow.CAP_SEARCH, narrow.CAP_EXACT, narrow.CAP_EXACT_MAX, narrow.EXACT_CHUNK
+    narrow.CAP_SEARCH, narrow.CAP_EXACT, narrow.CAP_EXACT_MAX, narrow.EXACT_CHUNK = 48, 8, 16, 8
+    stats = {}
+    scans = hits = wrong_before = 0
+    try:
+        for trial in range(120):
+            clear = float(rng.choice([0.0, 0.05, 0.05]))
+            w = World()
+            w.set_scale(2.0, 0.01)
+            w.set_thresholds(0.0, clear)
+            w.set_detect_enclosed(False)
+            va, fa = meshes.grid_box((1.0, 1.0, 0.3), int(rng.integers(6, 10)))
+            vb, fb = meshes.grid_box((0.8, 0.7, 0.2), int(rng.integers(6, 10)))
+            # B hovers flat over A, further away than matters: hundreds of
+            # triangle pairs at the same distance for the proof to wade
+            # through.  One small extra triangle of B, somewhere under it,
+            # is what decides: it lies on A (a contact), or under the
+            # clearance, or is not there.
+            hover = 0.02 if clear == 0.0 else 1.2 * clear
+            kind = trial % 3 if clear > 0.0 else 2 * (trial % 2)
+            if kind:
+                h = 0.0 if kind == 2 else 0.5 * clear
+                x, y = rng.uniform(-0.3, 0.3), rng.uniform(-0.25, 0.25)
+                z = -0.1 - hover + h
+                tri = np.array([[x, y, z], [x + 0.04, y, z], [x, y + 0.04, z]])
+                fb = np.concatenate([fb, [[len(vb), len(vb) + 1, len(vb) + 2]]])
+                vb = np.concatenate([vb, tri])
+            w.add_geom('a', va, fa)
+            w.add_geom('b', vb, fb)
+            # both turned together, so that their boxes are loose (now and then not)
+            R = meshes.rot(rng) if trial % 5 else np.eye(3)
+            off = np.array([rng.uniform(-0.1, 0.1), rng.uniform(-0.1, 0.1), 0.15 + 0.1 + hover])
+            w.add_object('A', 'a', meshes.matrix(R))
+            w.add_object('B', 'b', meshes.matrix(R, R @ off))
+            PA, PB = posed_tris(w, 'A'), posed_tris(w, 'B')
+            nhit, _, d = brute(PA, PB, w.eps_exact)
+            want = expect_state(w, nhit, d, False)
+            thr = max(w.clear_thr, w.eps_touch)
+            borderline = (not nhit) and (abs(d - w.clear_thr) < 2e-3 * thr or abs(d - w.eps_touch) < 0.6 * w.eps_touch)
+            while w.busy:
+                w.step(budget=0.002, hot_budget=0.002, idle=False)
+                if not (w._pend_hot or w._pend_cold or w._dirty):
+                    break
+            pr = w.pairs.get((0, 1))
+            if (OK if pr is None else pr.state) != want and not borderline:
+                assert w.unsettled, (trial, 'final but wrong', pr.state, want, d)
+                wrong_before += 1
+            while w.step(budget=0.002):
+                pass
+            pr = w.pairs.get((0, 1))
+            got = OK if pr is None else pr.state
+            assert borderline or got == want, (trial, got, want, nhit, d, clear,
+                                               None if pr is None else (pr.dist, pr.approx))
+            assert pr is None or not (pr.unproven or pr.unsure), trial
+            assert not w._pend_scan and not w.unsettled
+            if got == CLEAR:
+                assert pr.pa is not None and pr.dist < clear and pr.dist >= d - 1e-9, (trial, pr.dist, d)
+            stats[want] = stats.get(want, 0) + 1
+            scans += w.scans
+            hits += w.scan_hits
+    finally:
+        narrow.CAP_SEARCH, narrow.CAP_EXACT, narrow.CAP_EXACT_MAX, narrow.EXACT_CHUNK = saved
+    assert scans >= 30 and hits >= 8 and scans - hits >= 8, (scans, hits)
+    assert min(stats.get(OK, 0), stats.get(CLEAR, 0), stats.get(COLLIDE, 0)) >= 10, stats
+    print(f'capped distance proof: 120 pairs lying flat on each other or just apart (OK/CLEAR/COLLIDE = '
+          f'{stats.get(OK, 0)}/{stats.get(CLEAR, 0)}/{stats.get(COLLIDE, 0)}), {scans} exhaustive searches, '
+          f'{hits} of them found a contact or a gap under the clearance that the bounded proof had missed '
+          f'({wrong_before} provisional answers were wrong, none of them final)')
 
 
 def _first_cut(PA, PB, eps):
@@ -2297,6 +2378,7 @@ def main():
     sketch_tests(rng)
     dense_clearance_tests(rng)
     capped_search_tests(rng)
+    capped_proof_tests()
     near_coincident_tests(rng)
     # (tests added later draw from generators of their own, so that the ones
     # that follow see the scenes they always saw)

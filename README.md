@@ -3,8 +3,9 @@
 **Bucket Builder** is a Blender add-on for preparing 3D-print builds, aimed at
 dense HP Multi Jet Fusion (MJF) builds.
 
-Its first tool is a live build check. Turn monitoring on once, then move,
-rotate and scale parts as usual. While you drag, the viewport shows:
+Its first tool is a live build check. Switch on what you want checked
+(collisions, the build volume, or both), then move, rotate and scale parts as
+usual. While you drag, the viewport shows:
 
 * where parts **collide** (red cross-hatching and the exact intersection curve),
 * where parts are closer than your **minimum clearance** (amber hatching and the
@@ -17,9 +18,10 @@ rotate and scale parts as usual. While you drag, the viewport shows:
   are no collisions and every part is inside the volume, an amber triangle for
   warnings, a red cross for what has to be fixed.
 
-Every problem is listed; one click frames it, and **Isolate** shows its parts
-on their own. Nothing in the scene is modified; everything is drawn on top of
-it.
+Every problem is listed, the worst first; one click frames it, a magnifier
+shows its parts on their own, and a problem that is meant to be there can be
+ignored, for now or for good. Nothing in the scene is modified; everything is
+drawn on top of it.
 
 ![A part being dragged: the collision hatching follows it](docs/images/dragging.png)
 
@@ -43,29 +45,32 @@ The user guide is in [bucket_builder/README.md](bucket_builder/README.md).
 
 ## Status
 
-Version 1.1.0. Declared for Blender 4.2 and newer. Its tests run on
+Version 1.2.0. Declared for Blender 4.2 and newer. Its tests run on
 **Blender 5.2.2** (Linux, software OpenGL), where:
 
 * the geometry engine agrees with brute-force references on random and
-  hand-picked cases, and with Blender's own `BVHTree.overlap` on which
-  triangles intersect,
-* 190 end-to-end checks pass inside Blender (live updates on move / rotate /
+  hand-picked cases (also with every bound of its searches set absurdly
+  low), and with Blender's own `BVHTree.overlap` on which triangles
+  intersect,
+* 245 end-to-end checks pass inside Blender (live updates on move / rotate /
   scale, moving a selection, mesh edits, modifiers, linked duplicates, hidden
-  parts, the build volume and which of its walls are exceeded, printer
-  profiles and a library made by version 1.0, units, the wording of the
-  verdict, undo, save and reload; and for large parts: worker threads, the
+  parts, the two switches, the build volume and which of its walls are
+  exceeded, ignoring problems, printer profiles and libraries made by
+  versions 1.0 and 1.1, units, the wording of the verdict, undo, save and
+  reload, an export in between; and for large parts: worker threads, the
   memory limit, the warnings about unchecked geometry),
-* every panel and menu is drawn against a stand-in for Blender's layout that
-  rejects what a real one would,
+* every panel, the list of problems and every menu is drawn against a
+  stand-in for Blender's layout that rejects what a real one would,
 * the overlay is rendered off-screen and its colours sampled where the walls
   and the badge are,
 * in an interactive Blender window on a virtual display (`tests/gui_on_xvfb.sh`)
   a part dragged with simulated mouse input updates the overlay on every step
-  of the drag; the badge is found in the corner the sidebar leaves free;
-  problems are isolated one after the other with Blender's real local view;
-  and undo, redo and delete, triggered with simulated key presses, leave
-  Blender standing (`tests/blender_gui_undo.py`, see below),
-* version 1.1.0 installed over a 1.0.1 that is in use, in the same session,
+  of the drag; the badge is found in the corner the sidebar leaves free; a
+  row of the list is clicked with the mouse; problems are isolated one after
+  the other with Blender's real local view; and undo, redo and delete,
+  triggered with simulated key presses, leave Blender standing
+  (`tests/blender_gui_undo.py`, see below),
+* version 1.2.0 installed over a 1.1.0 that is in use, in the same session,
   keeps the settings and the user's printers and carries on
   (`tests/blender_upgrade_test.py`).
 
@@ -74,27 +79,44 @@ Version 1.0.0 crashed Blender there: the add-on's timer read the dependency
 graph in the moment between an operator freeing objects and Blender
 rebuilding the graph. Since 1.0.1 the graph is brought up to date before the
 timer reads it; the crash is reproduced by the tests without that line.
-Version 1.1.0 is the interface as he asked for it after his first trial.
+Version 1.1.0 was the interface as he asked for it after his first trial;
+1.2.0 is his second and third lists, and what an independent review of the
+code found (among it two cases in which a contact between parts was not
+reported).
 
-Not yet tried: Blender 4.2 - 5.1, macOS, the Vulkan and Metal backends.
+Not yet tried: Blender 4.2 - 5.1 (the code compiles with Python 3.11, and
+every API it uses was looked up in the 4.2 source), macOS, the Vulkan and
+Metal backends.
 
 ### Large builds
 
-Measured on a 2-core virtual machine without a GPU, where one worker thread
-does the sorting (there is one per processor core less one, up to four).
+Measured on a 2-core virtual machine without a GPU, where a single worker
+thread does the sorting (there is one for every two processor threads, up
+to eight). Version 1.1.0 and 1.2.0 in the same session:
 
-| Build | Taking it in | Longest freeze | Drag, per step | Rotate, per step | Memory |
-| --- | --- | --- | --- | --- | --- |
-| 30 M triangles, 20 parts of 1.5 M (in Blender) | first results after 4 s, all checked after 15 s | 43 ms | 5 ms (32 at worst) | 8 ms (16 at worst) | 2.2 GB |
-| 180 M triangles, 600 copies of 12 meshes, each in its own rotation, memory limited to 2 GB (engine alone) | every collision known after 9 s, all distances after 56 s | 211 ms | 12 ms (48 at worst) | 12 ms (30 at worst) | 2.3 GB |
+| 30 M triangles, 20 parts of 1.5 M (in Blender, memory limit 1.7 GB) | 1.1.0 | 1.2.0 |
+| --- | --- | --- |
+| Every part placed (the build volume judged) | 21.4 s | 2.4 s |
+| First collision results | 5.1 s | 2.8 s |
+| Verdict final | 23.4 s | 19.4 s |
+| Longest freeze while taking it in | 1.4 s | 0.16 s |
+| Dragging a part of 1.5 M triangles, per step | 10 ms | 6 ms |
+| Rotating it, per step | 16 ms | 27 ms |
+
+With 12 M triangles (8 parts): every part placed after 1.0 s instead of
+8.1 s, first results after 2.8 s instead of 4.6 s, verdict final after 8.4 s
+in both. The time to the final verdict is the sorting, which one thread does
+here. The engine alone, 180 M triangles (600 copies of 12 meshes, each in its
+own rotation, 2 GB): every collision known after 9 s, all distances after
+56 s, 12 ms per drag step (`tests/bench_scale.py`, measured with 1.0).
 
 "Longest freeze" is the longest the main thread was busy in one go, so the
-longest Blender would not respond. `tests/blender_bench_large.py` and
-`tests/bench_scale.py` produce these figures.
+longest Blender would not respond. `tests/blender_bench_large.py` produces
+these figures.
 
 ## Install
 
-Download or build `bucket_builder-1.1.0.zip`, then in Blender:
+Download or build `bucket_builder-1.2.0.zip`, then in Blender:
 Edit > Preferences > Get Extensions > the arrow in the top right >
 *Install from Disk*.
 
@@ -147,6 +169,11 @@ To build the zip from this repository:
   is not called clear: it stays "checking" and is settled by an exhaustive
   search that stops at the first cut and is done a slice at a time. A copy
   lying exactly on its original is in contact, which is found at once.
+* **Nor is "do they touch" or "do they keep the clearance".** The proof of
+  the distance between two parts is bounded as well. Where it is cut short
+  and what it left out could still hold a contact, or a gap under the
+  clearance (a flange lying flat on a plate, two large faces at about the
+  clearance), the same exhaustive search goes through all of it.
 * **Nothing blocks.** Fitted trees are built in slices between redraws, and
   pairs whose trees are ready are solved first, so the results of a new scene
   appear as the work gets done.
@@ -193,7 +220,7 @@ millionth of a millimetre, which one counts and the other does not.
 The engine needs only NumPy:
 
     python3 tests/test_tritri.py     # triangle routines against slow references
-    python3 tests/test_world.py      # the collision world against brute force (about 3 minutes)
+    python3 tests/test_world.py      # the collision world against brute force (about 10 minutes)
     python3 tests/bench.py --quick   # timings on build-sized scenes (--storm: import into a full build)
     python3 tests/bench_scale.py parts 20 1500000        # 30 M triangles
     python3 tests/bench_scale.py instances 600 300000 12 2   # 180 M, 2 GB limit
@@ -206,7 +233,7 @@ With the add-on installed and enabled in Blender:
     blender --background --python tests/blender_gpu_test.py -- out  # overlay, off-screen PNGs
     blender --background --python tests/blender_bvhtree_compare.py  # against BVHTree
     blender --background --python tests/blender_bench_large.py -- 20 1500000   # timings, large build
-    tests/gui_on_xvfb.sh blender out                                # in a window: drag, badge, isolate
+    tests/gui_on_xvfb.sh blender out                                # in a window: drag, badge, list, isolate
     tests/gui_on_xvfb.sh blender out blender_gui_undo.py            # undo, redo, delete in a window
     tests/gui_on_xvfb.sh blender out blender_gui_stress.py          # a full build under the mouse
     blender --background --python tests/blender_upgrade_test.py -- old.zip new.zip   # in an empty profile
@@ -223,8 +250,9 @@ With the add-on installed and enabled in Blender:
       monitor.py          mirrors the Blender scene into the engine: handlers, timer, workers
       overlay.py          viewport drawing
       props.py            settings, preferences, printer profiles
-      ops.py              operators: navigation, isolating, printer profiles, the report
-      ui.py               sidebar panels, entries in Blender's own menus
+      ops.py              operators: navigation, isolating, ignoring, printer profiles, the report
+      ui.py               sidebar panels, the list of problems, entries in Blender's own menus
+      icons.py            the coloured icons of the status box
     tests/
     tools/test-blender/   building Blender from source where it cannot be downloaded
     CLAUDE.md             working notes: state, decisions, what is next

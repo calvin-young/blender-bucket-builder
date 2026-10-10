@@ -10,18 +10,27 @@ the sidebar where an object can be left out of the checks.
 """
 
 import bpy
-from bpy.types import Panel
+from bpy.types import Panel, UIList
 
 from . import icons, monitor, ops, overlay, props
 
 LIST_ROWS = 10
 IGNORED_ROWS = 12
+TAB_WIDTH = 0.3       # of the colour tab of a row in the list of problems, in interface units
 
 # the icon of every tone of overlay.summary: (ours, Blender's if ours could not be made)
 _TONE_ICON = {'fail': ('cross', 'CANCEL'), 'out': ('box', 'SHADING_BBOX'), 'warn': ('warn', 'ERROR'),
               'wall': ('gap', 'SHADING_BBOX'), 'ok': ('ok', 'CHECKMARK'), 'note': ('note', 'INFO'),
-              'dim': ('dot', 'DOT'), '': (None, 'BLANK1'), 'printer': (None, 'BLANK1')}
-_KIND_TONE = {'COLLIDE': 'fail', 'CLEAR': 'warn', 'WALL': 'wall', 'PARTIAL': 'out', 'OUTSIDE': 'out'}
+              'dim': ('dot', 'DOT'), '': (None, 'BLANK1'), 'printer': (None, 'BLANK1'),
+              'view': (None, 'VIEWZOOM')}
+# The list of problems has Blender's own icons, in the colour of its text: a
+# coloured icon on every row was too loud.  The colour of a kind is a slim
+# tab at the left end of its row (see props._tab).
+_KIND_ICON = {'PARTIAL': 'SHADING_BBOX', 'OUTSIDE': 'SHADING_BBOX', 'COLLIDE': 'CANCEL',
+              'CLEAR': 'ERROR', 'WALL': 'OBJECT_HIDDEN'}
+_KIND_TAB = {'PARTIAL': 'tab_outside', 'OUTSIDE': 'tab_outside', 'COLLIDE': 'tab_collision',
+             'CLEAR': 'tab_clearance', 'WALL': 'tab_wall'}
+ISOLATE_ICON = 'VIEWZOOM'
 
 
 def _icon(tone):
@@ -42,6 +51,17 @@ def _split(layout):
     col.use_property_split = True
     col.use_property_decorate = False
     return col
+
+
+def _limit(layout, data, switch, value):
+    """A check that has a distance: the checkbox with its name at the left
+    edge, as every other checkbox of the sidebar, and the distance beside it."""
+    row = layout.row(align=True)
+    row.prop(data, switch)
+    sub = row.row(align=True)
+    sub.ui_units_x = 3.2
+    sub.active = getattr(data, switch)
+    sub.prop(data, value, text="")
 
 
 def _big(layout, data, prop, text):
@@ -65,29 +85,40 @@ class BUCKETBUILDER_PT_main(_Base, Panel):
         scene = context.scene
         mon = monitor.get(scene)
 
-        # a sign, not a switch: the switches are in the two panels below
+        # a sign, not a switch: the switches are in the two panels below.  It
+        # is lit while something is being checked.
         row = layout.row()
         row.scale_y = 1.6
-        row.operator("bucketbuilder.status", text="Monitoring On", depress=True)
+        row.operator("bucketbuilder.status", depress=props.active(props.settings(scene)))
 
         status = mon.status() if mon is not None else None
-        state, rows = overlay.summary(status)
+        local = overlay.local_count(context, mon) if mon is not None else None
+        state, rows = overlay.summary(status, local)
         box = layout.box()
         col = box.column(align=True)
+        # (The colour of a line is in its icon.  A panel's text can be made
+        # red and nothing else, and one red line among white ones looked like
+        # a mistake: so all of them are plain.)
         for text, tone in rows:
-            row = col.row()
-            row.alert = tone == 'fail'            # (red is the one colour a panel's text can have)
-            row.label(text=text, **_icon(tone))
+            col.label(text=text, **_icon(tone))
         if status and status.get('printer'):
-            col.label(text=status['printer'], icon='BLANK1')
+            col.label(text=status['printer'], icon='INFO')
         if mon is not None and mon.error:
             col.label(text=mon.error[:60], icon='INFO')
 
 
+def _mm(pr):
+    """A distance for the list: "[3.0 mm]", with two decimals under a millimetre."""
+    d = pr['dist_mm']
+    return f"[{'~' if pr['approx'] else ''}{d:.1f} mm]" if d >= 0.995 else \
+        f"[{'~' if pr['approx'] else ''}{d:.2f} mm]"
+
+
 def problem_text(pr):
-    """One problem as a line of the list."""
+    """One problem as a line of the list.  A distance comes first, so that
+    down the list one sees at a glance how many there are and how bad."""
     if pr['kind'] == 'CLEAR':
-        return f"{pr['a']}  |  {pr['b']}   {'~' if pr['approx'] else ''}{pr['dist_mm']:.2f} mm"
+        return f"{_mm(pr)}  {pr['a']}  |  {pr['b']}"
     if pr['kind'] == 'COLLIDE':
         if pr['inside'] == 1:
             return f"{pr['a']}  inside  {pr['b']}"
@@ -95,10 +126,66 @@ def problem_text(pr):
             return f"{pr['b']}  inside  {pr['a']}"
         return f"{pr['a']}  x  {pr['b']}"
     if pr['kind'] == 'WALL':
-        return f"{pr['a']}   {pr['dist_mm']:.2f} mm to wall"
+        return f"{_mm(pr)}  {pr['a']}  |  wall"
     if pr['kind'] == 'PARTIAL':
         return f"{pr['a']}   partly outside"
     return f"{pr['a']}   outside"
+
+
+class BUCKETBUILDER_UL_problems(UIList):
+    """The list of problems.  Blender's own list widget: text at the left,
+    the row one is at lit, a scroll bar when there are many.  Its rows come
+    from the monitor, not from the collection it is given (see props.ensure_rows)."""
+    bl_idname = "BUCKETBUILDER_UL_problems"
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index=0,
+                  flt_flag=0):
+        scene = context.scene
+        mon = monitor.get(scene)
+        problems = mon.problems() if mon is not None else ()
+        if index >= len(problems):
+            return
+        pr = problems[index]
+        st = props.settings(scene)
+        p = props.prefs(context)
+        ignored = pr['ignored']
+        row = layout.row(align=True)
+        if p is not None:
+            # the colour the problem has in the viewport (grey: ignored)
+            tab = row.row(align=True)
+            tab.ui_units_x = TAB_WIDTH
+            tab.enabled = False
+            tab.prop(p, 'tab_ignored' if ignored else _KIND_TAB[pr['kind']], text="")
+        # the problem itself: a click on the row goes there.  Greyed when it is ignored.
+        sub = row.row(align=True)
+        sub.active = not ignored
+        sub.label(text=problem_text(pr), icon=_KIND_ICON[pr['kind']])
+        # ... and its three buttons: on its own, ignore, ignore for good
+        local = getattr(context.space_data, 'local_view', None) is not None
+        alone = st.isolate and local and index == mon.active_index(st)
+        names = pr['names']
+        for idname, icon_name, down, lock in (
+                ("bucketbuilder.isolate_problem", ISOLATE_ICON, alone, None),
+                ("bucketbuilder.ignore_problem", 'HIDE_ON' if ignored else 'HIDE_OFF',
+                 bool(ignored), False),
+                ("bucketbuilder.ignore_problem", 'LOCKED' if ignored == 2 else 'UNLOCKED',
+                 ignored == 2, True)):
+            op = row.operator(idname, text="", icon=icon_name, depress=down)
+            op.kind = pr['key'][0]
+            op.a, op.b = names
+            if lock is not None:
+                op.lock = lock
+
+    def filter_items(self, context, data, propname):
+        # as many rows as there are problems, in their order
+        rows = getattr(data, propname)
+        mon = monitor.get(context.scene)
+        n = len(mon.problems()) if mon is not None else 0
+        show = self.bitflag_filter_item
+        return [show if i < n else 0 for i in range(len(rows))], []
+
+    def draw_filter(self, context, layout):
+        pass                      # (nothing to search by: the rows have no names of their own)
 
 
 class BUCKETBUILDER_PT_problems(_Base, Panel):
@@ -118,55 +205,34 @@ class BUCKETBUILDER_PT_problems(_Base, Panel):
         problems = mon.problems() if mon is not None else []
         n = len(problems)
 
+        # previous | on its own | next.  (A button has its icon before its
+        # text, so the two arrows are text: the same triangles, on the outside.)
         row = layout.row(align=True)
         sub = row.row(align=True)
         sub.enabled = n > 0
-        op = sub.operator("bucketbuilder.step_problem", text="Previous", icon='TRIA_LEFT')
+        op = sub.operator("bucketbuilder.step_problem", text="\u25c0  Previous")
         op.direction = -1
-        op = sub.operator("bucketbuilder.step_problem", text="Next", icon='TRIA_RIGHT')
-        op.direction = 1
         # going to a problem then shows its parts on their own (local view)
-        row.operator("bucketbuilder.isolate", text="", depress=st.isolate,
-                     icon='SOLO_ON' if st.isolate else 'SOLO_OFF')
+        row.operator("bucketbuilder.isolate", text="", depress=st.isolate, icon=ISOLATE_ICON)
+        sub = row.row(align=True)
+        sub.enabled = n > 0
+        op = sub.operator("bucketbuilder.step_problem", text="Next  \u25b6")
+        op.direction = 1
         if n == 0:
             layout.label(text="Nothing to fix", **_icon('ok'))
-            return
-
-        active = mon.active_index(st)
-        first = 0
-        if active >= LIST_ROWS:
-            first = min(active - LIST_ROWS // 2, max(0, n - LIST_ROWS))
-        col = layout.column(align=True)
-        for i in range(first, min(n, first + LIST_ROWS)):
-            pr = problems[i]
-            ignored = pr['ignored']
-            row = col.row(align=True)
-            # the problem itself: click to go there.  Greyed when it is ignored.
-            sub = row.row(align=True)
-            sub.active = not ignored
-            op = sub.operator("bucketbuilder.focus_problem", text=problem_text(pr),
-                              depress=(i == active), **_icon(_KIND_TONE[pr['kind']]))
-            op.index = i
-            # ... and its three buttons: on its own, ignore, ignore for good
-            alone = st.isolate and i == active
-            names = pr['names']
-            for idname, icon, down, lock in (
-                    ("bucketbuilder.isolate_problem", 'SOLO_ON' if alone else 'SOLO_OFF', alone, None),
-                    ("bucketbuilder.ignore_problem", 'HIDE_ON' if ignored else 'HIDE_OFF',
-                     bool(ignored), False),
-                    ("bucketbuilder.ignore_problem", 'LOCKED' if ignored == 2 else 'UNLOCKED',
-                     ignored == 2, True)):
-                op = row.operator(idname, text="", icon=icon, depress=down)
-                op.kind = pr['key'][0]
-                op.a, op.b = names
-                if lock is not None:
-                    op.lock = lock
-        if n > LIST_ROWS:
-            layout.label(text=f"Showing {first + 1}-{min(n, first + LIST_ROWS)} of {n}")
-        if len(st.ignored_problems):
-            row = layout.row()
+        else:
+            wm = context.window_manager
+            layout.template_list("BUCKETBUILDER_UL_problems", "", wm, "bucket_builder_rows",
+                                 wm, "bucket_builder_row", rows=max(2, min(n, LIST_ROWS)),
+                                 maxrows=LIST_ROWS, sort_lock=True)
+        entries = len(st.ignored_problems)
+        if entries:
+            # (also with nothing in the list: a lock on two parts that are
+            # apart just now is still there, and must be seen to be)
             k = sum(1 for pr in problems if pr['ignored'])
-            row.label(text=f"{k} ignored", **_icon('note'))
+            row = layout.row()
+            row.label(text=f"{k} ignored" + (f", {entries - k} not in the list" if entries > k else ""),
+                      **_icon('note'))
             row.operator("bucketbuilder.count_all_problems")
 
 
@@ -185,15 +251,12 @@ class BUCKETBUILDER_PT_collisions(_Base, Panel):
 
         body = layout.column()
         body.active = st.detect_collisions
-        col = _split(body)
-        row = col.row(align=True, heading="Clearance (mm)")
-        row.prop(st, "use_clearance", text="")
-        sub = row.row(align=True)
-        sub.active = st.use_clearance
-        sub.prop(st, "clearance_mm", text="")
-        body.prop(st, "detect_enclosed")
+        _limit(body, st, "use_clearance", "clearance_mm")
         # (which parts are checked goes for the build volume as well)
         layout.prop(st, "ignore_hidden")
+        body = layout.column()
+        body.active = st.detect_collisions
+        body.prop(st, "detect_enclosed")
 
 
 class BUCKETBUILDER_PT_parts(_Base, Panel):
@@ -288,13 +351,9 @@ class BUCKETBUILDER_PT_volume(_Base, Panel):
         col = body.column(align=True)
         col.prop(st, "show_volume")
         col.prop(st, "use_volume")
-        col = _split(body)
+        col = body.column()
         col.active = st.use_volume
-        row = col.row(align=True, heading="Wall Gap (mm)")
-        row.prop(st, "use_wall_clearance", text="")
-        sub = row.row(align=True)
-        sub.active = st.use_wall_clearance
-        sub.prop(st, "wall_clearance_mm", text="")
+        _limit(col, st, "use_wall_clearance", "wall_clearance_mm")
 
         header, body = layout.panel("bucketbuilder_volume_advanced", default_closed=True)
         header.label(text="Advanced")
@@ -449,6 +508,7 @@ class BUCKETBUILDER_PT_export(_Base, Panel):
 
 
 CLASSES = (
+    BUCKETBUILDER_UL_problems,
     BUCKETBUILDER_PT_main,
     BUCKETBUILDER_PT_problems,
     BUCKETBUILDER_PT_collisions,

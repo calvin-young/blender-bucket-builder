@@ -478,6 +478,55 @@ def row_args(kind):
     return dict(kind=pr['key'][0], a=pr['names'][0], b=pr['names'][1])
 
 
+def step_click_row():
+    """A real click on a row of the list of problems: the row of the
+    clearance warning, found on the screen by its amber tab."""
+    px = gui_common.screen_pixels()
+    side = sidebar()
+    if px is None or side is None:
+        log('(no virtual display to read: the click on a row is not tried)')
+        STATE['clicked'] = None
+        return 0.1
+    w = win()
+    x0 = w.x + side.x
+    top = px.shape[0] - 1 - (w.y + side.y + side.height)
+    box = px[top:top + side.height, x0:x0 + side.width].astype(int)
+    r, g, b = box[:, :, 0], box[:, :, 1], box[:, :, 2]
+    amber = (r > 110) & (g > 70) & (g < r - 25) & (b < 70)
+    # The tab is a narrow upright strip near the left edge of the list (the
+    # amber icons of the box above it are wider than they are narrow).
+    run = 0
+    y = col = None
+    for yy in range(amber.shape[0]):
+        xs = np.nonzero(amber[yy, :60])[0]
+        narrow = xs.shape[0] >= 2 and xs[-1] - xs[0] <= 8
+        run = run + 1 if narrow else 0
+        if run >= 12:
+            y, col = yy - 6, int(xs[0])            # inside the first amber row: the clearance warning
+            break
+    assert y is not None, 'no amber tab found in the list of problems'
+    sx = x0 + col + 70
+    sy = px.shape[0] - 1 - (top + y)
+    for kind, value in (('MOUSEMOVE', 'NOTHING'), ('LEFTMOUSE', 'PRESS'), ('LEFTMOUSE', 'RELEASE')):
+        w.event_simulate(type=kind, value=value, x=sx - w.x, y=sy - w.y)
+    STATE['clicked'] = (sx, sy)
+    return 1.0
+
+
+def step_click_row_check():
+    if STATE.get('clicked') is None:
+        return 0.1
+    mon = monitor.get(win().scene)
+    st = win().scene.bucket_builder
+    at = mon.active_index(st)
+    picked = sorted(o.name for o in win().view_layer.objects if o.select_get())
+    log('clicked the row of the clearance warning at', STATE['clicked'], '-> problem', at, 'selected', picked)
+    assert at == 1 and picked == ['Block', 'Pin'], (at, picked)
+    assert in_local_view() is None
+    shot('gui_6a_row_clicked')
+    return 0.3
+
+
 def step_isolate():
     mon = monitor.get(win().scene)
     st = win().scene.bucket_builder
@@ -499,8 +548,23 @@ def step_isolate():
     return 1.0
 
 
+def local_count():
+    """What the add-on says the viewport shows: (parts shown, parts checked)
+    in local view, else None."""
+    with override():
+        return bc.overlay.local_count(bpy.context, monitor.get(win().scene))
+
+
 def step_isolate_shot():
     shot('gui_7_isolated_collision')
+    # The verdict is still the whole build's; a line under it says how little
+    # of the build this viewport shows.
+    mon = monitor.get(win().scene)
+    local = local_count()
+    text = bc.overlay.badge_text(mon.status(), local)
+    log('in local view:', local, '| badge', text)
+    assert local == (2, 6) and 'Local view: 2 of 6 parts shown' in text[2], (local, text)
+    assert text[:2] == bc.overlay.badge_text(mon.status())[:2], 'local view changed the verdict'
     # Only the problems of the parts in view are drawn: the warning between
     # the block and the pin, neither of which is in view, is not.
     amber = pixels_around((230, 90, 66.5), 'amber', 22)
@@ -558,6 +622,7 @@ def step_isolate_next_shot():
     with override():
         assert bpy.ops.bucketbuilder.isolate_problem(**row_args('WALL')) == {'FINISHED'}
     assert not st.isolate and in_local_view() is None, (st.isolate, in_local_view())
+    assert local_count() is None, local_count()
     log('isolation off: the whole build shows again')
     with override():
         assert bpy.ops.bucketbuilder.step_problem(direction=1) == {'FINISHED'}
@@ -679,7 +744,7 @@ STEPS = [step_setup, step_enable, step_check_initial, step_badge_far_right, step
 for i, dx in enumerate([-30, -30, -30, -30, 30, 40, 40, 40, 40, 40, 40]):
     STEPS += make_drag_step(dx, 'gui_3_mid_drag' if i == 2 else None)
 STEPS += [step_drag_confirm, step_after_drag, step_fix, step_clean_shot, step_wall, step_wall_shot,
-          step_problems_again, step_isolate, step_isolate_shot, step_ghost_shot, step_all_shot,
+          step_problems_again, step_click_row, step_click_row_check, step_isolate, step_isolate_shot, step_ghost_shot, step_all_shot,
           step_isolate_next, step_isolate_next_shot, step_ignore, step_ignore_shot, step_ignore_over,
           step_hide, step_hidden_shot, step_hidden_isolated_shot, step_ignore_hidden, step_final,
           step_export]

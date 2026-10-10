@@ -45,7 +45,8 @@ from .core import COLLIDE, PARTIAL, OUTSIDE
 _handles = []
 _state = {}          # lazily created GPU resources and per-scene caches
 
-MAX_MARKERS = 200
+MAX_MARKERS = 200    # rings drawn in one viewport
+MARKER_POOL = 4000   # problems they are chosen from
 MAX_LABELS = 12      # with more distances than this, only those of the parts being edited
 
 # styles understood by the hatch fragment shader
@@ -828,12 +829,11 @@ def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport,
     return drawn
 
 
-def _local_view(context, mon, st):
-    """(slots shown, an id for the viewport) if the viewport being drawn is in
-    local view and is to show the problems of its own parts only, else
-    (None, 0)."""
+def _local_view(context, mon):
+    """(slots of the parts it shows, an id for the viewport) if the viewport
+    that is being drawn is in local view, else (None, 0)."""
     space = context.space_data
-    if space is None or getattr(space, 'local_view', None) is None or st.local_view_mode == 'ALL':
+    if space is None or getattr(space, 'local_view', None) is None:
         return None, 0
     w = mon.world
     shown = set()
@@ -849,6 +849,29 @@ def _local_view(context, mon, st):
         if slot is not None:
             shown.add(slot)
     return shown, space.as_pointer()
+
+
+def local_count(context, mon):
+    """(parts shown, parts checked) if the viewport of ``context`` is in local
+    view, else None: what ``summary`` says about the view."""
+    try:
+        shown, _ = _local_view(context, mon)
+    except Exception:
+        return None
+    if shown is None:
+        return None
+    return len(shown), mon.world.object_count
+
+
+def forget():
+    """Drop everything that was worked out for drawing (the compiled shaders
+    stay).  The caches hold monitors, their results and the meshes uploaded
+    for shading: called when a monitor is thrown away, so that the build of
+    the file that was open does not stay in memory under the one that is."""
+    shaders = _state.get('shaders')
+    _state.clear()
+    if shaders is not None:
+        _state['shaders'] = shaders
 
 
 def _draw_failed(mon, ex):
@@ -899,7 +922,8 @@ def draw_view():
     elif 'last_draw' in _state:
         del _state['last_draw']
     try:
-        only, view = _local_view(context, mon, st)
+        # (a view that is to show the whole build is drawn like any other)
+        only, view = (None, 0) if st.local_view_mode == 'ALL' else _local_view(context, mon)
         mon.draw_tris = draw_scene(mon, st, props.prefs(context), rv3d.perspective_matrix,
                                    rv3d.window_matrix, rv3d.view_distance,
                                    gpu.state.viewport_get()[2:], context.preferences.system.ui_scale,
@@ -996,7 +1020,8 @@ def unchecked_lines(status):
     lines = []
     n = status.get('skipped', 0)
     if n:
-        lines.append(f"{n} part" + ("s" if n != 1 else "") + " not checked (too large)")
+        # (too large for the limits in the preferences, or it could not be read: Parts says which)
+        lines.append(f"{n} part" + ("s" if n != 1 else "") + " not checked (see Parts)")
     un = status.get('unchecked') or {}
     n = un.get('instances', 0)
     if n:
@@ -1014,19 +1039,22 @@ def _count(n, one, many=None):
     return f"{n} {one if n == 1 else (many or one + 's')}"
 
 
-def summary(status):
+def summary(status, local=None):
     """(state, [(line, tone), ...]): how the build stands, for the badge and
     for the sidebar, which show the same lines.  ``status`` is the monitor's,
-    or None when nothing is switched on.
+    or None when nothing is switched on.  ``local`` is (parts shown, parts
+    checked) for a viewport in local view: the verdict is that of the whole
+    build all the same, so a line says how little of it is to be seen.
 
     state is 'FAIL', 'WARN' (no collision, but something to look at), 'OK',
     'BUSY' or 'OFF'.  The first line is the headline.  Every kind of problem
     has a line and a tone of its own, the most serious first: 'out' (outside
     the build volume), 'fail' (collisions), 'warn' (clearance), 'wall' (too
     close to a wall).  'ok' is the all-clear, 'note' what is left out on
-    purpose, 'dim' work in progress and what is switched off, '' plain
-    detail.  A problem that is known is shown at once, even while other
-    parts are still being read: it will not go away by waiting.
+    purpose, 'dim' work in progress and what is switched off, 'view' what
+    the viewport shows, '' plain detail.  A problem that is known is shown at
+    once, even while other parts are still being read: it will not go away
+    by waiting.
     """
     if status is None:
         return 'OFF', [("Not checking collisions", 'dim'), ("Not checking the build volume", 'dim')]
@@ -1036,6 +1064,7 @@ def summary(status):
     nw = status['near_wall']
     pairs = status['pairs']
     volume = status['volume']
+    checked = pairs or volume
     rows = []
     if nout:
         rows.append((_count(nout, "Part") + " Outside Build Volume", 'out'))
@@ -1046,50 +1075,66 @@ def summary(status):
         warnings.append((_count(ncl, "Clearance Warning"), 'warn'))
     if nw:
         warnings.append((_count(nw, "Part") + " Within Wall Gap", 'wall'))
-    working = bool(status['preparing']) or status['busy']
+    prep = status['preparing']
+    if prep and prep[1] <= 0:
+        prep = None                       # (between two counts: nothing to count yet)
+    # Gaps that are still being measured can still become warnings: until
+    # they are, a build without problems is not called fine.
+    measuring = bool(status['refining']) and status['clearance_on']
+    working = checked and (bool(prep) or bool(status['busy']) or bool(status['preparing']))
     if rows:
         # something is wrong, whatever is still to come
         rows += warnings
-        if status['preparing']:
-            rows.append(("still preparing parts ({} of {})".format(*status['preparing']), 'dim'))
-        elif status['busy']:
+        if prep:
+            rows.append(("still preparing parts ({} of {})".format(*prep), 'dim'))
+        elif working:
             rows.append(("still checking...", 'dim'))
-    elif status['preparing']:
-        rows += [("Preparing Parts", 'dim'), ("{} of {} ready".format(*status['preparing']), 'dim')]
+    elif prep and working:
+        rows += [("Preparing Parts", 'dim'), ("{} of {} ready".format(*prep), 'dim')]
         rows += warnings
-    elif status['busy']:
+    elif working:
         rows.append(("Checking", 'dim'))
         if status['pending']:
-            rows.append((f"{status['pending']} pairs to go", 'dim'))
+            rows.append((_count(status['pending'], "pair") + " to go", 'dim'))
         rows += warnings
+    elif measuring and not warnings:
+        rows.append(("Checking", 'dim'))
     else:
         rows += warnings
     found = bool(nout or nc or warnings)
     gaps = unchecked_lines(status)
     n = status['objects']
     hidden = status.get('hidden', 0)
-    checked = pairs or volume
-    if not found and not working:
+    ignored = status.get('ignored_problems', 0)
+    settled = not found and not working and not measuring
+    if settled:
         if not checked:
             rows.append(("Nothing Checked", 'dim'))
+        elif n == 0 and gaps:
+            rows.append(("Not Everything Checked", 'warn'))
         elif n == 0:
             rows += [("No Parts", 'dim'), ("no mesh objects to check", '')]
         else:
             # short lines: the same text has to fit the sidebar
             if gaps:
                 rows.append(("Not Everything Checked", 'warn'))
+            elif pairs and volume:
+                rows.append(("Build OK", 'ok'))
+            elif ignored:
+                # (not "No Collisions": one of them may be what is ignored)
+                rows.append(("No Other Problems", 'ok'))
             else:
-                rows.append(("Build OK" if pairs and volume else
-                             ("No Collisions" if pairs else "Inside Build Volume"), 'ok'))
+                rows.append(("No Collisions" if pairs else "Inside Build Volume", 'ok'))
             parts = _count(n, "part") + (f" ({hidden} hidden)" if hidden else "")
-            if status.get('ignored_problems', 0):
-                # (not "no collisions": one of them may be what is ignored)
+            if ignored:
                 rows.append((parts + ", no other problems", ''))
             else:
                 if pairs:
                     rows.append((parts + ", no collisions", ''))
                 if volume:
                     rows.append(("all inside the build volume" if pairs else parts + ", all inside", ''))
+    if local is not None:
+        rows.append((f"Local view: {local[0]} of {_count(local[1], 'part')} shown", 'view'))
     with_hidden = status.get('hidden_problems', 0)
     if with_hidden:
         rows.append((_count(with_hidden, "problem") + " with hidden parts", ''))
@@ -1103,7 +1148,7 @@ def summary(status):
     k = status.get('hidden_skipped', 0)
     if k:
         rows.append((_count(k, "hidden part") + " not checked", 'note'))
-    if not working and status['refining'] and status['clearance_on']:
+    if not working and measuring:
         # collisions are settled; some gaps are still being measured exactly
         rows.append(("measuring clearances...", 'dim'))
     if not pairs:
@@ -1112,8 +1157,10 @@ def summary(status):
         rows.append(("Not checking the build volume", 'dim'))
     if nc or nout:
         state = 'FAIL'
-    elif working or n == 0 or not checked:
-        state = 'BUSY' if working else 'OFF'
+    elif working or (measuring and not warnings):
+        state = 'BUSY'
+    elif not checked or (n == 0 and not gaps):
+        state = 'OFF'
     elif ncl or nw or gaps:
         state = 'WARN'
     else:
@@ -1121,9 +1168,9 @@ def summary(status):
     return state, rows
 
 
-def badge_text(status):
+def badge_text(status, local=None):
     """``summary`` as plain text: (state, headline, the other lines)."""
-    state, rows = summary(status)
+    state, rows = summary(status, local)
     lines = [line for line, _ in rows]
     return state, (lines[0] if lines else ''), lines[1:]
 
@@ -1231,15 +1278,17 @@ def _palette(p):
     blue = tuple(p.color_volume) if p else (0.35, 0.75, 1.0, 1.0)
     return {'fail': red, 'out': mag, 'warn': amber, 'wall': amber, 'note': amber,
             'ok': (0.25, 0.85, 0.35, 1.0), 'dim': (0.75, 0.75, 0.75, 1.0),
-            '': (0.92, 0.92, 0.92, 1.0), 'printer': (blue[0], blue[1], blue[2], 1.0)}
+            '': (0.92, 0.92, 0.92, 1.0), 'view': (0.92, 0.92, 0.92, 1.0),
+            'printer': (blue[0], blue[1], blue[2], 1.0)}
 
 
-def badge_layout(status, p, ui):
+def badge_layout(status, p, ui, local=None):
     """What the badge shows and how much room it takes: (state, rows with
-    their colours, width, height) in pixels, margins included."""
-    state, rows = summary(status)
+    their colours, width, height) in pixels, margins included.  ``local``:
+    see ``summary``."""
+    state, rows = summary(status, local)
     tones = _palette(p)
-    rows = [(line, tones[tone]) for line, tone in rows[:8]]
+    rows = [(line, tones[tone]) for line, tone in rows[:10]]
     printer = status.get('printer') if status else None
     if printer:
         rows.append((printer, tones['printer']))      # which printer this is for
@@ -1279,15 +1328,17 @@ def _draw_badge(layout, p, shaders, ui, right, bottom, srgb=1.0):
     _draw_prims(shaders, _badge_prims(state, icx, cy, r, color), srgb)
 
     _text_shadow(True)
-    edge = icx - 1.16 * r - gap                               # the text ends here
-    y = cy + 0.5 * block_h - 0.8 * head_size
-    head = rows[0][0]
-    _text(edge - _text_width(head, head_size), y, head, head_size, color)
-    y -= 3.0 * k
-    for line, lc in rows[1:]:
-        y -= line_h
-        _text(edge - _text_width(line, body_size), y, line, body_size, lc)
-    _text_shadow(False)
+    try:
+        edge = icx - 1.16 * r - gap                           # the text ends here
+        y = cy + 0.5 * block_h - 0.8 * head_size
+        head = rows[0][0]
+        _text(edge - _text_width(head, head_size), y, head, head_size, color)
+        y -= 3.0 * k
+        for line, lc in rows[1:]:
+            y -= line_h
+            _text(edge - _text_width(line, body_size), y, line, body_size, lc)
+    finally:
+        _text_shadow(False)               # (the font is Blender's own: it must not keep our shadow)
 
 
 _MARK_COLLISION = ('COLLIDE', 'PARTIAL', 'OUTSIDE')
@@ -1335,7 +1386,7 @@ def _draw_markers(mon, st, p, shaders, ui, persp_matrix, width, height, only=Non
     labels_on = st.show_labels_clearance
     if not rings_on and not labels_on:
         return
-    n = min(len(problems), MAX_MARKERS)
+    n = min(len(problems), MARKER_POOL)
     pts, kinds, muted, slots = _marker_data(mon, problems, n)
     clip = pts @ np.array(persp_matrix).T
     wv = clip[:, 3]
@@ -1348,6 +1399,13 @@ def _draw_markers(mon, st, p, shaders, ui, persp_matrix, width, height, only=Non
     shown = np.nonzero(ok)[0]
     if shown.shape[0] == 0:
         return
+    active = mon.active_index(st)
+    if shown.shape[0] > MAX_MARKERS:
+        # the most serious ones, and always the one the user is at
+        at = active if 0 <= active < n and ok[active] and active >= shown[MAX_MARKERS - 1] else -1
+        shown = shown[:MAX_MARKERS]
+        if at > shown[-1]:
+            shown = np.append(shown[:-1], at)
     ndc = clip[shown, :2] / wv[shown, None]
     px = (ndc[:, 0] * 0.5 + 0.5) * width
     py = (ndc[:, 1] * 0.5 + 0.5) * height
@@ -1355,7 +1413,6 @@ def _draw_markers(mon, st, p, shaders, ui, persp_matrix, width, height, only=Non
     colors = {'COLLIDE': tones['fail'], 'CLEAR': tones['warn'], 'WALL': tones['wall'],
               'PARTIAL': tones['out'], 'OUTSIDE': tones['out']}
     grey = (0.62, 0.62, 0.62, 0.9)
-    active = mon.active_index(st)
     ring = np.isin(kinds[shown], [_MARK_INDEX[k] for k in rings_on])
     # all rings in one batch, the worst kind last so that it lies on top
     prims = []
@@ -1385,14 +1442,16 @@ def _draw_markers(mon, st, p, shaders, ui, persp_matrix, width, height, only=Non
     if not labels:
         return
     _text_shadow(True)
-    for j, text in labels:
-        pr = problems[shown[j]]
-        if text is None:
-            text = f"{pr['dist_mm']:.2f} mm" + (" to wall" if pr['kind'] == 'WALL' else "")
-        # (next to the ring; where there is none, on the spot itself)
-        dx = 12.0 * ui if ring[j] else -0.5 * _text_width(text, 12.0 * ui)
-        _text(px[j] + dx, py[j] - 4.0 * ui, text, 12.0 * ui, colors[pr['kind']])
-    _text_shadow(False)
+    try:
+        for j, text in labels:
+            pr = problems[shown[j]]
+            if text is None:
+                text = f"{pr['dist_mm']:.2f} mm" + (" to wall" if pr['kind'] == 'WALL' else "")
+            # (next to the ring; where there is none, on the spot itself)
+            dx = 12.0 * ui if ring[j] else -0.5 * _text_width(text, 12.0 * ui)
+            _text(px[j] + dx, py[j] - 4.0 * ui, text, 12.0 * ui, colors[pr['kind']])
+    finally:
+        _text_shadow(False)
 
 
 def draw_hud(mon, st, p, persp_matrix, width, height, right, bottom, ui, only=None,
@@ -1436,11 +1495,23 @@ def _measure_sidebar():
     if region is None or area is None or region.width <= 1:
         return
     try:
-        if not context.preferences.system.use_region_overlap:
+        if not context.preferences.system.use_region_overlap or region.alignment != 'RIGHT':
             return
         st = props.settings(context.scene)
         if st is None or not props.active(st) or not st.show_hud:
             return
+        # Reading pixels back makes the graphics card finish what it is
+        # doing.  The sidebar is redrawn on every step of a drag (its numbers
+        # change), but its panels do not move then: a few looks a second are
+        # enough.
+        now = time.perf_counter()
+        seen = _state.setdefault('sidebar', {})
+        last = _state.setdefault('sidebar_read', {})
+        key = area.as_pointer()
+        mon = monitor.get(context.scene)
+        if key in seen and mon is not None and mon.hot and now - last.get(key, 0.0) < 0.25:
+            return
+        last[key] = now
         ui = context.preferences.system.ui_scale
         h = int(min(region.height, 1200))
         if h < 2:
@@ -1522,9 +1593,11 @@ def draw_pixel():
     try:
         ui = context.preferences.system.ui_scale
         p = props.prefs(context)
-        layout = badge_layout(mon.status(), p, ui) if st.show_hud else None
+        shown, _ = _local_view(context, mon)
+        local = None if shown is None else (len(shown), mon.world.object_count)
+        layout = badge_layout(mon.status(), p, ui, local) if st.show_hud else None
         right, bottom = free_corner(context, layout[3] if layout else 0.0)
-        only, _ = _local_view(context, mon, st)
+        only = None if st.local_view_mode == 'ALL' else shown
         draw_hud(mon, st, p, rv3d.perspective_matrix, region.width, region.height, right, bottom,
                  ui, only, layout=layout)
     except Exception as ex:

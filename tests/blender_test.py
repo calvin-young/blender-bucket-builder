@@ -443,9 +443,13 @@ def main():
     check(bpy.ops.bucketbuilder.profile_add('EXEC_DEFAULT', name='My Printer') == {'FINISHED'}, 'profile saved')
     check(any(x.name == 'My Printer' and tuple(x.size) == (300.0, 200.0, 250.0) for x in p.profiles),
           'new profile stored in the library')
+    # the disk button, as it is used: the size typed over the printer's
+    # (which turns the printer into "Custom"), then stored in that printer
     st.volume_size = (310.0, 200.0, 250.0)
-    st.printer = 'My Printer'
-    check(bpy.ops.bucketbuilder.profile_update() == {'FINISHED'}, 'profile updated')
+    check(st.printer == 'Custom' and st.printer_last == 'My Printer', 'a size typed over a printer',
+          (st.printer, st.printer_last))
+    check(bpy.ops.bucketbuilder.profile_update() == {'FINISHED'} and st.printer == 'My Printer',
+          'profile updated from the size that was typed', st.printer)
     check(any(x.name == 'My Printer' and tuple(x.size) == (310.0, 200.0, 250.0) for x in p.profiles),
           'updated size stored')
     check(bpy.ops.bucketbuilder.profile_rename('EXEC_DEFAULT', name='Our Printer') == {'FINISHED'}
@@ -926,6 +930,104 @@ def main():
           'an entry about a part that is gone is dropped', len(st.ignored_problems))
     check(bpy.ops.bucketbuilder.count_all_problems() == {'FINISHED'} and len(st.ignored_problems) == 0
           and mon.status()['ignored_problems'] == 0, 'and all of them at once')
+    # A lock on two parts that are too close is not a lock on their collision.
+    a.location = (100.0, 100.0, 100.0)
+    b.location = (300.0, 100.0, 100.0)
+    c.location = (100.0, 143.0, 100.0)
+    update()
+    mon = settle()
+    check([q['kind'] for q in mon.problems()] == ['CLEAR'], 'two parts too close', mon.problems())
+    check(bpy.ops.bucketbuilder.ignore_problem(lock=True, **row('CLEAR')) == {'FINISHED'} and level('CLEAR') == 2,
+          'the warning ignored for good')
+    c.location.y = 141.0
+    update()
+    mon = settle()
+    check(level('CLEAR') == 2 and mon.status()['clearance'] == 0, 'closer, and still ignored')
+    c.location.y = 138.0
+    update()
+    mon = settle()
+    check(level('COLLIDE') == 0 and mon.status()['collisions'] == 1 and badge(mon.status())[0] == 'FAIL',
+          'pushed into each other: that is a collision, and it counts', mon.status())
+    c.location.y = 143.0
+    update()
+    mon = settle()
+    check(level('CLEAR') == 2 and bpy.ops.bucketbuilder.count_all_problems() == {'FINISHED'},
+          'apart again: the lock on the warning is still there')
+    # ... and neither is a plain "ignore", when the collision comes from a setting
+    check(bpy.ops.bucketbuilder.ignore_problem(**row('CLEAR')) == {'FINISHED'} and level('CLEAR') == 1, 'ignored')
+    mon.world.pairs[next(iter(mon.world.viol))].state = bc.core.COLLIDE          # (as a search that ends later would)
+    mon.world.version += 1
+    check(level('COLLIDE') == 0, 'the same two parts found to collide after all: not what was ignored')
+    mon.world.pairs[next(iter(mon.world.viol))].state = bc.core.CLEAR
+    mon.world.version += 1
+    check(level('CLEAR') == 1 and bpy.ops.bucketbuilder.count_all_problems() == {'FINISHED'}, 'back as it was')
+    # Ignoring must hold whatever scale the objects carry: a part whose mesh
+    # is a thousand times too large with an object scale of 0.001 (an STL in
+    # metres, imported with that scale) is where it failed half the time.
+    import mathutils
+    a.data.transform(mathutils.Matrix.Scale(1000.0, 4))
+    a.scale = (0.001, 0.001, 0.001)
+    a.rotation_euler = (0.3, 0.2, 0.9)
+    update()
+    mon = settle()
+    stuck = moved = 0
+    rng = np.random.default_rng(5)
+    for trial in range(8):
+        shift = rng.uniform(-60.0, 60.0, 3)
+        for o in (a, c):
+            o.location = tuple(np.array(o.location) + shift)
+        update()
+        mon = settle()
+        kinds = [q['kind'] for q in mon.problems()]
+        if kinds != ['CLEAR']:
+            continue
+        bpy.ops.bucketbuilder.ignore_problem(**row('CLEAR'))
+        stuck += level('CLEAR') == 1
+        c.location.y += 0.4                               # 0.4 mm closer or further: another problem
+        update()
+        mon = settle()
+        kinds = [q['kind'] for q in mon.problems()]
+        moved += kinds == ['CLEAR'] and level('CLEAR') == 0
+        c.location.y -= 0.4
+        update()
+        mon = settle()
+        bpy.ops.bucketbuilder.count_all_problems()
+        for o in (a, c):
+            o.location = tuple(np.array(o.location) - shift)
+    check(stuck >= 6 and stuck == moved, 'with an object scale of 0.001: ignored where it is, and not when it moves',
+          (stuck, moved))
+    a.scale = (1.0, 1.0, 1.0)
+    a.rotation_euler = (0.0, 0.0, 0.0)
+    a.data.transform(mathutils.Matrix.Scale(0.001, 4))
+    update()
+    mon = settle()
+
+    # An exporter makes a dependency graph of its own, in which every object
+    # counts as changed: none of the monitor's business.
+    reads = []
+    real_load = bc.monitor.Monitor._load_geometry
+    bc.monitor.Monitor._load_geometry = lambda self, obj, *args: (reads.append(obj.name), real_load(self, obj, *args))[1]
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                r = bpy.ops.wm.stl_export(filepath=os.path.join(tmp, 'build.stl'), evaluation_mode='DAG_EVAL_VIEWPORT')
+            except Exception as ex:
+                r = str(ex)
+        mon = settle()
+    finally:
+        bc.monitor.Monitor._load_geometry = real_load
+    check(r != {'FINISHED'} or not reads, 'an export does not make the monitor read the parts again', (r, reads))
+    check(mon.world.object_count == 3, 'and no part drops out of the check', mon.world.object_count)
+    # the export button says what must not be overlooked
+    a.location.x = 5.0
+    update()
+    mon = settle()
+    check(any('outside the build volume' in line for line in bc.ops.export_warnings(sc)),
+          'the export button warns about a part outside the build volume', bc.ops.export_warnings(sc))
+    a.location.x = 100.0
+    update()
+    mon = settle()
+    check(not bc.ops.export_warnings(sc), 'and has nothing to say about a build that is inside', bc.ops.export_warnings(sc))
     a.location = (100.0, 100.0, 100.0)
     b.location = (135.0, 100.0, 100.0)
     c.location = (100.0, 200.0, 100.0)

@@ -37,7 +37,7 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
 ## How to work on it
 
 * Engine tests need only NumPy: `python3 tests/test_tritri.py`,
-  `python3 tests/test_world.py` (about 3 minutes), `python3 tests/bench.py --quick`,
+  `python3 tests/test_world.py` (about 10 minutes), `python3 tests/bench.py --quick`,
   `--storm`, and `tests/bench_scale.py` for builds of the owner's size.
 * Blender tests need the add-on installed and enabled in the profile that
   `BLENDER_USER_RESOURCES` points to. See `README.md` (Tests) for the commands
@@ -182,11 +182,92 @@ Interface (1.1.0, from the owner's list after his first trial):
   leaves local view. The view frames the problem, not the parts.
 * **Only the walls that are exceeded change colour** (`Monitor.walls`, exact:
   the extents in `OobResult` are the part's own).
-* **The verdict's wording** is in one place, `overlay.badge_rows` (lines with
-  a tone); the sidebar shows the same text. Tests compare heads and lines.
+* **The verdict's wording** is in one place, `overlay.summary` (lines with a
+  tone); the sidebar shows the same text. Tests compare heads and lines.
 * **Printer names changed once** (`props.PROFILES_VERSION`, `_PROFILES_V1`):
   a 1.0 library is migrated, a scene saved with a 1.0 name shows the new one
   (`current_printer_name`) and never has its volume changed.
+Interface and behaviour (1.2.0, the owner's lists of 2026-10-09):
+
+* **Two switches**, `detect_collisions` and `monitor_volume`, both off in a
+  new scene. `World.set_pair_check` stops pair work without forgetting
+  anything; with both off the monitor is paused (`Monitor.pause` / `resume`),
+  not discarded. The legacy `enabled` is migrated (`props.migrate_scene`).
+* **Large meshes enter the world unsorted** (`add_raw`): their place is known
+  at once, so the volume verdict does not wait; worker threads sort them,
+  those that pairs wait for first (`_schedule`, `World.wanted`). A job has its
+  own stop event: when its mesh is gone or replaced (a modifier being
+  dragged) it is told to stop. `Monitor.drop()` when a monitor is thrown
+  away: stops its jobs and calls `overlay.forget()`, because the overlay's
+  caches held the old monitor, its arrays and GPU batches after File > Open.
+* **Ignored problems** are a scene collection (`BucketBuilderIgnoredProblem`),
+  matched by a signature: the second part as seen from the first, with the
+  offset in *scene units* (multiplied by the first part's scale) and
+  magnitude-aware tolerances, so that an object scale of 0.001 or 1000 and
+  the single precision of the stored numbers do not matter; plus whether
+  the pair collided (`aux[7]`). An entry made for "too close" never covers a
+  collision, locked or not. Entries are written by operators and `save_pre`
+  only, with one exception: the timer prunes entries whose part has left
+  the scene (`Monitor.prune`), and `prune_ignored` removes the object if
+  nothing else uses it (the entry's pointer was what kept a deleted part,
+  and its name, alive).
+* **The list of problems is a UIList** (`BUCKETBUILDER_UL_problems`): the only
+  way to get left-aligned text in rows that can be clicked (operator buttons
+  centre their text; enum buttons too). Its rows come from the monitor; the
+  collection it is given (`WindowManager.bucket_builder_rows`) only has to be
+  long enough (`props.ensure_rows`, called from `Monitor.tick`, never from a
+  draw). The lit row is `bucket_builder_row`, an IntProperty with a getter
+  (`Monitor.active_index`) and a setter that calls the `focus_problem`
+  operator (so that a click is an undo step). Verified with a real click in
+  `blender_gui_test.py`.
+* **Colour in the sidebar**: Blender gives a panel no coloured rows and no
+  coloured text except red. The list has a slim tab per row: a greyed colour
+  swatch (`props._tab`, read-only properties on the preferences that follow
+  the overlay colours). The status box has custom icons (`icons.py`, pixels
+  premultiplied by alpha) beside plain text. The preference colours are
+  `COLOR_GAMMA` (as plain `COLOR` their swatches were paler than what the
+  overlay draws).
+* **The arrows of Previous / Next are text glyphs** (U+25C0, U+25B6, in the
+  bundled Inter of 4.2 and 5.2): a button's icon is always before its text.
+* **A viewport in local view** says so in its badge and in its sidebar
+  (`overlay.local_count`, `summary(status, local)`); the verdict stays the
+  whole build's. `local_view_mode` decides whether problems among parts that
+  are not shown are drawn.
+* **The verdict is not "OK" while gaps are still being measured**
+  (`status['refining']` with the clearance check on): such a gap can still
+  become a warning.
+* **The handler only acts on the graph the viewport shows**
+  (`depsgraph.view_layer.depsgraph` is the one that fired, and the view layer
+  is the window's): an exporter's own graph, in which everything counts as
+  changed and what is not exported is missing, made every part be read again
+  and parts drop out.
+* `frame()` raises the view's Clip End when what it frames would be cut off
+  (a build volume in millimetres is larger than the default 1000 units).
+
+Engine, from the review of 2026-10-09 (four reviewers, cut off by the usage
+limit but their scripts are in `scratchpad/review_*`):
+
+* **The distance proof is bounded too, and what it leaves out is gone
+  through**: a pair still cut short after the second pass whose lower bound
+  allows a contact is flagged `unproven` (as a capped intersection search
+  is), and one whose lower bound is under the clearance while the best
+  found is not is flagged `unsure`; `narrow.scan` settles both (with a state
+  made with `near=True` it stops at the first two triangles closer than the
+  clearance: `('near', ...)`, reported as a warning with "~"). `no_cut` /
+  `no_near` keep a cleared pair from being flagged again at the same
+  placement. A quick (live) search that was cut with a lower bound at
+  contact also leaves the pair unsettled. Before this a flange lying flat
+  on a plate came out as "~0.1 mm apart", or as nothing with the clearance
+  check off. Test: `capped_proof_tests`.
+* **Out-of-volume pictures give way to a fit that pairs wait for**
+  (`World._fitting`): with memory for two poses and not three the fits threw
+  each other's poses out for ever.
+* `_batch` looks a bounded stretch ahead for pairs that are ready (it walked
+  the whole queue: a third of a first analysis of 600 parts).
+* `_oob_fill` gives the results it fills a new serial (the overlay's static
+  group is keyed by it: late pictures of large parts were not drawn until
+  something moved). `set_scale` invalidates when the scale changes.
+
 * Collapsible parts of a panel use `layout.panel(idname, default_closed=True)`;
   their state cannot be set from Python (the scratch script
   `scratchpad/panel_shots.py` opens them with simulated clicks for
@@ -198,28 +279,22 @@ Interface (1.1.0, from the owner's list after his first trial):
 
 ## State
 
-Last updated: 2026-10-09, afternoon (session 2 continued; the owner's second
-list, of 11:14, is being worked through as version 1.2.0).
+Last updated: 2026-10-10, early morning (session 2; the owner's lists of
+2026-10-09 11:14, 13:55 and 21:52 are done as version 1.2.0).
 
-* `main` is **1.2.0 in progress** (not sent yet; the owner has 1.1.0). Done
-  and tested (commit 275749c): two switches, ignored problems, the sidebar
-  in five panels, the badge at the right edge, smooth icons, the display
-  switches, the printer names, meshes that enter the world unsorted, pause
-  instead of discard. **Still to do before it is sent**: the user guide and
-  README for 1.2.0, new screenshots, `tests/blender_upgrade_test.py` from
-  1.1.0 (zip in `scratchpad/old_zips`, or build it from b9e2464), a clean
-  profile install, the performance report for the owner, and then a first
-  cut of the "3D Printing" application template (task list items 36, 37).
-* Tests at this point: `test_world.py` (about 8 minutes now), 183 checks in
-  `blender_test.py`, 48 in `blender_large_test.py`, the UI test, the
-  off-screen overlay test, and in a window `blender_gui_test.py`,
-  `blender_gui_undo.py`, `blender_gui_stress.py`.
+* `main` is **1.2.0**, sent to the owner. He had 1.1.0 before. He works with
+  a limited usage allowance: be economical (no large fan-outs without need).
+* Tests at 1.2.0: `test_world.py` (about 10 minutes), 197 checks in
+  `blender_test.py`, 48 in `blender_large_test.py`, the UI test (a stand-in
+  layout that also runs the list's `draw_item`), the off-screen overlay
+  test, and in a window `blender_gui_test.py` (with a real click on a row of
+  the list), `blender_gui_undo.py`, `blender_gui_stress.py`,
+  `blender_upgrade_test.py` from the 1.1.0 zip (`scratchpad/old_zips`, or
+  build it from b9e2464). `python3.11 -m compileall bucket_builder` passes
+  (Blender 4.2 has Python 3.11).
 * The owner runs **Blender 5.2.0, Windows 11, NVIDIA GPU, OpenGL backend** on
-  an HP ZBook Firefly 14 G11 with 32 GB. Verdict on 1.0.0: delighted; snappy
-  on small builds, "a bit laggy for real world large complicated buckets".
-  Performance > **Copy Report** (new in 1.1.0) is how to find out where: it
-  gives the live update time, the overlay time, the time from redraw to
-  redraw while editing, and the build's size.
+  an HP ZBook Firefly 14 G11 with 32 GB. Performance > **Copy Report** is how
+  to find out where time goes on his machine; he has not sent one yet.
 * **The crash of 1.0.0, and the rule that came out of it** (see the top of
   `monitor.py`): Blender runs timers at the start of a pass of its main loop
   and refreshes the dependency graph at its end. After an operator that
@@ -230,89 +305,94 @@ list, of 11:14, is being worked through as version 1.2.0).
   layer itself afterwards, so scripted tests never see that gap by accident:
   use `bpy.data` removals (blender_test.py) or simulated key presses in a
   window (`tests/blender_gui_undo.py`). Both segfault without the fix.
-* Engine since 1.0.0: meshes are sorted in about 60 % of the time and can be
-  sorted on several threads (`bvh.order_mesh`, identical order); parts moved
-  together keep their results (`POS_TOL`); meshes can enter the world
-  unsorted (`World.add_raw`, `set_sorted`, `wanted`, pairs waiting in
-  `_pend_wait`) and meshes no object uses can be kept as a cache
-  (`keep_unused`, `_idle`, `_make_way`). **The monitor does not use the last
-  two yet**: that is item B1 below. When it does, it must forget
-  `data_geom[mesh]` when a mesh changes while its object is not tracked
-  (ignored, or hidden with Ignore Hidden Parts), or a kept mesh would be
-  reused for changed geometry.
-* The sandbox VM got slower overnight (now a 2.8 GHz Xeon that runs this code
-  1.7 - 1.9 x slower than the machine of the first day). Figures from before
-  and after are not comparable: measure old and new in the same session.
+* The sandbox VM changes speed from day to day (2.1 to 2.8 GHz Xeons, 2
+  cores, so one worker thread). Figures from different sessions are not
+  comparable: measure old and new in the same session
+  (`scratchpad/run_bench_pair.sh`, `scratchpad/old_profile` has 1.1.0).
+* Do not wait for a background job with `pgrep -f <its command line>` in the
+  same command: it matches the waiting shell itself.
 * Not tested: Blender 4.2 - 5.1, macOS, Vulkan / Metal, a real GPU.
 
 ## Next
 
-### A. Open with the owner
+### A. With the owner
 
-Answered on 2026-10-09 01:27:
+* **3MF export** is "the next project" (the button is a placeholder that
+  already warns about parts outside the volume).
+* **The "3D Printing" application template** (File > New): he said "take a
+  crack at it"; for the owner / operator of an MJF machine, import through
+  export, easier than Netfabb / Magics. Not started. A template is a folder
+  with a `startup.blend`, installed with
+  `bpy.ops.preferences.app_template_install`.
+* Offered, no answer: a per-collection ignore switch; a disk cache of sorted
+  meshes; an explicit fast / accurate switch; wall gap on by default; amber
+  shading for warning-only parts; the collision distance back as a "must not
+  be closer than" red tier.
 
-* His 580+ is 332.6 x 198.7 x 267.8 (he had the order wrong), so the stock
-  5XX is HP's 332 x 190 x 248 again.
-* Hidden parts: yes, hiding does not ignore. He hides parts to see into the
-  middle of the bucket while resolving a collision, and wonders whether local
-  view is the better habit. Parts of a collection that is "disabled" should
-  be ignored: that is what happens for a collection excluded from the view
-  layer (its checkbox) and for one disabled in viewports (the screen icon);
-  a collection hidden with the eye is hidden, so still checked. He regrets
-  that the Outliner cannot get a toggle of its own.
-* Lag: Blender as a whole felt laggy when orbiting (he does not blame the
-  add-on; not measured yet), and "dragging the huge monkey around the
-  keycaps, it would take a few seconds for all the collisions to populate".
-  He can live with it and will try real, heavy buckets and send the report.
+### B. Performance (he said: later, unless there are big fish)
 
-Still open:
+Where the time goes now, and what each idea would buy (figures from the
+2-core sandbox; his machine has 6 - 8 worker threads):
 
-* Whether the build volume should show, and be checked, without the
-  collision check (he thinks of them as two things; today one switch turns
-  the monitor on and each section has its own checkboxes).
-* The "3D Printing" application template (File > New). Not an extension
-  type; a template is a folder with a `startup.blend` installed through the
-  Blender menu, and the add-on could install one it carries
-  (`bpy.ops.preferences.app_template_install`). He wants to talk about what
-  it should contain: who the "lay folks" are and what they must be able to do.
-* Offered, no answer: a per-collection ignore switch (for things that should
-  stay visible but out of the check); a disk cache of sorted meshes so that
-  reopening a saved build is quick; an explicit fast / accurate switch; wall
-  gap on by default; amber shading for warning-only parts; the collision
-  distance back as a "must not be closer than" red tier.
+1. **Taking a build in** is sorting: 0.25 - 0.5 s per million triangles and
+   thread. 30 M triangles: about 13 s here with one worker, an estimated
+   2 - 4 s on his machine. *A disk cache of the sorted order* (12 bytes per
+   triangle, keyed by the mesh hash, beside the .blend or in the user cache
+   directory) would make reopening a build almost free. *A compiled sorter*
+   (extensions may bundle wheels per platform) would be 5 - 10 x per thread.
+   Hashing and cleaning (about 25 ms per million triangles) are still on the
+   main thread.
+2. **Live steps** are bounded by budgets and nearly independent of the
+   triangle count, so there is little left to win per step in NumPy; a
+   compiled traversal would let many more pairs have full detail per step.
+3. **Large selections**: 63 ms per step when all of 600 parts move
+   (`scratchpad/bl_group_move.py`): out-of-volume pictures 42 ms (no budget),
+   box tests of all against all 15 ms, per-pair bookkeeping 16 ms, one
+   `set_matrix` per object 10 ms. A rigid-group shortcut by per-part
+   reference positions is NOT sound (two counter-examples in the session
+   log); compare per pair, vectorised over a pair table.
+4. **Per redraw, in Python**: `status()` and `_waiting()`, `problems()`
+   rebuilt and sorted on every move step, `_groups` walking every problem
+   and rebuilding the static group at the start and end of every drag (the
+   number of hot slots is in its key), one batch and two draws per clipped
+   patch, `_local_view` twice (0.5 ms per call at 600 parts here), the tint
+   pass redrawing every colliding part (up to the Tint Detail budget;
+   up to 8 meshes stay uploaded). Unknown on a real GPU.
+5. **A resync on every selection change** (8 ms at 600 parts): any Scene or
+   Collection update asks for one. Moving an ignored part no longer does.
+6. **The sidebar read-back** (`_measure_sidebar`): three `read_color` calls
+   per redraw of the sidebar, now at most four times a second during a drag.
+   One read would do; cost on a real GPU unknown, worst on Vulkan.
+7. **Rotating a 1.5 M triangle part at the memory limit**: 27 ms per step
+   with 1.2.0 against 16 ms with 1.1.0 in the 30 M triangle bench of
+   2026-10-09 (20 steps, one run each; at 12 M triangles there is no
+   difference beyond noise, 14 - 20 ms). Not looked into.
+8. A threshold scan (`unsure`) of two large faces at about the clearance can
+   take long: it goes through every pair of triangles within the clearance.
+   A branch-and-bound on the distance would be the proper tool.
 
-### B. Performance ("laggy for real world large complicated buckets")
+### C. From the review, not done
 
-Known and planned, in this order:
-
-1. [ ] "Verdict first" in the monitor: objects enter the world unsorted
-   (extents known, so the volume verdict is immediate), worker jobs ordered
-   by `World.wanted()`, more workers, several threads for one large mesh,
-   hashing and cleaning off the main thread.
-2. [ ] Pause instead of discard when monitoring is switched off; keep the
-   meshes of parts that leave the check (`keep_unused`).
-3. [x] Background slices back to back while the user is idle, redraws at a
-   limited rate during analysis (see the decisions above). In the window
-   tests on this machine (software OpenGL, a redraw takes a second): a part
-   dropped onto 33 others has its verdict after 3.7 s instead of 11 - 12 s,
-   the first analysis of 60 parts takes 5.7 s instead of 13 s. On a real GPU
-   the gain is smaller in seconds and about the same in proportion.
-4. [ ] Large selections: 63 ms per step when all of 600 parts move
-   (`scratchpad/bl_group_move.py`): the out-of-volume pictures of parts that
-   stick out (42 ms, no budget), the box tests of all against all (15 ms),
-   the per-pair bookkeeping (16 ms), one `set_matrix` per object (10 ms).
-   A rigid-group shortcut by per-part reference positions is NOT sound (two
-   worked counter-examples in the session log); compare per pair, vectorised
-   over a pair table.
-5. [ ] Per redraw: `status()` and `World.counts()` walk every violation;
-   the tint pass redraws every colliding part (up to 4 M triangles); cost on
-   a real GPU unknown.
-
-### C. Before a wider release
-
-* Independent review of the integration code; audit of the Blender API calls
-  against the 4.2 source in `/home/claude/build/blender-42-src` (icons are
-  checked: all exist in 4.2).
+* Results solved with borrowed boxes are not redone if the borrowed pose is
+  dropped first (`_pose_drop` discards the slot from `_virt_todo`): the
+  hatched region then stays the looser one. Cosmetic.
+* int32 index arithmetic (`narrow.py` `t.ravel() + int(...)`, `world.py`
+  `p.vbase + t[:, 0]`) wraps above about 26 GB of pose storage.
+* Up to `2 * workers - 1` threads can sort at once (a lone large mesh gets
+  the idle ones, later jobs still fill the pool).
+* Problem ids and the row buttons go by part names: a linked library object
+  and a local one can share a name.
+* Update callbacks use `context.scene`, not `self.id_data` (a script
+  flipping a switch on another scene pokes the wrong monitor until the next
+  resync).
+* The printer operators change `st.printer` without `'UNDO'`;
+  `profile_rename` accepts a name that exists.
+* `free_corner` in quad view: the sidebar and asset shelf are subtracted in
+  every quadrant. A header flipped to the bottom is not counted.
+* A built-in printer that keeps its name can never have its size corrected
+  by a later version (the user's size wins).
+* Blender 4.2 - 5.1 have still not been run: the API audit against the 4.2
+  source found nothing missing.
 
 Later, if wanted: smaller poses (quantised low levels); logarithmic extents
 for a rotating part; results rotated instead of re-solved when a group is
