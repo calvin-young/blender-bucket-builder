@@ -108,8 +108,8 @@ class PairResult:
     to be recomputed.  ``clip_a`` / ``clip_b`` are None, or a box (in the
     first object's frame) the patch should be trimmed to when drawn."""
     __slots__ = ('state', 'dist', 'pa', 'pb', 'segs', 'nseg', 'tri_a', 'tri_b', 'clip_a',
-                 'clip_b', 'approx', 'refine', 'lite', 'loose', 'unproven', 'no_cut', 'enclosed',
-                 'center', 'radius', 'stale', 'stamp', 'serial')
+                 'clip_b', 'approx', 'refine', 'lite', 'loose', 'unproven', 'no_cut', 'unsure',
+                 'no_near', 'enclosed', 'center', 'radius', 'stale', 'stamp', 'serial')
 
     def __init__(self):
         self.state = PENDING
@@ -125,6 +125,8 @@ class PairResult:
         self.loose = False        # solved while a part was borrowing a pose
         self.unproven = False     # no intersection found, but the search was cut short
         self.no_cut = False       # ... and the exhaustive one has since found none either
+        self.unsure = False       # nothing under the clearance found, but the search was cut short
+        self.no_near = False      # ... and the exhaustive one has found nothing either
         self.enclosed = 0         # 1: first part inside the second, 2: the reverse
         self.center = None
         self.radius = 0.0
@@ -177,9 +179,10 @@ class World:
         self.fit_now = FIT_NOW    # meshes up to this size never borrow a pose
         self._clock = 0           # advances with every use of poses (for eviction)
         self._demand = 0          # rows the poses of all objects would take together
-        # What is on its way but not here yet (meshes being sorted): triangle
-        # rows, vertex rows, pose rows.  The shared arrays are then sized for
-        # it in one go instead of being grown and copied as each one arrives.
+        # What is on its way but not here yet (meshes still to be read):
+        # triangle rows, vertex rows, pose rows, not counting the mesh that is
+        # being registered at the moment.  The shared arrays are then sized
+        # for it in one go instead of being grown and copied as each arrives.
         self.incoming = (0, 0, 0)
 
         m = 64
@@ -252,11 +255,15 @@ class World:
         """Tolerances follow the size of the scene so behaviour is the same
         whether one unit is a millimetre or a metre."""
         s = max(float(scene_size), 1e-9)
+        changed = s != getattr(self, 'scene_size', s)
         self.scene_size = s
         self.eps_len = 1e-6 * s       # boxes closer than this count as touching
         self.eps_touch = 2e-6 * s     # surfaces closer than this are in contact
         self.eps_exact = 1e-9 * s
         self.viz_pad = float(viz_pad)
+        if changed:
+            # (what was found, and what was proven absent, was for the old ones)
+            self.invalidate_all()
 
     def set_thresholds(self, coll, clear):
         coll = max(0.0, float(coll))
@@ -359,8 +366,8 @@ class World:
         g.nt = nt
         g.H, g.nreal, g.npad, g.off, g.rows = bvh.level_layout(nt)
         self._make_way(self._geom_size(g))
-        self.TIDX.want = self.TIDX.top + max(g.npad[0], self.incoming[0])
-        self.LVERT.want = self.LVERT.top + max(g.nv, self.incoming[1])
+        self.TIDX.want = self.TIDX.top + g.npad[0] + self.incoming[0]
+        self.LVERT.want = self.LVERT.top + g.nv + self.incoming[1]
         g.tbase = self.TIDX.alloc(g.npad[0])
         t = self.TIDX.data[g.tbase:g.tbase + g.npad[0]]
         t[:nt] = tris
@@ -1331,7 +1338,7 @@ class World:
                         e = tol[a] if tol[a] > tol[o] else tol[o]
                         if abs(dx - st[3]) <= e and abs(dy - st[4]) <= e and abs(dz - st[5]) <= e:
                             continue
-            pr.no_cut = False
+            pr.no_cut = pr.no_near = pr.unsure = False
             if not pr.stale:
                 pr.stale = True
                 # A live edit is answered within a frame or two; until then
@@ -1395,6 +1402,8 @@ class World:
         closed = False
         held = set()
         held_bytes = 0
+        passed = 0
+        look = 4 * size + 64
         for key in src:
             if key not in pairs:
                 dead.append(key)
@@ -1422,6 +1431,14 @@ class World:
                     else:
                         waiting.update(more)
                         late.append(key)
+                else:
+                    # Nothing more can join the pairs that wait.  Looking on
+                    # for pairs that are ready is worth a stretch of the
+                    # queue, not all of it: with thousands of pairs queued
+                    # that walk was a third of a first analysis.
+                    passed += 1
+                    if passed > look:
+                        break
                 continue
             if room is not None:
                 # the poses of one batch must fit the cache together
@@ -1482,6 +1499,7 @@ class World:
         """
         t0 = time.perf_counter()
         solved = 0
+        self._fitting = False
         pairs = self.check_pairs
         if pairs and self._dirty:
             self._broad()
@@ -1527,6 +1545,7 @@ class World:
             # (a live solve borrows poses rather than wait for fits; exact
             # work always gets fitted ones)
             if not self._prepare({slot for key in keys for slot in key}, t0 + limit, not exact):
+                self._fitting = True
                 break                 # still fitting: the pairs stay where they are
             for key in keys:
                 del src[key]
@@ -1556,7 +1575,7 @@ class World:
                     self.viol.pop(key, None)
                 if pr.refine:
                     self._pend_refine[key] = None
-                if pr.unproven:
+                if pr.unproven or pr.unsure:
                     self._pend_scan[key] = None
                 else:
                     self._pend_scan.pop(key, None)
@@ -1564,7 +1583,10 @@ class World:
             self.version += 1
         if self._oob_dirty or self._oob_all:
             self._update_oob()
-        if self._oob_geom:
+        if self._oob_geom and not self._fitting:
+            # (While a fit that pairs wait for is under way the pictures of
+            # what is outside the volume wait: with memory for two poses and
+            # not three, the two fits threw each other's out for ever.)
             self._oob_fill(t0 + max(budget, hot_budget))
         self.last_step_ms = (time.perf_counter() - t0) * 1000.0
         self.last_pairs = solved
@@ -1577,7 +1599,7 @@ class World:
         while self._pend_scan:
             key = next(iter(self._pend_scan))
             pr = self.pairs.get(key)
-            if pr is None or pr.stale or not pr.unproven:
+            if pr is None or pr.stale or not (pr.unproven or pr.unsure):
                 del self._pend_scan[key]
                 continue
             if pr.refine:
@@ -1589,16 +1611,21 @@ class World:
                 self._pend_cold[key] = None
                 return True
             if not self._prepare(set(key), deadline, False):
+                self._fitting = True
                 return False
+            # (for a contact first; for anything under the clearance when
+            # that is all that is left open)
+            near = not pr.unproven
             state = self._pend_scan[key]
-            if state is None:
-                state = self._pend_scan[key] = narrow.scan_start(self, key)
+            if state is None or state['near'] != near:
+                state = self._pend_scan[key] = narrow.scan_start(self, key, near)
                 self.scans += 1
             found = narrow.scan(self, key, state, deadline)
             if found is None:
                 return False
             del self._pend_scan[key]
             pr.unproven = False
+            pr.unsure = False
             if found:
                 narrow.scan_report(self, key, pr, found)
                 self._serial += 1
@@ -1606,6 +1633,8 @@ class World:
                 self.viol[key] = pr
                 self.scan_hits += 1
                 self.version += 1
+            elif near:
+                pr.no_cut = pr.no_near = True      # they keep the clearance everywhere
             else:
                 # They do not cut or touch.  How close they are was left
                 # unproven until this was known (see narrow.solve).
@@ -1812,19 +1841,23 @@ class World:
             if partial:
                 tris, band = narrow.oob_solve(self, np.array(partial, dtype=np.int64),
                                               vlo, vhi, OOB_TRI_CAP)
+                self._serial += 1
                 for slot, t, b in zip(partial, tris, band):
                     r = self.oob[slot]
                     r.tris = t
                     r.band_only = b
+                    r.serial = self._serial
             if close:
                 # the triangles that reach into the margin: everything that is
                 # not completely inside the inner box
                 tris, band = narrow.oob_solve(self, np.array(close, dtype=np.int64),
                                               inner[0], inner[1], OOB_TRI_CAP)
+                self._serial += 1
                 for slot, t, b in zip(close, tris, band):
                     r = self.wall[slot]
                     r.tris = t
                     r.band_only = b
+                    r.serial = self._serial
                     if len(t):
                         # mark the geometry that is inside the margin of the nearest wall
                         pts = t.reshape(-1, 3)

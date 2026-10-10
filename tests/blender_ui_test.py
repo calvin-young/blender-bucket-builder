@@ -35,7 +35,8 @@ class FakeLayout:
 
     def __setattr__(self, name, value):
         assert name in ('use_property_split', 'use_property_decorate', 'scale_y', 'scale_x',
-                        'alert', 'enabled', 'active', 'alignment', 'operator_context'), name
+                        'alert', 'enabled', 'active', 'alignment', 'operator_context',
+                        'ui_units_x'), name
         self._attrs[name] = value
 
     def _icon(self, kw):
@@ -69,14 +70,41 @@ class FakeLayout:
         self._icon(kw)
         assert not ('icon' in kw and 'icon_value' in kw), kw
         LOG.append(('label', kw.get('text', '')))
+        LOG.append(('label_icon', kw.get('icon', 'custom' if 'icon_value' in kw else '')))
         if self._attrs.get('alert'):
             LOG.append(('alert', kw.get('text', '')))
+        if self._attrs.get('active') is False:
+            LOG.append(('greyed', kw.get('text', '')))
+
+    def template_list(self, cls_name, list_id, data, prop, active_data, active_prop, **kw):
+        # Blender's list widget: the rows the list's own filter lets through
+        # are drawn, each by the list's draw_item
+        assert set(kw) <= {'rows', 'maxrows', 'sort_lock', 'type'}, kw
+        cls = getattr(bpy.types, cls_name)
+        assert prop in data.bl_rna.properties and active_prop in active_data.bl_rna.properties
+        rows = getattr(data, prop)
+        flags, order = cls.filter_items(ListHolder, CONTEXT[0], data, prop)
+        assert len(flags) == len(rows) and not order
+        shown = [i for i, f in enumerate(flags) if f & ListHolder.bitflag_filter_item]
+        LOG.append(('list', len(shown)))
+        active = getattr(active_data, active_prop)
+        for i in shown:
+            n0 = len(LOG)
+            layout = FakeLayout()
+            cls.draw_item(ListHolder, CONTEXT[0], layout, data, rows[i], 0, active_data, active_prop, i)
+            texts = [t for k, t in LOG[n0:] if k == 'label']
+            assert len(texts) == 1, ('a row of the list has one line of text', texts)
+            LOG.append(('row', texts[0]))
+            if i == active:
+                LOG.append(('lit', texts[0]))
 
     def prop(self, data, name, **kw):
         assert set(kw) <= {'text', 'icon', 'toggle', 'expand', 'slider', 'emboss'}, kw
         assert name in data.bl_rna.properties, f'{type(data).__name__} has no property {name!r}'
         self._icon(kw)
         LOG.append(('prop', name))
+        if self._attrs.get('enabled') is False:
+            LOG.append(('shown only', name))
 
     def prop_enum(self, data, name, value, **kw):
         assert set(kw) <= {'text', 'icon'}, kw
@@ -92,9 +120,8 @@ class FakeLayout:
         op = getattr(getattr(bpy.ops, mod), fn)
         rna = op.get_rna_type()            # raises if the operator is not registered
         LOG.append(('operator', idname))
-        LOG.append(('operator_text', kw.get('text', '')))
-        if self._attrs.get('active') is False:
-            LOG.append(('greyed', kw.get('text', '')))
+        LOG.append(('operator_text', kw.get('text', rna.name)))      # (its own name if none is given)
+        LOG.append(('operator_icon', (idname, kw.get('icon', 'custom' if 'icon_value' in kw else ''))))
         if kw.get('depress'):
             LOG.append(('pressed', (idname, kw.get('icon', ''))))
         return OpProps(rna)
@@ -108,6 +135,14 @@ class FakeLayout:
 class Holder:
     def __init__(self):
         self.layout = FakeLayout()
+
+
+class ListHolder:
+    """What a list's methods are given as ``self``."""
+    bitflag_filter_item = 1 << 30
+
+
+CONTEXT = [None]          # the context of the panel that is being drawn
 
 
 class Context:
@@ -136,7 +171,10 @@ class PrefHolder:
 def draw_all(context, tag):
     n0 = len(LOG)
     context = Context(context)
+    CONTEXT[0] = context
     for cls in ui.CLASSES:
+        if not issubclass(cls, bpy.types.Panel):
+            continue
         poll = getattr(cls, 'poll', None)
         if poll is not None and not cls.poll(context):
             continue
@@ -191,10 +229,13 @@ def main():
     assert 'Not checking collisions' in labels and 'Not checking the build volume' in labels, labels[:6]
     assert 'Collision' in labels and 'Clearance' in labels, 'the display switches have no headings'
     # the panels are separate ones now, each with its own header
-    tops = [c.bl_label for c in ui.CLASSES if not getattr(c, 'bl_parent_id', '')]
+    tops = [c.bl_label for c in ui.CLASSES if issubclass(c, bpy.types.Panel) and not getattr(c, 'bl_parent_id', '')]
     assert tops == ['Bucket Builder', 'Collision Detection', 'Build Volume', 'Options', 'Export'], tops
     assert bpy.ops.bucketbuilder.export_3mf() == {'CANCELLED'}, 'the placeholder must do nothing'
     assert bpy.ops.bucketbuilder.status() == {'CANCELLED'}
+    # the sign at the top says nothing that is untrue while both switches are off
+    texts = [t for k, t in LOG[n0:] if k == 'operator_text']
+    assert 'Bucket Monitoring' in texts and not any('Monitoring On' in t for t in texts), texts[:4]
 
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
@@ -223,10 +264,55 @@ def main():
     labels = labels_since(n0)
     alerts = [t for k, t in LOG[n0:] if k == 'alert']
     assert '1 Part Outside Build Volume' in labels and any('Clearance Warning' in t for t in labels), labels[:8]
-    assert len(alerts) == 1 and alerts[0].endswith('Detected'), ('only collisions are in red', alerts)
-    last = len(mon.problems()) - 1                      # scrolled list
+    assert not alerts, ('the lines of the verdict are all plain: their colour is in the icons', alerts)
+    assert 'HP MJF 5600' in labels and LOG[n0:][LOG[n0:].index(('label', 'HP MJF 5600')) + 1] == ('label_icon', 'INFO')
+    # The list of problems: previous, on its own, next, in that order; then
+    # Blender's list widget with a row for every problem, each with one of
+    # Blender's own icons (one per kind), a colour tab that is shown and
+    # cannot be clicked, and a magnifier for "on its own".
+    called = [t for k, t in LOG[n0:] if k == 'operator']
+    at = called.index('bucketbuilder.step_problem')
+    assert called[at:at + 3] == ['bucketbuilder.step_problem', 'bucketbuilder.isolate',
+                                 'bucketbuilder.step_problem'], called[at:at + 4]
+    texts = [t for k, t in LOG[n0:] if k == 'operator_text']
+    assert any(t.endswith('Previous') for t in texts) and any(t.startswith('Next') for t in texts), texts[:6]
+    problems = mon.problems()
+    rows = [t for k, t in LOG[n0:] if k == 'row']
+    assert ('list', len(problems)) in LOG[n0:] and rows == [ui.problem_text(pr) for pr in problems], rows[:4]
+    kinds = [pr['kind'] for pr in problems]
+    icons = [LOG[i + 1][1] for i in range(n0, len(LOG) - 1) if LOG[i][0] == 'label' and LOG[i][1] in rows
+             and LOG[i + 1][0] == 'label_icon'][:len(rows)]
+    assert icons == [ui._KIND_ICON[k] for k in kinds], (icons, kinds)
+    assert len(set(ui._KIND_ICON[k] for k in ('PARTIAL', 'COLLIDE', 'CLEAR', 'WALL'))) == 4
+    assert ui._KIND_ICON['WALL'] == 'OBJECT_HIDDEN'
+    op_icons = [t for k, t in LOG[n0:] if k == 'operator_icon']
+    assert ('bucketbuilder.isolate', 'VIEWZOOM') in op_icons and \
+        ('bucketbuilder.isolate_problem', 'VIEWZOOM') in op_icons, 'the magnifier is missing'
+    assert not any(icon.startswith('SOLO') for _, icon in op_icons), 'a star is left'
+    tabs = [t for k, t in LOG[n0:] if k == 'shown only']
+    assert tabs == [ui._KIND_TAB[k] for k in kinds], (tabs, kinds)
+    p = props.prefs()
+    assert tuple(p.tab_collision) == tuple(p.color_collision)[:3] and \
+        tuple(p.tab_outside) == tuple(p.color_outside)[:3], 'a tab is not in the colour of its kind'
+    p.tab_collision = (0.0, 1.0, 0.0)                   # (cannot be set: it follows the colour)
+    assert tuple(p.tab_collision) == tuple(p.color_collision)[:3]
+    # clearance warnings: the closest pair first, the distance at the front
+    gaps = [pr for pr in problems if pr['kind'] == 'CLEAR']
+    assert len(gaps) >= 2 and [pr['dist_mm'] for pr in gaps] == sorted(pr['dist_mm'] for pr in gaps)
+    assert ui.problem_text(gaps[0]).startswith('[') and ' mm]  ' in ui.problem_text(gaps[0]), ui.problem_text(gaps[0])
+    assert ui._mm({'dist_mm': 3.0, 'approx': False}) == '[3.0 mm]' and \
+        ui._mm({'dist_mm': 0.4, 'approx': True}) == '[~0.40 mm]'
+    # a click on a row goes to its problem, and the row is then the one that is lit
+    wm = bpy.context.window_manager
+    wm.bucket_builder_row = 2
+    assert mon.active_index(st) == 2 and wm.bucket_builder_row == 2, (mon.active_index(st), wm.bucket_builder_row)
+    n1 = len(LOG)
+    draw_all(ctx, 'a row clicked')
+    assert [t for k, t in LOG[n1:] if k == 'lit'] == [ui.problem_text(problems[2])]
+    last = len(mon.problems()) - 1
     assert bpy.ops.bucketbuilder.focus_problem(index=last) == {'FINISHED'} and mon.active_index(st) == last
     draw_all(ctx, 'last problem active')
+    assert bpy.ops.bucketbuilder.step_problem(direction=0) == {'FINISHED'}      # (it used to go round for ever)
 
     # the same lines are in the viewport badge
     state, head, lines = bc.overlay.badge_text(mon.status())
@@ -243,9 +329,10 @@ def main():
     assert bpy.ops.bucketbuilder.ignore_problem(**args) == {'FINISHED'}
     n0 = len(LOG)
     draw_all(ctx, 'a problem ignored')
-    greyed = [t for k, t in LOG[n0:] if k == 'greyed']
+    greyed = [t for k, t in LOG[n0:] if k == 'greyed' and ('row', t) in LOG[n0:]]
     pressed = [t for k, t in LOG[n0:] if k == 'pressed']
     assert greyed == [ui.problem_text(first)], greyed
+    assert [t for k, t in LOG[n0:] if k == 'shown only'][1] == 'tab_ignored', 'an ignored row keeps its colour'
     assert ('bucketbuilder.ignore_problem', 'HIDE_ON') in pressed and \
         ('bucketbuilder.ignore_problem', 'LOCKED') not in pressed, pressed
     assert '1 ignored' in labels_since(n0) and '1 problem ignored' in labels_since(n0), labels_since(n0)[:8]
@@ -273,7 +360,8 @@ def main():
     mon = settle()
     n0 = len(LOG)
     draw_all(ctx, 'none ignored')
-    assert not [t for k, t in LOG[n0:] if k == 'greyed'] and '1 ignored' not in labels_since(n0)
+    assert not [t for k, t in LOG[n0:] if k == 'greyed' and ('row', t) in LOG[n0:]] and \
+        '1 ignored' not in labels_since(n0)
     assert bpy.ops.bucketbuilder.ignore_problem(kind='P', a='nobody', b='nothing') == {'CANCELLED'}
     print('  problems: ignored, locked, passed over by Next, and counted again')
 
@@ -311,7 +399,7 @@ def main():
     labels = labels_since(n0)
     assert '1 of them hidden, and checked' in labels, labels
     assert any('disabled in viewports' in t for t in labels), labels
-    assert any('(hidden)' in t for k, t in LOG[n0:] if k == 'operator_text'), 'hidden part not marked'
+    assert any('(hidden)' in t for k, t in LOG[n0:] if k == 'row'), 'hidden part not marked'
     objs[1].hide_set(False)
     objs[2].hide_viewport = False
     ctx.view_layer.update()
@@ -343,6 +431,26 @@ def main():
         'Not checking collisions' not in labels_since(n0), labels_since(n0)[:8]
     st.monitor_volume = True
     settle()
+
+    # A viewport in local view shows some of the parts only: the status box
+    # says so, under a verdict that is still the whole build's.  (No viewport
+    # here that could go into local view: the count is put in its place.)
+    real = bc.overlay.local_count
+    assert real(Context(ctx), mon) is None, 'this viewport is not in local view'
+    n = mon.status()['objects']
+    bc.overlay.local_count = lambda context, mon: (2, n)
+    try:
+        n0 = len(LOG)
+        draw_all(ctx, 'viewport in local view')
+    finally:
+        bc.overlay.local_count = real
+    labels = labels_since(n0)
+    line = f'Local view: 2 of {n} parts shown'
+    assert line in labels and labels.index(line) > 0, labels[:8]
+    state, head, lines = bc.overlay.badge_text(mon.status(), (2, n))
+    assert head == bc.overlay.badge_text(mon.status())[1] and line in lines, (head, lines)
+    assert bc.overlay.badge_text(mon.status(), (1, 1))[2].count('Local view: 1 of 1 part shown') == 1
+    print('  local view:', line)
 
     # isolating needs a viewport; without one the operator must not fail
     bpy.ops.bucketbuilder.focus_problem(index=0)

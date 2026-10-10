@@ -65,10 +65,10 @@ class held_workers:
         self.real = monitor._order_job
         self.started = []
 
-        def held(verts, tris, threads):
+        def held(verts, tris, threads, *rest):
             self.started.append((len(tris), threads))
             self.go.wait(60.0)
-            return self.real(verts, tris, threads)
+            return self.real(verts, tris, threads, *rest)
 
         monitor._order_job = held
         return self
@@ -232,8 +232,12 @@ def main():
         update()
         mon = read_all(tick())
         mon = tick()
-        check(len(mon.jobs) == 3, 'the edited mesh is on its way as well, the old one still being sorted',
-              len(mon.jobs))
+        # The jobs for meshes that are gone are told to stop (one that had
+        # really started may have done so already); the edited mesh has its own.
+        wanted = [j for j in mon.jobs.values() if not j.stop.is_set()]
+        check(len(wanted) == 1 and 1 <= len(mon.jobs) - 1 <= 2,
+              'the edited mesh is on its way; the jobs for what is gone are told to stop',
+              (len(mon.jobs), len(wanted)))
     mon = settle()
     lo, hi = mon.world.part_bounds(mon.world.slot(d.session_uid))
     ref = slow_read(d)[0]
@@ -323,10 +327,9 @@ def main():
           'and the badge says so instead of showing a plain pass', text)
     p.memory_gb = 0.0
     mon = settle()
-    monitor.force_recheck(sc)
-    mon = settle()
     check(mon.status()['skipped'] == 0 and mon.world.slot(a.session_uid) is not None,
-          'back to automatic: everything is checked again')
+          'back to automatic: the parts that were left out are taken in, without Recheck',
+          mon.status()['skipped'])
     for o in copies:
         bpy.data.objects.remove(o)
 

@@ -178,6 +178,7 @@ def _poke_volume(self, context):
                     break
         if not match and st.printer != "Custom":
             st.lock_printer_name = True
+            st.printer_last = name        # (which printer the size was started from)
             st.printer = "Custom"
             st.lock_printer_name = False
     _poke(self, context)
@@ -227,10 +228,13 @@ class BucketBuilderSettings(PropertyGroup):
         default=False, update=_poke_enabled)
 
     use_clearance: BoolProperty(
-        name="Clearance Warning", description="Warn when parts are closer than the clearance",
+        name="Clearance Between Parts",
+        description="Warn when two parts are closer to each other than the distance beside "
+                    "this (in millimetres)",
         default=True, update=_poke)
     clearance_mm: FloatProperty(
-        name="Clearance", description="Minimum gap between parts; closer pairs get a warning",
+        name="Clearance Between Parts",
+        description="Minimum gap between parts, in millimetres; closer pairs get a warning",
         default=5.0, min=0.0, soft_max=20.0, precision=2, step=50, update=_poke)
 
     detect_enclosed: BoolProperty(
@@ -261,11 +265,12 @@ class BucketBuilderSettings(PropertyGroup):
         default=True, update=_poke)
     use_wall_clearance: BoolProperty(
         name="Wall Gap",
-        description="Warn when a part inside the build volume is closer than this to a side "
-                    "wall (X and Y). The top and the bottom are not checked",
+        description="Warn when a part inside the build volume is closer to a side wall (X "
+                    "and Y) than the distance beside this (in millimetres). The top and the "
+                    "bottom are not checked",
         default=False, update=_poke)
     wall_clearance_mm: FloatProperty(
-        name="Wall Gap", description="Distance parts should keep from the side walls",
+        name="Wall Gap", description="Distance parts should keep from the side walls, in millimetres",
         default=5.0, min=0.0, soft_max=50.0, precision=2, step=50, update=_poke)
     show_volume: BoolProperty(
         name="Show Build Volume", description="Draw the build volume in the viewport",
@@ -274,6 +279,9 @@ class BucketBuilderSettings(PropertyGroup):
         name="Printer", description="Name of the printer profile the volume came from",
         default=DEFAULT_PROFILES[0][0])
     lock_printer_name: BoolProperty(default=False, options={'HIDDEN', 'SKIP_SAVE'})
+    # the printer whose size was edited by hand (the scene's printer is then
+    # "Custom"): the one the disk button stores the new size in
+    printer_last: StringProperty(default="", options={'HIDDEN'})
     volume_size: FloatVectorProperty(
         name="Size", description="Build volume in millimetres",
         size=3, subtype='XYZ', min=1.0, soft_max=1000.0, precision=1, step=100,
@@ -339,6 +347,71 @@ class BucketBuilderSettings(PropertyGroup):
     ignored_problems: CollectionProperty(type=BucketBuilderIgnoredProblem)
 
 
+def _tab(source, name, description):
+    """The colour of a kind of problem as the list of problems shows it: a
+    slim tab at the left end of a row.  Blender has no way to give a row of a
+    panel a colour, and its text can only be red; what it does have is the
+    colour swatch, which shows any colour and, greyed out, shows it mutedly.
+    These properties exist to be drawn like that.  They follow the colour the
+    kind has in the viewport and cannot be set."""
+    def get(self):
+        if source is None:
+            return (0.5, 0.5, 0.5)
+        c = getattr(self, source)
+        return (c[0], c[1], c[2])
+
+    def set(self, value):
+        pass
+
+    return FloatVectorProperty(name=name, description=description, subtype='COLOR_GAMMA', size=3,
+                               min=0.0, max=1.0, get=get, set=set, options={'SKIP_SAVE'})
+
+
+class BucketBuilderRow(PropertyGroup):
+    """A row of the list of problems.  Blender's list widget wants a
+    collection to go through; what a row shows comes from the monitor (see
+    ui.BUCKETBUILDER_UL_problems), so these hold nothing."""
+
+
+ROW_STEP = 64
+ROW_MAX = 4096
+
+
+def ensure_rows(n):
+    """Have at least ``n`` rows for the list of problems to show (never from
+    a draw function: this writes)."""
+    try:
+        rows = bpy.context.window_manager.bucket_builder_rows
+    except Exception:
+        return
+    have = len(rows)
+    if have >= min(n, ROW_MAX):
+        return
+    for _ in range(min(ROW_MAX, (n // ROW_STEP + 1) * ROW_STEP) - have):
+        rows.add()
+
+
+def _row_get(self):
+    """The row of the list that is lit: the problem the user is at."""
+    from . import monitor
+    try:
+        scene = bpy.context.scene
+        mon = monitor.get(scene)
+        return mon.active_index(settings(scene)) if mon is not None else -1
+    except Exception:
+        return -1
+
+
+def _row_set(self, value):
+    """A click on a row of the list: go to that problem."""
+    from . import ops
+    try:
+        ops.pick_problem(bpy.context, int(value))
+    except Exception:
+        import traceback
+        traceback.print_exc()
+
+
 class BucketBuilderPreferences(AddonPreferences):
     bl_idname = ADDON_ID
 
@@ -346,18 +419,31 @@ class BucketBuilderPreferences(AddonPreferences):
     profiles_seeded: BoolProperty(default=False)
     profiles_version: IntProperty(default=0)
 
+    # 'COLOR_GAMMA': these are colours of the screen, as theme colours are,
+    # and the overlay draws exactly these values.  (As plain 'COLOR' Blender
+    # took them for scene colours and showed them paler here than in the
+    # viewport.)
     color_collision: FloatVectorProperty(
-        name="Collision", subtype='COLOR', size=4, min=0.0, max=1.0,
+        name="Collision", subtype='COLOR_GAMMA', size=4, min=0.0, max=1.0,
         default=(1.0, 0.08, 0.05, 1.0), update=_poke_redraw)
     color_clearance: FloatVectorProperty(
-        name="Clearance", subtype='COLOR', size=4, min=0.0, max=1.0,
+        name="Clearance", subtype='COLOR_GAMMA', size=4, min=0.0, max=1.0,
         default=(1.0, 0.72, 0.0, 1.0), update=_poke_redraw)
     color_outside: FloatVectorProperty(
-        name="Outside Volume", subtype='COLOR', size=4, min=0.0, max=1.0,
+        name="Outside Volume", subtype='COLOR_GAMMA', size=4, min=0.0, max=1.0,
         default=(0.95, 0.1, 0.85, 1.0), update=_poke_redraw)
     color_volume: FloatVectorProperty(
-        name="Build Volume", subtype='COLOR', size=4, min=0.0, max=1.0,
+        name="Build Volume", subtype='COLOR_GAMMA', size=4, min=0.0, max=1.0,
         default=(0.35, 0.75, 1.0, 1.0), update=_poke_redraw)
+    tab_outside: _tab("color_outside", "Outside Build Volume",
+                      "The part sticks out of the printer's build volume, or lies outside it")
+    tab_collision: _tab("color_collision", "Collision",
+                        "The parts touch or cut through each other")
+    tab_clearance: _tab("color_clearance", "Clearance Warning",
+                        "The parts are closer to each other than the clearance")
+    tab_wall: _tab("color_clearance", "Within Wall Gap",
+                   "The part is closer to a wall of the build volume than the wall gap")
+    tab_ignored: _tab(None, "Ignored", "This problem is ignored: it does not count and is not drawn")
     hatch_pixels: IntProperty(
         name="Hatch Spacing", description="Distance between hatch lines in pixels (whole "
         "pixels: anything else shimmers)",
@@ -392,7 +478,7 @@ class BucketBuilderPreferences(AddonPreferences):
     max_tris_millions: FloatProperty(
         name="Largest Part", description="Parts with more triangles than this (in millions) "
         "are skipped and listed as not checked",
-        default=50.0, min=0.1, max=1000.0)
+        default=50.0, min=0.1, max=1000.0, update=_poke_prefs)
     memory_gb: FloatProperty(
         name="Memory (GB)", description="Most memory the checker may use for the data that "
         "makes it fast. 0 is automatic: a fifth of the installed memory. When it runs short, "
@@ -461,6 +547,10 @@ def seed_profiles(p):
         item.size = size
     p.profiles_seeded = True
     p.profiles_version = PROFILES_VERSION
+    try:
+        bpy.context.preferences.is_dirty = True       # (so that it is saved with the preferences)
+    except Exception:
+        pass
 
 
 def current_printer_name(st):
@@ -474,13 +564,17 @@ def current_printer_name(st):
 
 
 CLASSES = (BucketBuilderProfile, BucketBuilderIgnoredProblem, BucketBuilderSettings,
-           BucketBuilderPreferences)
+           BucketBuilderRow, BucketBuilderPreferences)
 
 
 def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.bucket_builder = PointerProperty(type=BucketBuilderSettings)
+    bpy.types.WindowManager.bucket_builder_rows = CollectionProperty(type=BucketBuilderRow)
+    bpy.types.WindowManager.bucket_builder_row = IntProperty(
+        name="Problem", description="Frame this problem in the viewport and select the parts involved",
+        get=_row_get, set=_row_set, options={'SKIP_SAVE'})
     bpy.types.Object.bucket_builder_ignore = BoolProperty(
         name="Ignore in Bucket Builder",
         description="Leave this object out of collision, clearance and build-volume checks",
@@ -489,6 +583,8 @@ def register():
 
 def unregister():
     del bpy.types.Object.bucket_builder_ignore
+    del bpy.types.WindowManager.bucket_builder_row
+    del bpy.types.WindowManager.bucket_builder_rows
     del bpy.types.Scene.bucket_builder
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

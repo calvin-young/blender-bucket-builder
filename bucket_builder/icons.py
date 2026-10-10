@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Small coloured icons for the sidebar.
+"""Small coloured icons for the status box of the sidebar.
 
 Blender lets an add-on colour the text of a panel in one way only (red, for
-alerts), and its own icons take their colour from the theme.  So that every
-kind of problem has its colour in the sidebar too, as it has in the viewport,
+alerts), and its own icons take their colour from the theme.  So that the
+lines of the verdict have the colours they have in the viewport's badge,
 these icons are drawn here, as pixels, when the add-on is switched on.
+(The list of problems uses Blender's own icons: see ui._KIND_ICON.)
 """
 
 import numpy as np
@@ -16,7 +17,6 @@ AMBER = (1.0, 0.72, 0.0)
 MAGENTA = (0.95, 0.25, 0.85)
 GREEN = (0.3, 0.86, 0.4)
 GREY = (0.62, 0.62, 0.62)
-BLUE = (0.35, 0.75, 1.0)
 
 _pcoll = None
 _ids = {}          # name -> the preview that holds the icon
@@ -60,13 +60,11 @@ def _shape(name, x, y):
         return _strokes(x, y, [[(-k, -k), (k, -k), (k, k), (-k, k), (-k, -k)]], 0.3)
     if name == 'note':
         return np.abs(np.hypot(x, y) - 0.56) - 0.14
-    if name == 'busy':
-        return np.minimum(np.minimum(np.hypot(x + 0.62, y), np.hypot(x, y)), np.hypot(x - 0.62, y)) - 0.17
     return np.hypot(x, y) - 0.26          # 'dot'
 
 
 _COLOUR = {'cross': RED, 'ok': GREEN, 'warn': AMBER, 'box': MAGENTA, 'gap': AMBER, 'note': AMBER,
-           'busy': GREY, 'dot': GREY}
+           'dot': GREY}
 
 
 def pixels(name, size=SIZE):

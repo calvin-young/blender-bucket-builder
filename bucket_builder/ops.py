@@ -45,6 +45,11 @@ def frame(context, center, radius):
     half = math.atan(18.0 / max(space.lens, 1.0))
     rv3d.view_location = (float(center[0]), float(center[1]), float(center[2]))
     rv3d.view_distance = max(float(radius), 1e-6) / math.tan(half) * 2.2
+    # A build volume in millimetres is larger than a new viewport sees to
+    # (Clip End is 1000 units): what is framed has to be inside it.
+    far = rv3d.view_distance + 2.0 * float(radius)
+    if space.clip_end < 1.5 * far:
+        space.clip_end = 4.0 * far
     for area in context.screen.areas:
         if area.type == 'VIEW_3D':
             area.tag_redraw()
@@ -87,6 +92,11 @@ def _view3d_area(context):
     return None
 
 
+def _in_local_view(context):
+    area = _view3d_area(context)
+    return area is not None and area.spaces.active.local_view is not None
+
+
 def local_view(context, targets):
     """Show ``targets`` on their own in the 3D viewport (Blender's local
     view), or everything again if there are none.  The selection is changed
@@ -110,7 +120,7 @@ def local_view(context, targets):
     return space.local_view is not None
 
 
-def _goto(context, index, select):
+def _goto(context, index, select, view=True):
     scene = context.scene
     st = props.settings(scene)
     mon = monitor.get(scene)
@@ -129,8 +139,9 @@ def _goto(context, index, select):
         local_view(context, targets)
     elif select:
         _select_parts(context, targets)
-    min_r = 4.0 / mon.mm_per_unit
-    frame(context, pr['center'], max(pr['radius'], min_r))
+    if view:
+        min_r = 4.0 / mon.mm_per_unit
+        frame(context, pr['center'], max(pr['radius'], min_r))
     return pr
 
 
@@ -167,16 +178,54 @@ class BUCKETBUILDER_OT_focus_problem(Operator):
     bl_label = "Go to Problem"
     bl_options = {'REGISTER', 'UNDO'}
 
-    index: IntProperty(default=0)
+    index: IntProperty(default=0, options={'HIDDEN'})
     select: BoolProperty(name="Select Parts", default=True)
+    # (a row of the list names its problem: the list may have changed since it was drawn)
+    kind: StringProperty(options={'HIDDEN'})
+    a: StringProperty(options={'HIDDEN'})
+    b: StringProperty(options={'HIDDEN'})
+
+    @classmethod
+    def description(cls, context, properties):
+        # (a row of the list is narrow: the names in full are worth a tooltip)
+        mon = monitor.get(context.scene)
+        problems = mon.problems() if mon is not None else []
+        if 0 <= properties.index < len(problems):
+            pr = problems[properties.index]
+            return (describe(pr) + (" (ignored)" if pr['ignored'] else "")
+                    + ". Click to frame it in the viewport and select the parts involved")
+        return cls.__doc__
 
     def execute(self, context):
-        pr = _goto(context, self.index, self.select)
+        index = self.index
+        if self.kind:
+            mon = monitor.get(context.scene)
+            index = _find_problem(mon, self.kind, self.a, self.b)[0] if mon is not None else -1
+            if index < 0:
+                self.report({'INFO'}, "That problem is gone")
+                return {'CANCELLED'}
+        pr = _goto(context, index, self.select)
         if pr is None:
             self.report({'INFO'}, "No problems")
             return {'CANCELLED'}
         self.report({'INFO'}, describe(pr))
         return {'FINISHED'}
+
+
+def pick_problem(context, index):
+    """A click on a row of the list (through props._row_set): as the
+    operator, so that it is a step of the undo history and says what the
+    problem is in the status bar."""
+    mon = monitor.get(context.scene)
+    problems = mon.problems() if mon is not None else []
+    if not 0 <= index < len(problems):
+        return
+    pr = problems[index]
+    try:
+        bpy.ops.bucketbuilder.focus_problem('EXEC_DEFAULT', kind=pr['key'][0], a=pr['names'][0],
+                                            b=pr['names'][1])
+    except Exception:
+        _goto(context, index, True)
 
 
 class BUCKETBUILDER_OT_step_problem(Operator):
@@ -185,7 +234,7 @@ class BUCKETBUILDER_OT_step_problem(Operator):
     bl_label = "Next Problem"
     bl_options = {'REGISTER', 'UNDO'}
 
-    direction: IntProperty(default=1)
+    direction: IntProperty(default=1, options={'HIDDEN'})
     select: BoolProperty(name="Select Parts", default=True)
 
     def execute(self, context):
@@ -194,18 +243,21 @@ class BUCKETBUILDER_OT_step_problem(Operator):
         problems = mon.problems() if mon is not None else []
         # from the problem the user is at; if that one is gone (solved, most
         # likely), from where it was in the list
+        step = 1 if self.direction >= 0 else -1
         at = mon.active_index(st) if mon is not None else -1
         if at < 0:
-            at = st.problem_index - (1 if self.direction > 0 and st.problem_index >= 0 else 0)
-        index = at + self.direction
-        if st.problem_index < 0 and self.direction < 0:
+            at = st.problem_index - (1 if step > 0 and st.problem_index >= 0 else 0)
+        index = at + step
+        if st.problem_index < 0 and step < 0:
             index = -1
         # problems that are ignored are passed over (unless there are no others)
         n = len(problems)
-        if n and any(not pr['ignored'] for pr in problems):
+        if n:
             index %= n
-            while problems[index]['ignored']:
-                index = (index + self.direction) % n
+            for _ in range(n):
+                if not problems[index]['ignored']:
+                    break
+                index = (index + step) % n
         pr = _goto(context, index, self.select)
         if pr is None:
             self.report({'INFO'}, "No problems")
@@ -234,7 +286,7 @@ class BUCKETBUILDER_OT_isolate(Operator):
         st.isolate = True
         at = mon.active_index(st) if mon is not None else -1
         if at >= 0:
-            _goto(context, at, True)
+            _goto(context, at, True, view=False)      # (the view stays where it is)
         else:
             self.report({'INFO'}, "Pick a problem to see its parts on their own")
         monitor.tag_redraw_all()
@@ -272,12 +324,15 @@ class BUCKETBUILDER_OT_isolate_problem(_RowOperator, Operator):
         mon, index, pr = self.find(context)
         if pr is None:
             return {'CANCELLED'}
-        if st.isolate and mon.active_index(st) == index:
+        was = mon.active_index(st)
+        if st.isolate and was == index and _in_local_view(context):
             st.isolate = False
             local_view(context, [])
         else:
+            # (also when the user has left the local view by hand: then the
+            # button shows as off, and a click must switch it on)
             st.isolate = True
-            _goto(context, index, True)
+            _goto(context, index, True, view=(was != index))
         monitor.tag_redraw_all()
         return {'FINISHED'}
 
@@ -292,8 +347,20 @@ def prune_ignored(scene):
     gone = [i for i, item in enumerate(st.ignored_problems)
             if item.a is None or item.a not in here
             or (item.kind == 'PAIR' and (item.b is None or item.b not in here))]
+    freed = set()
     for i in reversed(gone):
+        item = st.ignored_problems[i]
+        freed.update(o for o in (item.a, item.b) if o is not None)
         st.ignored_problems.remove(i)
+    # A part the user deleted lives on for as long as an entry points at it.
+    # With the entry gone nothing uses it: it goes now, as it would have when
+    # it was deleted (and its name is free for the part that is imported next).
+    for o in freed:
+        try:
+            if o.users == 0 and not o.use_fake_user:
+                bpy.data.objects.remove(o)
+        except Exception:
+            pass
     return len(gone)
 
 
@@ -324,9 +391,9 @@ class BUCKETBUILDER_OT_ignore_problem(_RowOperator, Operator):
     @classmethod
     def description(cls, context, properties):
         if properties.lock:
-            return ("Ignore this problem for good: whatever happens to the parts, a problem of "
-                    "this kind between them does not count. Click again to ignore it only for "
-                    "as long as it stays as it is")
+            return ("Ignore this problem for good: however the parts are moved, it does not "
+                    "count. (Two parts locked as too close count again if they collide.) Click "
+                    "again to ignore it only for as long as it stays as it is")
         return cls.__doc__
 
     def execute(self, context):
@@ -353,12 +420,17 @@ class BUCKETBUILDER_OT_ignore_problem(_RowOperator, Operator):
                 st.ignored_problems.remove(i)
             self.report({'INFO'}, "Counts again: " + describe(pr))
         else:
+            try:
+                sig, geo, aux = mon.signature(self.kind, *pr['slots'])
+            except Exception:             # (a part with a scale of zero has no place to remember)
+                self.report({'WARNING'}, "This problem cannot be ignored: a part has no size")
+                return {'CANCELLED'}
             item = st.ignored_problems[i] if i >= 0 else st.ignored_problems.add()
             item.kind = kind
             item.a = objs[0]
             item.b = objs[1] if len(objs) > 1 else None
             item.lock = lock
-            item.sig, item.geo, item.aux = mon.signature(self.kind, *pr['slots'])
+            item.sig, item.geo, item.aux = sig, geo, aux
             self.report({'INFO'}, ("Ignored for good: " if lock else "Ignored: ") + describe(pr))
         mon._read_ignored(st)             # (at once, so that the list is right when it is redrawn)
         monitor.tag_redraw_all()
@@ -387,10 +459,29 @@ class BUCKETBUILDER_OT_count_all_problems(Operator):
 class BUCKETBUILDER_OT_status(Operator):
     """Bucket Builder watches the build while you arrange it. What it checks is switched on below: collisions, the build volume, or both"""
     bl_idname = "bucketbuilder.status"
-    bl_label = "Monitoring On"
+    bl_label = "Bucket Monitoring"        # (true whatever is switched on: the box below says what)
 
     def execute(self, context):
         return {'CANCELLED'}              # (a sign, not a switch)
+
+
+def export_warnings(scene):
+    """What whoever exports the build should be told first: parts outside
+    the build volume above all (a file with those in it is not a build the
+    printer can make), and that the volume was not checked at all."""
+    st = props.settings(scene)
+    mon = monitor.get(scene)
+    lines = []
+    if mon is None or st is None or not props.volume_checked(st):
+        lines.append("The build volume is not being checked")
+    else:
+        s = mon.status()
+        n = s['partly_out'] + s['outside']
+        if n:
+            lines.append(f"{n} part{'s are' if n != 1 else ' is'} outside the build volume")
+        if s['busy'] or s['preparing']:
+            lines.append("The build is still being checked")
+    return lines
 
 
 class BUCKETBUILDER_OT_export_3mf(Operator):
@@ -399,13 +490,21 @@ class BUCKETBUILDER_OT_export_3mf(Operator):
     bl_label = "Export 3MF"
 
     def execute(self, context):
+        warnings = export_warnings(context.scene)
+
         def draw(menu, _context):
             col = menu.layout.column(align=True)
+            for line in warnings:
+                col.label(text=line, icon='ERROR')
+            if warnings:
+                col.separator()
             col.label(text="Not in this version yet.")
             col.label(text="Writing the build to a 3MF file is what comes next.")
 
         if context.window is not None and not bpy.app.background:
             context.window_manager.popup_menu(draw, title="Export 3MF", icon='EXPORT')
+        for line in warnings:
+            self.report({'WARNING'}, line)
         self.report({'INFO'}, "3MF export is not in this version yet: it is what comes next")
         return {'CANCELLED'}
 
@@ -448,7 +547,12 @@ class BUCKETBUILDER_OT_ignore(Operator):
 
     def execute(self, context):
         n = 0
-        for o in context.selected_objects:
+        targets = list(context.selected_objects)
+        if context.area is not None and context.area.type == 'OUTLINER':
+            # (what is picked in the Outliner, hidden objects included)
+            ids = getattr(context, 'selected_ids', None) or ()
+            targets = [o for o in ids if isinstance(o, bpy.types.Object)] or targets
+        for o in targets:
             # (any kind of object: what is not a mesh is not checked, but it
             # is reported as such unless it is ignored)
             if o.bucket_builder_ignore != self.ignore:
@@ -690,6 +794,10 @@ class BUCKETBUILDER_OT_profile_update(Operator):
         if p is None:
             return {'CANCELLED'}
         prof = _current_profile(p, st)
+        if prof is None and st.printer == "Custom" and st.printer_last:
+            # (typing a size turns the printer into "Custom": the size goes
+            # into the printer it was typed over)
+            prof = next((x for x in p.profiles if x.name == st.printer_last), None)
         if prof is None:
             self.report({'WARNING'}, "Pick a printer first, or save the volume as a new printer")
             return {'CANCELLED'}

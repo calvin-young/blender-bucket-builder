@@ -43,7 +43,8 @@ def register():
     monitor.register()
     # the preferences of a freshly enabled add-on, and the scenes, are not
     # reachable inside register()
-    bpy.app.timers.register(_seed_later, first_interval=0.2)
+    # (persistent: Blender started with a file loads it before the timer is due)
+    bpy.app.timers.register(_seed_later, first_interval=0.2, persistent=True)
 
 
 def unregister():
