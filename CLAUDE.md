@@ -322,15 +322,26 @@ Last updated: 2026-10-10, early morning (session 2; the owner's lists of
 
 ### 0. Auto packer (branch `autopack`)
 
-Blender 5.2.2 is built in the sandbox of session 3 (`~/build`, see
-`tools/test-blender/README.md`); a new sandbox needs it built again, about two
-hours. Run `setup_profile.sh` and `export BLENDER_USER_RESOURCES=~/build/blender-user`.
+Stage 0 (spec `docs/AUTOPACK.md`) and **Stage 1 are done** (2026-10-13): `pack/meshio.py`
+(STL, 3MF with units, transforms, components, `p:path`), `pack/metrics.py` (exact
+volume per 1 mm layer by the divergence theorem, density, spread, partial-out
+warning, per-part result cache), `pack/plot.py`, `pack/cli.py` (`python -m pack
+report`, `tools/pack_report.py`; prints generic labels unless `--names`),
+`report.py` + the **Build Report** panel (own switch `report_density`; needs one
+of the two checks, which read the parts; result cached per (mesh, linear part,
+height), worked out in a thread). Tests: `tests/test_pack_*.py`,
+`blender_report_test.py`, `blender_gui_report.py`, `bench_pack_metrics.py`
+(numbers in AUTOPACK.md §15). Not merged to `main` yet: ask the owner whether
+the Build Report should go out as 1.3.0 on its own.
 
-Stage 0 (the spec, `docs/AUTOPACK.md`, and the benchmark folders) is done,
-waiting for the owner's review and the open questions in its §14. Stage 1 is
-next: `pack/meshio.py`, `pack/metrics.py`, the density report. The plan, the
-model to use per stage and the parked list are in that file; prompt the owner
-to switch model before each stage.
+Gotchas learned: a large icon is drawn from the preview's `image_pixels_float`,
+not `icon_pixels_float`; Blender's Suzanne has 42 boundary edges (the open-mesh
+warning is right about it); `meshes.box` in the tests is centred on the origin.
+
+Next is **Stage 2** (voxel layer, FFT feasibility, greedy placement, GPU timing
+script): recommended model Opus 5.5, high; prompt the owner to switch first.
+The owner still owes: Suzanne STLs at several subdivision levels, non-sensitive
+benchmark buckets, the TCO spreadsheets (later).
 
 ### A. With the owner
 

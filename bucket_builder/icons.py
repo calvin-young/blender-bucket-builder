@@ -82,6 +82,24 @@ def pixels(name, size=SIZE):
     return out
 
 
+PROFILE = 192
+
+
+def set_profile(pixels):
+    """Give the profile picture of the report its pixels (None: clear it)."""
+    icon = _ids.get('profile')
+    if icon is None:
+        return
+    try:
+        if pixels is None:
+            pixels = np.zeros((PROFILE, PROFILE, 4), dtype=np.float32)
+        flat = pixels.ravel().tolist()
+        icon.image_size = (PROFILE, PROFILE)      # (a large icon is drawn from the image, a small one from the icon)
+        icon.image_pixels_float = flat
+    except Exception as ex:
+        print('Bucket Builder: profile picture not set:', ex)
+
+
 def get(name):
     """The number Blender knows an icon by (for ``icon_value``), or 0 if the
     icons could not be made (there are none without a window)."""
@@ -104,6 +122,10 @@ def register():
             icon.icon_size = (SIZE, SIZE)
             icon.icon_pixels_float = pixels(name).ravel().tolist()
             _ids[name] = icon
+        icon = _pcoll.new("bucket_builder_profile")
+        icon.image_size = (PROFILE, PROFILE)
+        icon.image_pixels_float = np.zeros((PROFILE, PROFILE, 4), dtype=np.float32).ravel().tolist()
+        _ids['profile'] = icon
     except Exception as ex:           # without them the sidebar uses Blender's own icons
         print("Bucket Builder: coloured icons unavailable:", ex)
         _ids.clear()

@@ -1223,6 +1223,11 @@ class World:
         return (g.key, self.LVERT.data[g.lbase:g.lbase + g.nv],
                 self.TIDX.data[g.tbase:g.tbase + g.nt])
 
+    def part_key(self, slot):
+        """(geometry key, triangle count) of a part: what identifies its mesh."""
+        g = self._obj[slot][1]
+        return g.key, g.nt
+
     def part_triangles(self, slot):
         return self._obj[slot][1].nt
 

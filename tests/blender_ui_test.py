@@ -76,6 +76,10 @@ class FakeLayout:
         if self._attrs.get('active') is False:
             LOG.append(('greyed', kw.get('text', '')))
 
+    def template_icon(self, icon_value=0, scale=1.0):
+        assert icon_value, 'an icon that does not exist'
+        LOG.append(('template_icon', icon_value))
+
     def template_list(self, cls_name, list_id, data, prop, active_data, active_prop, **kw):
         # Blender's list widget: the rows the list's own filter lets through
         # are drawn, each by the list's draw_item
@@ -230,7 +234,8 @@ def main():
     assert 'Collision' in labels and 'Clearance' in labels, 'the display switches have no headings'
     # the panels are separate ones now, each with its own header
     tops = [c.bl_label for c in ui.CLASSES if issubclass(c, bpy.types.Panel) and not getattr(c, 'bl_parent_id', '')]
-    assert tops == ['Bucket Builder', 'Collision Detection', 'Build Volume', 'Options', 'Export'], tops
+    assert tops == ['Bucket Builder', 'Collision Detection', 'Build Volume', 'Build Report', 'Options',
+                    'Export'], tops
     assert bpy.ops.bucketbuilder.export_3mf() == {'CANCELLED'}, 'the placeholder must do nothing'
     assert bpy.ops.bucketbuilder.status() == {'CANCELLED'}
     # the sign at the top says nothing that is untrue while both switches are off
@@ -259,6 +264,22 @@ def main():
     s = mon.status()
     assert s['collisions'] >= 1 and s['clearance'] >= 1 and s['partly_out'] == 1, s
     assert len(mon.problems()) > ui.LIST_ROWS, len(mon.problems())
+    # the report: off, it is a switch and nothing else; on, the figures and a picture
+    n0 = len(LOG)
+    draw_all(ctx, 'report off')
+    assert ('prop', 'report_density') in LOG[n0:] and '3D Density' not in labels_since(n0)
+    st.report_density = True
+    assert mon.report.wait(mon, st), 'the report never finished'
+    n0 = len(LOG)
+    draw_all(ctx, 'report on')
+    texts = labels_since(n0)
+    for want in ('Parts', 'Volume', 'Packed Height', '3D Density', 'Peak Layer', 'Layer Spread'):
+        assert want in texts, (want, texts[:20])
+    assert 'partly outside the build volume' in ' '.join(t.strip() for t in texts), \
+        'the out-of-bounds warning is missing'
+    if ui.icons.get('profile'):          # (there are no icons without a window)
+        assert any(k == 'template_icon' for k, _ in LOG[n0:]), 'the profile picture is missing'
+    st.report_density = False
     n0 = len(LOG)
     draw_all(ctx, 'scene with problems')
     labels = labels_since(n0)
