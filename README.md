@@ -45,7 +45,7 @@ The user guide is in [bucket_builder/README.md](bucket_builder/README.md).
 
 ## Status
 
-Version 1.2.0. Declared for Blender 4.2 and newer. Its tests run on
+Version 1.3.0. Declared for Blender 4.2 and newer. Its tests run on
 **Blender 5.2.2** (Linux, software OpenGL), where:
 
 * the geometry engine agrees with brute-force references on random and
@@ -82,7 +82,11 @@ timer reads it; the crash is reproduced by the tests without that line.
 Version 1.1.0 was the interface as he asked for it after his first trial;
 1.2.0 is his second and third lists, and what an independent review of the
 code found (among it two cases in which a contact between parts was not
-reported).
+reported). 1.3.0 adds the Build Report: density, packed height and the
+density of every layer, the first piece of the auto packer
+(`docs/AUTOPACK.md`); its figures agree with Blender's own volume
+calculation, and a command line tool gives the same report for a 3MF or
+STL file without Blender.
 
 Not yet tried: Blender 4.2 - 5.1 (the code compiles with Python 3.11, and
 every API it uses was looked up in the 4.2 source), macOS, the Vulkan and
@@ -116,7 +120,7 @@ these figures.
 
 ## Install
 
-Download or build `bucket_builder-1.2.0.zip`, then in Blender:
+Download or build `bucket_builder-1.3.0.zip`, then in Blender:
 Edit > Preferences > Get Extensions > the arrow in the top right >
 *Install from Disk*.
 
@@ -221,7 +225,7 @@ The engine needs only NumPy:
 
     python3 tests/test_tritri.py     # triangle routines against slow references
     python3 tests/test_world.py      # the collision world against brute force (about 10 minutes)
-    python3 tests/test_pack_meshio.py    # STL / 3MF readers (autopack branch)
+    python3 tests/test_pack_meshio.py    # STL / 3MF readers
     python3 tests/test_pack_metrics.py   # volume, layer profile, density against references
     python3 tests/test_pack_cli.py       # python -m pack report, and that it prints no names
     python3 tests/bench_pack_metrics.py  # report timings at 60 x 1 M and 5 x 20 M triangles
@@ -260,7 +264,7 @@ With the add-on installed and enabled in Blender:
       ui.py               sidebar panels, the list of problems, entries in Blender's own menus
       icons.py            the coloured icons of the status box, and the report's profile picture
       report.py           the Build Report: parts from the world, results cached, worked out in a thread
-      pack/               auto packer, no Blender imports (autopack branch): meshio, metrics, plot, cli
+      pack/               auto packer, no Blender imports: meshio, metrics, plot, cli (more on `autopack`)
     tests/
     tools/test-blender/   building Blender from source where it cannot be downloaded
     CLAUDE.md             working notes: state, decisions, what is next

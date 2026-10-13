@@ -284,11 +284,16 @@ limit but their scripts are in `scratchpad/review_*`):
 
 ## State
 
-Last updated: 2026-10-10, early morning (session 2; the owner's lists of
-2026-10-09 11:14, 13:55 and 21:52 are done as version 1.2.0).
+Last updated: 2026-10-13 (session 3).
 
-* `main` is **1.2.0**, sent to the owner. He had 1.1.0 before. He works with
-  a limited usage allowance: be economical (no large fan-outs without need).
+* `main` is **1.3.0** (2026-10-13): 1.2.0 plus the Build Report (Stage 1 of the
+  auto packer, merged from `autopack` by fast-forward). Zip sent to the owner.
+  He works with a limited usage allowance (87 % of the week used on
+  2026-10-13): be economical, and write notes here often.
+* Tests at 1.3.0: everything listed for 1.2.0 below still passes, plus
+  `blender_report_test.py`, `blender_gui_report.py`, `tests/test_pack_*.py`;
+  `blender_upgrade_test.py` from 1.2.0 to 1.3.0 passes (1.2.0 zip: build from
+  37390cb).
 * Tests at 1.2.0: `test_world.py` (about 10 minutes), 197 checks in
   `blender_test.py`, 48 in `blender_large_test.py`, the UI test (a stand-in
   layout that also runs the list's `draw_item`), the off-screen overlay
@@ -331,8 +336,8 @@ report`, `tools/pack_report.py`; prints generic labels unless `--names`),
 of the two checks, which read the parts; result cached per (mesh, linear part,
 height), worked out in a thread). Tests: `tests/test_pack_*.py`,
 `blender_report_test.py`, `blender_gui_report.py`, `bench_pack_metrics.py`
-(numbers in AUTOPACK.md §15). Not merged to `main` yet: ask the owner whether
-the Build Report should go out as 1.3.0 on its own.
+(numbers in AUTOPACK.md §15). Released as 1.3.0 on `main` (the owner asked);
+`autopack` continues from there.
 
 Gotchas learned: a large icon is drawn from the preview's `image_pixels_float`,
 not `icon_pixels_float`; Blender's Suzanne has 42 boundary edges (the open-mesh
