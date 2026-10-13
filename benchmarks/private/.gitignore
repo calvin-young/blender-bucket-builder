@@ -1,0 +1,6 @@
+# Ignore everything in this folder except this file and the README.
+# Real buckets stay on the owner's machine. tests/test_private_guard.py
+# fails if anything else here is ever tracked (for example with git add -f).
+*
+!.gitignore
+!README.md
