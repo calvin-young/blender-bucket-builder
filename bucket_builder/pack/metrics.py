@@ -70,7 +70,7 @@ def mesh_stats(mesh, workers=None):
     v, t = mesh.verts, mesh.tris
     if t.shape[0] == 0:
         return 0.0, 0.0
-    c = v[np.unique(t[:min(t.shape[0], 4096)].ravel())].mean(axis=0)
+    c = v[np.unique(t[:min(t.shape[0], 4096)].ravel())].mean(axis=0, dtype=np.float64)
     cols = _columns(v, c)
     parts = _map(lambda r: _stats_chunk(cols, t[r[0]:r[1]]), t.shape[0], workers)
     tot = np.sum(parts, axis=0)
@@ -257,18 +257,44 @@ def classify(lo, hi, vlo, vhi, eps=EPS):
     return PARTIAL
 
 
-def measure_parts(parts, vlo, vhi, band=1.0, nbands=None, want_bands=True, workers=None):
+def cache_key(mesh, A, z, z0, band, nb):
+    """Key of one part's result in a cache, or None for a mesh without a `key`.
+    Moving a part in X or Y does not change its volume per band, so only the
+    mesh, its linear part, its height and the band grid count."""
+    k = getattr(mesh, 'key', None)
+    if k is None:
+        return None
+    return (k, np.asarray(A, float).tobytes(), float(z), float(z0), float(band), int(nb))
+
+
+def missing(cache, mesh, A, z, z0, band, nb):
+    """Whether measuring this part would have to read the mesh: its result or
+    its mesh statistics are not in `cache`."""
+    ck = cache_key(mesh, A, z, z0, band, nb)
+    return ck is None or ck not in cache or ('stats', mesh.key) not in cache
+
+
+def measure_parts(parts, vlo, vhi, band=1.0, nbands=None, want_bands=True, workers=None,
+                  cache=None):
     """Per-part exact results for `parts` = [(name, mesh, matrix 4x4), ...].
 
     Bands start at the volume's floor vlo[2], `band` thick, `nbands` of them
     (default: enough to reach the volume's ceiling).  Returns a list of
-    PartResult in the order of `parts`."""
+    PartResult in the order of `parts`.
+
+    `cache` (a dict, kept by the caller) remembers results of meshes that have
+    a `key` attribute (anything hashable that identifies their content).  A
+    part that moved sideways, or a copy at a height already seen, costs
+    nothing, and a mesh whose results are all cached is never read: it may be
+    a stand-in with only `key` and `nt`."""
     vlo = np.asarray(vlo, float)
     vhi = np.asarray(vhi, float)
     z0 = float(vlo[2])
     if nbands is None:
         nbands = max(1, int(np.ceil((vhi[2] - vlo[2]) / band - 1e-9)))
     nb = int(nbands)
+    if cache is not None and not want_bands:
+        cache = None
     stats = {}
     groups = {}
     for i, (name, mesh, M) in enumerate(parts):
@@ -277,10 +303,8 @@ def measure_parts(parts, vlo, vhi, band=1.0, nbands=None, want_bands=True, worke
         groups.setdefault(key, (mesh, M[:3, :3].copy(), []))[2].append(i)
     out = [None] * len(parts)
     for mesh, A, idxs in groups.values():
-        if id(mesh) not in stats:
-            stats[id(mesh)] = mesh_stats(mesh, workers)
-        local_vol, openness = stats[id(mesh)]
-        tz = [float(parts[i][2][2, 3]) for i in idxs]
+        mkey = getattr(mesh, 'key', None)
+        use = cache is not None and mkey is not None
         if mesh.nt == 0:
             for i in idxs:
                 p = np.asarray(parts[i][2], float)[:3, 3]
@@ -290,17 +314,41 @@ def measure_parts(parts, vlo, vhi, band=1.0, nbands=None, want_bands=True, worke
                     r.bounds = np.zeros(nb + 1)
                 out[i] = r
             continue
-        tot, lo, hi, acc = _group_pass(mesh, A, tz, z0, band, nb, want_bands, workers)
+        # statistics of the mesh (volume sign, openness)
+        if use and ('stats', mkey) in cache:
+            local_vol, openness = cache[('stats', mkey)]
+        else:
+            if id(mesh) not in stats:
+                stats[id(mesh)] = mesh_stats(mesh, workers)
+            local_vol, openness = stats[id(mesh)]
+            if use:
+                cache[('stats', mkey)] = stats[id(mesh)]
+        # per-instance results: (signed total, lo, hi, raw boundary volumes)
+        tzs = [float(parts[i][2][2, 3]) for i in idxs]
+        found = {}
+        todo = []
+        for tz in dict.fromkeys(tzs):
+            ck = cache_key(mesh, A, tz, z0, band, nb) if use else None
+            if ck is not None and ck in cache:
+                found[tz] = cache[ck]
+            else:
+                todo.append(tz)
+        if todo:
+            tot, lo, hi, acc = _group_pass(mesh, A, todo, z0, band, nb, want_bands, workers)
+            for k, tz in enumerate(todo):
+                Vb = _boundary_volumes(acc[k], band, nb) if want_bands else None
+                found[tz] = (float(tot[k]), lo, hi, Vb)
+                if use:
+                    cache[cache_key(mesh, A, tz, z0, band, nb)] = found[tz]
         for k, i in enumerate(idxs):
+            total, lo, hi, Vb = found[tzs[k]]
             name = parts[i][0]
-            total = float(tot[k])
             r = PartResult(name, abs(total), lo + parts[i][2][:3, 3], hi + parts[i][2][:3, 3])
             r.openness = openness
             r.inside_out = local_vol < 0
             r.status = classify(r.lo, r.hi, vlo, vhi)
             if want_bands:
-                Vb = _boundary_volumes(acc[k], band, nb)
-                # `acc` holds a * (z - z0) sums, whose total differs from `total`
+                # `Vb` holds a * (z - z0) sums, whose total differs from `total`
                 # (measured from the pivot) only by rounding for a closed mesh
                 sgn = -1.0 if total < 0 else 1.0
                 r.bounds = Vb * sgn
@@ -350,12 +398,12 @@ def smooth(values, width_bands):
     return (c[hi] - c[lo]) / np.maximum(hi - lo, 1)
 
 
-def measure(parts, vlo, vhi, band=1.0, smooth_mm=5.0):
+def measure(parts, vlo, vhi, band=1.0, smooth_mm=5.0, workers=None, cache=None):
     """The report of a build: `parts` = [(name, mesh, matrix), ...] in mm and
     the build volume's corners `vlo`, `vhi`."""
     vlo = np.asarray(vlo, float)
     vhi = np.asarray(vhi, float)
-    res = measure_parts(parts, vlo, vhi, band)
+    res = measure_parts(parts, vlo, vhi, band, workers=workers, cache=cache)
     rep = Report(band=band, smooth_mm=smooth_mm, parts=res)
     rep.n_parts = len(res)
     rep.area = float((vhi[0] - vlo[0]) * (vhi[1] - vlo[1]))
