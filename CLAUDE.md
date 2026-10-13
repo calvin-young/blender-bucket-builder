@@ -343,8 +343,36 @@ Gotchas learned: a large icon is drawn from the preview's `image_pixels_float`,
 not `icon_pixels_float`; Blender's Suzanne has 42 boundary edges (the open-mesh
 warning is right about it); `meshes.box` in the tests is centred on the origin.
 
-Next is **Stage 2** (voxel layer, FFT feasibility, greedy placement, GPU timing
-script): recommended model Opus 5.5, high; prompt the owner to switch first.
+**Stage 2 is in progress** (Opus 5.5, started 2026-10-13 night; the owner is
+away until morning and will bring non-sensitive benchmark buckets). Plan and
+decisions so far, in the order of the work:
+
+1. SciPy is NOT in Blender's Python and PyPI is blocked here, so no wheels can
+   be bundled now: `pack` uses NumPy only and takes SciPy (`scipy.fft` with
+   workers, `ndimage.label`, `distance_transform_edt`) when it is importable
+   (system python3 here has SciPy 1.18). Results must be identical both ways.
+2. `pack/voxel.py`: half-open cells [i h, (i+1) h); a part's *solid* = cells
+   any of its points falls in (triangles subdivided until edges <= h, then
+   their AABB cells; superset, so conservative), plus everything not reached
+   by a flood fill of the outside (sealed voids solid, open cavities empty);
+   open meshes get a morphological closing first. Gap g is checked as
+   taken(solids of placed parts) vs. candidate *dilated* by
+   O = {d : h^2 sum max(|d_i|-1,0)^2 < g^2} = 3x3x3 cube (+) integer ball of
+   radius g/h. With no shared cell no two points are closer than g (proof:
+   the infimum distance between points of cells c and c+d is that expression).
+   One side dilated by the whole gap, not both by half: half each would add
+   the neighbour ring twice.
+3. Coarse to fine: coarse grid f = 4 cells (max-pooled, conservative),
+   feasibility of all coarse offsets by FFT correlation, the best K
+   candidates refined at full resolution by direct window checks and
+   single-cell "drop" moves (-z, -y, -x). Density cap as a lower bound on the
+   packed height; layer penalty from exact per-orientation profiles
+   (`metrics`), shifted by whole bands.
+4. `pack/referee.py` checks a layout with `core.World` (zero violations).
+5. `benchmarks/synthetic.py`: shapes and bucket recipes; `tools/pack_fft_timing.py`
+   for the owner's GPU numbers (CuPy if installed).
+
+
 The owner still owes: Suzanne STLs at several subdivision levels, non-sensitive
 benchmark buckets.
 
