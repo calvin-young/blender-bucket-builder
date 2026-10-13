@@ -271,6 +271,69 @@ def test_spread():
     close(metrics.smooth(np.array([0, 0, 3.0, 0, 0]), 3), [0, 1.0, 1.0, 1.0, 0], 1e-12, 'moving average')
 
 
+def test_cache():
+    print('cache of results')
+
+    class Stand:
+        """Only a key and a size: reading its arrays is an error."""
+        def __init__(self, key, nt):
+            self.key, self.nt = key, nt
+
+        @property
+        def verts(self):
+            raise AssertionError('mesh was read')
+
+        tris = verts
+
+    a = mk(meshes.torus(8, 2.5, 24, 12), 'ring')
+    a.key = 'ring'
+    b = mk(meshes.box((10, 12, 14)), 'brick')
+    b.key = 'brick'
+    L = rotation(RNG)
+    vlo, vhi = [0, 0, 0], [200, 200, 200]
+    parts = [('r1', a, pose(L, (40, 40, 30))), ('r2', a, pose(L, (90, 40, 30))),
+             ('r3', a, pose(L, (90, 90, 55))), ('b1', b, pose(None, (140, 40, 7)))]
+    cache = {}
+    plain = metrics.measure(parts, vlo, vhi)
+    first = metrics.measure(parts, vlo, vhi, cache=cache)
+    close(first.layer_volume, plain.layer_volume, 1e-12, 'a cache changes nothing')
+    # the same build with stand-ins that cannot be read
+    ghosts = [(n, Stand(m.key, m.nt), M) for n, m, M in parts]
+    again = metrics.measure(ghosts, vlo, vhi, cache=cache)
+    close(again.layer_volume, plain.layer_volume, 1e-12, 'a second pass reads no mesh')
+    check(again.density == plain.density and again.height == plain.height, 'same density and height')
+    # a part moved in x and y is still a hit; one moved in z or turned is not
+    moved = [(n, g, pose(M[:3, :3], M[:3, 3] + (13, -7, 0))) for (n, g, M) in
+             [(n, g, M.copy()) for n, g, M in ghosts]]
+    metrics.measure(moved, vlo, vhi, cache=cache)
+    check(True, 'sideways moves need no mesh')
+    lifted = [(n, g, pose(M[:3, :3], M[:3, 3] + (0, 0, 1))) for (n, g, M) in ghosts]
+    try:
+        metrics.measure(lifted, vlo, vhi, cache=cache)
+        check(False, 'a lift needs the mesh')
+    except AssertionError:
+        check(True, 'a lift needs the mesh')
+    real_lift = [(n, m, pose(M[:3, :3], M[:3, 3] + (0, 0, 1))) for (n, m, M) in parts]
+    ref = metrics.measure(real_lift, vlo, vhi)
+    got = metrics.measure(real_lift, vlo, vhi, cache=cache)
+    close(got.layer_volume, ref.layer_volume, 1e-12, 'a lifted build with the cache equals one without')
+    check(not metrics.missing(cache, a, L, 30.0, 0.0, 1.0, 200), 'missing() knows a cached part')
+    check(metrics.missing(cache, a, L, 31.5, 0.0, 1.0, 200), 'and a new height')
+    check(metrics.missing({}, b, np.eye(3), 7.0, 0.0, 1.0, 200), 'and an empty cache')
+
+
+def test_float32_mesh():
+    print('float32 vertices (the engine keeps them so)')
+    v, f = meshes.uv_sphere(50.0, 64, 32)
+    m64 = mk((v, f), 's')
+    m32 = Mesh(np.asarray(v, np.float32), np.asarray(f, np.int32), 's')
+    M = pose(rotation(RNG), (1000.3, 400.1, 77.7))
+    r64 = metrics.measure([('a', m64, M)], [0, 0, 0], [2000, 2000, 400])
+    r32 = metrics.measure([('a', m32, M)], [0, 0, 0], [2000, 2000, 400])
+    check(abs(r32.volume - r64.volume) / r64.volume < 1e-6,
+          'volume %.9f against %.9f' % (r32.volume, r64.volume))
+
+
 def test_timing():
     print('timing')
     s = mk(meshes.uv_sphere(20.0, 700, 350))            # about 490 k triangles
@@ -293,7 +356,7 @@ def test_timing():
 if __name__ == '__main__':
     for f in (test_volumes, test_box_exact, test_against_slicing, test_long_triangles,
               test_copies_share_work, test_status_and_report, test_open_mesh_warning,
-              test_spread, test_timing):
+              test_spread, test_cache, test_float32_mesh, test_timing):
         f()
     print()
     print('%d check(s) failed' % len(FAILS) if FAILS else 'ALL OK')
