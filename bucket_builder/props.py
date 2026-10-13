@@ -153,6 +153,11 @@ def _poke_enabled(self, context):
     monitor.on_enabled_changed(context.scene if context else None)
 
 
+def _poke_report(self, context):
+    from . import monitor
+    monitor.on_report_changed(context.scene if context else None)
+
+
 def _poke_redraw(self, context):
     from . import monitor
     monitor.tag_redraw_all()
@@ -226,6 +231,13 @@ class BucketBuilderSettings(PropertyGroup):
                     "While this is off the volume is neither drawn nor checked, whatever the "
                     "two checkboxes below say",
         default=False, update=_poke_enabled)
+
+    report_density: BoolProperty(
+        name="Density Report",
+        description="Work out the build's density, packed height and the density of every "
+                    "layer, against the printer's build area. Needs one of the two checks "
+                    "above, which read the parts",
+        default=False, update=_poke_report)
 
     use_clearance: BoolProperty(
         name="Clearance Between Parts",

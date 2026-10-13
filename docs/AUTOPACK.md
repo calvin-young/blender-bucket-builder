@@ -311,10 +311,12 @@ workflow, so it comes first.
 
 ### 6.3 Where it is shown
 
-* Sidebar: parts, volume, height, density (both forms), the layer profile,
-  the out-of-bounds warning. Recomputed from cached per-mesh profiles when
-  objects move: a translation shifts a profile, a rotation needs a new one
-  (computed in the worker threads, as sorting is today).
+* Sidebar (built, Stage 1): parts, volume, height, density, peak layer,
+  spread, the layer profile as a picture, the out-of-bounds warning. Results
+  are cached per (mesh, linear part, height): a sideways move is free, a lift
+  or a turn costs one pass over that mesh, in a worker thread. The panel has
+  its own switch (`report_density`) and needs one of the two checks, which
+  read the parts.
 * CLI: `python -m pack report bucket.3mf` prints the same numbers, so private
   buckets can be measured on the owner's machine without leaving it.
 
@@ -662,13 +664,23 @@ for the owner to set before asking for the stage.
 | Stage | Work | Done when | Model, effort |
 |---|---|---|---|
 | 0 | This spec; benchmark folders | spec reviewed by the owner | Opus 5.5, high |
-| 1 | `pack/meshio.py` (STL, 3MF), `pack/metrics.py` (volume, layer profile, density, partial-OOB warning), sidebar report and profile plot, `python -m pack report` | exact against analytic shapes (boxes, spheres, tori, rotated) to 1e-9; report on a 60 x 1 M build in seconds | Sonnet 5.5, medium |
+| 1 (**done**, 2026-10-13) | `pack/meshio.py` (STL, 3MF), `pack/metrics.py` (volume, layer profile, density, partial-OOB warning), sidebar report and profile plot, `python -m pack report` | exact against analytic shapes (boxes, spheres, tori, rotated) to 1e-9; report on a 60 x 1 M build in seconds | Sonnet 5.5, medium |
 | 2 | Voxel layer (conservative voxelisation, flood fill, dilation), FFT feasibility, coarse to fine, greedy placement; CPU and GPU timing script for the owner | feasible layouts verified by the referee on all synthetic buckets; timing table on the VM and the owner's laptop; a decision on the GPU path | Opus 5.5, high |
 | 3 | `Job` loop, improvement (ruin and recreate), compaction, rotation modes, locks, tiers, density cap, layer penalty; Pack panel and part list | beats or matches the owner's commercial packer baseline on the synthetic set; first result within the targets of §2 | Sonnet 5.5, medium |
 | 4 | Pattern solver (lattices, double lattices) | beats the bounding-box array on pringle, figurine and Suzanne copies | Opus 5.5, high |
 | 5 | Planner (goals, ratios, quantities); Buckets panel; World groups; export all | multi-bucket jobs from the synthetic set; bucket workflow tested in a window | Opus to design, Sonnet to build |
 | 6 | Halos (adaptive, thickness), pair warnings, what-if, solver recommendation | what-if suggestions reproducible across seeds | Sonnet 5.5, medium |
 | 7 | Labels | labelled builds pass the referee | Sonnet 5.5, low to medium |
+
+Stage 1 results (2 cores, 2.4 GHz): reports against Blender's own bmesh
+volume agree to 1e-4 in 46 cases of moves, lifts, rotations, scales,
+modifiers and linked copies; against an independent slicing reference to 1e-9
+for analytic and random shapes. Timings of `tests/bench_pack_metrics.py`:
+60 distinct meshes of 1 M triangles 13 s (220 ns per triangle); 12 meshes x 5
+copies 3.7 s (same orientation) to 9 s (every copy turned); 5 meshes of 20 M
+triangles 15 s. In Blender, 46 parts of 490 k triangles (22 M in all, 40 of
+them copies): first report 1.8 s, a lift 0.3 s, main-thread slices under
+25 ms. Reading a 3MF costs 2.2 s per million triangles.
 
 Blender in the sandbox: `download.blender.org` and PyPI are blocked by the
 sandbox's network policy (2026-10-12); GitHub is reachable. Stages 1 - 4 are

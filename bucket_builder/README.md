@@ -19,7 +19,7 @@ a newer version over an older one keeps your printers and settings.
 
 ## Use
 
-Open the sidebar in the 3D viewport (N) and the **Bucket** tab. It has five
+Open the sidebar in the 3D viewport (N) and the **Bucket** tab. It has six
 panels; each can be folded away by a click on its title.
 
 | Panel | What is in it |
@@ -27,6 +27,7 @@ panels; each can be folded away by a click on its title.
 | **Bucket Builder** | How the build stands, and the list of problems. |
 | **Collision Detection** | The switch for collisions and clearance, their settings, and which parts are checked. |
 | **Build Volume** | The switch for the build volume, the printer, the wall gap. |
+| **Build Report** | The switch for the density report: parts, volume, packed height, 3D density, the density of every layer and a picture of it. |
 | **Options** | Part colours, what is drawn, performance figures, units. |
 | **Export** | Writing the build to a 3MF file (not in this version yet). |
 
@@ -196,6 +197,34 @@ shown"). Numpad `.` frames the selected parts as a whole.
   scene holding millimetre-sized numbers (the usual STL import) as
   1 unit = 1 mm. The line underneath shows what was decided; override it if
   it is wrong.
+
+### Build Report
+
+**Density Report** works out, from the parts as they are now, what a printer
+operator asks first of a build:
+
+* **Volume**, the total of the parts' exact volumes (a closed mesh; the
+  evaluated mesh, so modifiers count), and the **packed height**, the
+  highest point above the floor of the volume.
+* **3D Density**, volume divided by build area times packed height. A part
+  that is only partly inside the volume is counted in full, and the density
+  line carries a warning saying so; a part wholly outside is listed and left
+  out.
+* **Peak Layer** and **Layer Spread**: the volume is cut into 1 mm layers;
+  the picture shows the density of every layer with the floor at the bottom,
+  and the spread is how much that varies (over a 5 mm window; 0 is perfectly
+  even).
+* Warnings for meshes that are not closed (their volume cannot be trusted)
+  and for parts that are inside out.
+
+It needs one of the two checks above to be on, because those are what read
+the parts. It runs in a worker thread and keeps what it has learned: moving a
+part sideways costs nothing, lifting or turning it costs one pass over its
+mesh (about 0.2 s per million triangles on one core).
+
+Without Blender, `python3 tools/pack_report.py bucket.3mf --printer 5600`
+prints the same figures for a 3MF or STL file. Its output has no file or
+part names unless `--names` is given.
 
 ### Export
 

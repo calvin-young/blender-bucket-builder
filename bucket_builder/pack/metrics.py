@@ -257,6 +257,11 @@ def classify(lo, hi, vlo, vhi, eps=EPS):
     return PARTIAL
 
 
+def n_bands(vlo, vhi, band):
+    """How many bands of `band` thickness reach the volume's ceiling."""
+    return max(1, int(np.ceil((float(vhi[2]) - float(vlo[2])) / band - 1e-9)))
+
+
 def cache_key(mesh, A, z, z0, band, nb):
     """Key of one part's result in a cache, or None for a mesh without a `key`.
     Moving a part in X or Y does not change its volume per band, so only the
@@ -291,7 +296,7 @@ def measure_parts(parts, vlo, vhi, band=1.0, nbands=None, want_bands=True, worke
     vhi = np.asarray(vhi, float)
     z0 = float(vlo[2])
     if nbands is None:
-        nbands = max(1, int(np.ceil((vhi[2] - vlo[2]) / band - 1e-9)))
+        nbands = n_bands(vlo, vhi, band)
     nb = int(nbands)
     if cache is not None and not want_bands:
         cache = None

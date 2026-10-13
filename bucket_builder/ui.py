@@ -5,6 +5,7 @@ the sidebar where an object can be left out of the checks.
     Bucket Builder        how the build stands, and the list of problems
     Collision Detection   its switch and settings; which parts are checked
     Build Volume          its switch, the printer, the wall gap
+    Build Report          density, packed height, layer profile
     Options               what is drawn, performance, units
     Export                (to come)
 """
@@ -12,7 +13,7 @@ the sidebar where an object can be left out of the checks.
 import bpy
 from bpy.types import Panel, UIList
 
-from . import icons, monitor, ops, overlay, props
+from . import icons, monitor, ops, overlay, props, report
 
 LIST_ROWS = 10
 IGNORED_ROWS = 12
@@ -369,6 +370,65 @@ class BUCKETBUILDER_PT_volume(_Base, Panel):
 # Options
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Build Report
+# ---------------------------------------------------------------------------
+
+def _wrapped(layout, text, icon, width=34):
+    """A sentence over as many lines as it needs (a label is cut off at the
+    edge of the sidebar); the icon goes at the first line."""
+    import textwrap
+    for i, line in enumerate(textwrap.wrap(text, width) or ['']):
+        layout.label(text=line, icon=icon if i == 0 else 'BLANK1')
+
+
+class BUCKETBUILDER_PT_report(_Base, Panel):
+    bl_label = "Build Report"
+    bl_idname = "BUCKETBUILDER_PT_report"
+
+    def draw(self, context):
+        layout = self.layout
+        st = props.settings(context.scene)
+        _big(layout, st, "report_density", "Density Report")
+        if not st.report_density:
+            return
+        mon = monitor.get(context.scene)
+        if not (st.detect_collisions or st.monitor_volume) or mon is None:
+            col = layout.column(align=True)
+            col.label(text="Switch on Detect Collisions or", icon='INFO')
+            col.label(text="Monitor Build Volume to read the parts.")
+            return
+        rep = mon.report
+        if rep.error:
+            layout.label(text=rep.error[:60], icon='ERROR')
+        res = rep.result
+        working = rep.pending or rep.result_sig != rep.guard_sig or bool(mon.queue)
+        if res is None:
+            layout.label(text="Reading the build...", icon='TIME')
+            return
+        col = layout.column(align=True)
+        for key, value, tone in report.rows(res):
+            row = col.row()
+            row.label(text=key)
+            row.label(text=value, **({'icon': 'ERROR'} if tone == 'warn' else {}))
+        if working:
+            col.label(text="Updating...", icon='TIME')
+        if res.warnings:
+            box = layout.box()
+            wcol = box.column(align=True)
+            for text in res.warnings:
+                _wrapped(wcol, text, 'ERROR')
+        value = icons.get('profile')
+        if rep.pixels is not None and value:
+            box = layout.box()
+            box.label(text="Layer density, floor at the bottom")
+            row = box.row()
+            row.alignment = 'CENTER'
+            row.template_icon(icon_value=value, scale=9.0)
+            box.label(text="0 to %.1f %% across, %.0f mm up" % (
+                max(res.peak_layer, 0.05) * 108.0, res.height))
+
+
 class BUCKETBUILDER_PT_options(_Base, Panel):
     bl_label = "Options"
     bl_idname = "BUCKETBUILDER_PT_options"
@@ -514,6 +574,7 @@ CLASSES = (
     BUCKETBUILDER_PT_collisions,
     BUCKETBUILDER_PT_parts,
     BUCKETBUILDER_PT_volume,
+    BUCKETBUILDER_PT_report,
     BUCKETBUILDER_PT_options,
     BUCKETBUILDER_PT_display,
     BUCKETBUILDER_PT_performance,

@@ -51,7 +51,7 @@ import bpy
 import numpy as np
 from bpy.app.handlers import persistent
 
-from . import props
+from . import props, report
 from .core import World, OK, CLEAR, COLLIDE, PARTIAL, OUTSIDE, bvh
 
 _monitors = {}          # scene.session_uid -> Monitor
@@ -265,6 +265,7 @@ class Monitor:
         self.hot = {}             # world slot -> time of last live change
         self.mm_per_unit = 1.0
         self.unit_note = ''
+        self.report = report.BuildReport()
         # mesh data uid -> geometry key, for unmodified shared meshes: a
         # shortcut that saves reading a mesh again.  It is dropped whenever
         # the mesh may have changed, also when no part that is checked uses it.
@@ -571,6 +572,7 @@ class Monitor:
         for job in self.jobs.values():
             job.stop.set()
         self.jobs.clear()
+        self.report.close()
         try:
             from . import overlay
             overlay.forget()
@@ -1190,6 +1192,10 @@ class Monitor:
         if self.hot:
             for slot in [s for s, t in self.hot.items() if t < cutoff]:
                 del self.hot[slot]
+        if st.report_density and not live and self.report.step(self, st):
+            from . import icons
+            icons.set_profile(self.report.pixels)
+            changed = True
         if self.world.version != self.seen_version:
             self.seen_version = self.world.version
             sync_rows(self)
@@ -1466,6 +1472,15 @@ def on_enabled_changed(scene):
     tag_redraw_all()
 
 
+def on_report_changed(scene):
+    """The density report was switched on or off."""
+    mon = get(scene)
+    if mon is not None:
+        mon.report.invalidate()
+        _ensure_timer()
+    tag_redraw_all()
+
+
 def on_settings_changed(scene):
     mon = get(scene)
     if mon is not None:
@@ -1708,6 +1723,9 @@ def _tick_scene(scene, view_layer):
         return 0.0 if relaxed and mon.last_tick_ms > 1.0 else ACTIVE_PAUSE
     if mon.jobs:
         return WORKER_POLL
+    st = props.settings(scene)
+    if st is not None and st.report_density and (mon.report.pending or mon.report.guard != mon.report._guard(mon, st)):
+        return 0.1                    # (the report is worked out in a thread: look at it often)
     if mon.hot:
         return 0.1
     if mon.busy or mon.need_scan:

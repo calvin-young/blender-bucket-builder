@@ -221,6 +221,10 @@ The engine needs only NumPy:
 
     python3 tests/test_tritri.py     # triangle routines against slow references
     python3 tests/test_world.py      # the collision world against brute force (about 10 minutes)
+    python3 tests/test_pack_meshio.py    # STL / 3MF readers (autopack branch)
+    python3 tests/test_pack_metrics.py   # volume, layer profile, density against references
+    python3 tests/test_pack_cli.py       # python -m pack report, and that it prints no names
+    python3 tests/bench_pack_metrics.py  # report timings at 60 x 1 M and 5 x 20 M triangles
     python3 tests/bench.py --quick   # timings on build-sized scenes (--storm: import into a full build)
     python3 tests/bench_scale.py parts 20 1500000        # 30 M triangles
     python3 tests/bench_scale.py instances 600 300000 12 2   # 180 M, 2 GB limit
@@ -230,10 +234,12 @@ With the add-on installed and enabled in Blender:
     blender --background --python tests/blender_test.py             # end to end
     blender --background --python tests/blender_large_test.py       # large parts, memory, warnings
     blender --background --python tests/blender_ui_test.py          # panels, menus, the report
+    blender --background --python tests/blender_report_test.py      # Build Report against bmesh volumes
     blender --background --python tests/blender_gpu_test.py -- out  # overlay, off-screen PNGs
     blender --background --python tests/blender_bvhtree_compare.py  # against BVHTree
     blender --background --python tests/blender_bench_large.py -- 20 1500000   # timings, large build
     tests/gui_on_xvfb.sh blender out                                # in a window: drag, badge, list, isolate
+    tests/gui_on_xvfb.sh blender out blender_gui_report.py          # the Build Report panel and its picture
     tests/gui_on_xvfb.sh blender out blender_gui_undo.py            # undo, redo, delete in a window
     tests/gui_on_xvfb.sh blender out blender_gui_stress.py          # a full build under the mouse
     blender --background --python tests/blender_upgrade_test.py -- old.zip new.zip   # in an empty profile
@@ -252,7 +258,9 @@ With the add-on installed and enabled in Blender:
       props.py            settings, preferences, printer profiles
       ops.py              operators: navigation, isolating, ignoring, printer profiles, the report
       ui.py               sidebar panels, the list of problems, entries in Blender's own menus
-      icons.py            the coloured icons of the status box
+      icons.py            the coloured icons of the status box, and the report's profile picture
+      report.py           the Build Report: parts from the world, results cached, worked out in a thread
+      pack/               auto packer, no Blender imports (autopack branch): meshio, metrics, plot, cli
     tests/
     tools/test-blender/   building Blender from source where it cannot be downloaded
     CLAUDE.md             working notes: state, decisions, what is next
