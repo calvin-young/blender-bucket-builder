@@ -104,16 +104,24 @@ def weld(mesh):
 # --------------------------------------------------------------------------- 3MF
 
 _ATTR = re.compile(rb'([A-Za-z_:][\w:.-]*)\s*=\s*"([^"]*)"')
-_TAGS = re.compile(rb'<[A-Za-z][\w:.-]*')
-_NAMES = re.compile(rb'[A-Za-z_:][\w:.-]*\s*=')
-_NUMBER_ONLY = bytes(c if chr(c) in '0123456789.+-eE' else 32 for c in range(256))
+_CHUNK = 1 << 24
 
 
-def _numbers(block, per_row):
-    """All numbers in a run of `<tag a="1" b="2"/>` elements as (n, per_row).
-    Only valid when every element has exactly `per_row` numeric attributes."""
-    text = _NAMES.sub(b' ', _TAGS.sub(b' ', block)).translate(_NUMBER_ONLY)
-    a = np.fromstring(text, dtype=np.float64, sep=' ')
+def _numbers(block, per_row, dtype=np.float64):
+    """All attribute values in a run of `<tag a="1" b="2"/>` elements as
+    (n, per_row).  Only valid when every element has exactly `per_row`
+    attributes, all numeric.  Splitting on the quotes is 3 x faster than
+    regular expressions; chunks keep the temporary lists small."""
+    out, pos, n = [], 0, len(block)
+    while pos < n:
+        end = n if pos + _CHUNK >= n else block.find(b'/>', pos + _CHUNK) + 2
+        if end < 2:
+            end = n
+        vals = block[pos:end].split(b'"')[1::2]
+        if vals:
+            out.append(np.array(vals).astype(dtype))
+        pos = end
+    a = np.concatenate(out) if out else np.zeros(0, dtype)
     if a.size % per_row:
         raise ReadError('unexpected attributes in a mesh element')
     return a.reshape(-1, per_row)
@@ -125,7 +133,7 @@ def _triangles(block):
         rows = [(int(m.group(1)), int(m.group(2)), int(m.group(3))) for m in
                 re.finditer(rb'v1\s*=\s*"(\d+)"[^>]*?v2\s*=\s*"(\d+)"[^>]*?v3\s*=\s*"(\d+)"', block)]
         return np.array(rows, dtype=np.int64).reshape(-1, 3)
-    return _numbers(block, 3).astype(np.int64)
+    return _numbers(block, 3, np.int64)
 
 
 def _parse_transform(s, scale=1.0):
@@ -153,30 +161,71 @@ class _Obj:
     comps: list = field(default_factory=list)  # (path | None, objectid, 4x4)
 
 
+def _elements(xml, tag):
+    """(attribute text, body or None) of every `<tag ...>` element, found with
+    `bytes.find`: regular expressions are 10 x slower on a 100 MB model."""
+    open_, close = b'<' + tag, b'</' + tag + b'>'
+    pos, n = 0, len(xml)
+    while True:
+        i = xml.find(open_, pos)
+        if i < 0:
+            return
+        j = i + len(open_)
+        if j < n and xml[j:j + 1] not in b' \t\r\n/>':
+            pos = j                                  # <objects>, not <object>
+            continue
+        gt = xml.find(b'>', j)
+        if gt < 0:
+            return
+        attrs = xml[j:gt]
+        if attrs.endswith(b'/'):
+            yield attrs[:-1], None
+            pos = gt + 1
+        else:
+            end = xml.find(close, gt)
+            if end < 0:
+                return
+            yield attrs, xml[gt + 1:end]
+            pos = end + len(close)
+
+
+def _inside(body, tag):
+    """The text between `<tag ...>` and `</tag>`, or None."""
+    i = body.find(b'<' + tag)
+    if i < 0:
+        return None
+    gt = body.find(b'>', i)
+    end = body.find(b'</' + tag + b'>', gt)
+    if gt < 0 or end < 0:
+        return None
+    return body[gt + 1:end]
+
+
 def _parse_model(xml):
     """Objects and build items of one model file."""
     m = re.search(rb'<model\b[^>]*>', xml)
     head = dict((k.decode(), v.decode()) for k, v in _ATTR.findall(m.group(0))) if m else {}
     scale = UNITS_MM.get(head.get('unit', 'millimeter'), 1.0)
     objs = {}
-    for om in re.finditer(rb'<object\b([^>]*?)(/>|>(.*?)</object>)', xml, re.S):
-        a = dict((k.decode(), v.decode()) for k, v in _ATTR.findall(om.group(1)))
-        body = om.group(3) or b''
+    for attrs, body in _elements(xml, b'object'):
+        a = dict((k.decode(), v.decode()) for k, v in _ATTR.findall(attrs))
+        body = body or b''
         o = _Obj(a.get('id', ''), a.get('name') or a.get('partnumber') or '',
                  a.get('type', 'model'))
-        vm = re.search(rb'<vertices\b[^>]*>(.*?)</vertices>', body, re.S)
-        tm = re.search(rb'<triangles\b[^>]*>(.*?)</triangles>', body, re.S)
-        if vm and tm:
-            o.mesh = (_numbers(vm.group(1), 3) * scale, _triangles(tm.group(1)))
-        for cm in re.finditer(rb'<component\b([^>]*)/?>', body):
+        vb = _inside(body, b'vertices')
+        tb = _inside(body, b'triangles')
+        if vb is not None and tb is not None:
+            o.mesh = (_numbers(vb, 3) * scale, _triangles(tb))
+        cb = _inside(body, b'components')
+        for cm in re.finditer(rb'<component\b([^>]*)/?>', cb or b''):
             c = dict((k.decode(), v.decode()) for k, v in _ATTR.findall(cm.group(1)))
             o.comps.append((c.get('p:path') or c.get('path'), c.get('objectid', ''),
                             _parse_transform(c.get('transform', ''), scale)))
         objs[o.id] = o
     items = []
-    bm = re.search(rb'<build\b[^>]*>(.*?)</build>', xml, re.S)
+    bm = _inside(xml, b'build')
     if bm:
-        for im in re.finditer(rb'<item\b([^>]*)/?>', bm.group(1)):
+        for im in re.finditer(rb'<item\b([^>]*)/?>', bm):
             a = dict((k.decode(), v.decode()) for k, v in _ATTR.findall(im.group(1)))
             items.append((a.get('p:path') or a.get('path'), a.get('objectid', ''),
                           _parse_transform(a.get('transform', ''), scale), a.get('partnumber', '')))
