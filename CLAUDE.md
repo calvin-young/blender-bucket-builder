@@ -31,8 +31,9 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
   Wants it simple enough for lay users; raised a "3D Printing" application
   template (File > New) as the next conversation. Says he may change his mind
   about display defaults as he uses it.
-* Out of scope for now: automatic packing, physics, booleans, repair,
-  supports, orientation optimisation.
+* Out of scope for now: physics, booleans, repair, supports. **Automatic
+  packing** is now being designed: see `docs/AUTOPACK.md` (on the `autopack`
+  branch until it is merged).
 
 ## How to work on it
 
@@ -54,7 +55,11 @@ owner used in Autodesk Netfabb. Read `README.md` for the design and
   pattern that is also in your own command line (it kills the shell).
 * Commit style: imperative subject, a body that says why. Commit and push
   straight to `main` (the owner asked for that and lets Claude manage the
-  repository); push after every verified step.
+  repository); push after every verified step. Exception: the auto packer is
+  built on the `autopack` branch (agreed 2026-10-12) and merged in milestones
+  behind an experimental preference; keep `main` releasable.
+* `python3 tests/test_private_guard.py` checks that nothing but the README is
+  ever committed from `benchmarks/private/` (the owner's real buckets).
 * Timing in the sandbox: the first write to a page of memory is about twenty
   times slower than on real hardware and run-to-run noise is around 20 %.
   Compare old and new in the same session (`git worktree add` the old one).
@@ -314,6 +319,14 @@ Last updated: 2026-10-10, early morning (session 2; the owner's lists of
 * Not tested: Blender 4.2 - 5.1, macOS, Vulkan / Metal, a real GPU.
 
 ## Next
+
+### 0. Auto packer (branch `autopack`)
+
+Stage 0 (the spec, `docs/AUTOPACK.md`, and the benchmark folders) is done,
+waiting for the owner's review and the open questions in its §14. Stage 1 is
+next: `pack/meshio.py`, `pack/metrics.py`, the density report. The plan, the
+model to use per stage and the parked list are in that file; prompt the owner
+to switch model before each stage.
 
 ### A. With the owner
 
