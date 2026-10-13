@@ -322,6 +322,10 @@ Last updated: 2026-10-10, early morning (session 2; the owner's lists of
 
 ### 0. Auto packer (branch `autopack`)
 
+Blender 5.2.2 is built in the sandbox of session 3 (`~/build`, see
+`tools/test-blender/README.md`); a new sandbox needs it built again, about two
+hours. Run `setup_profile.sh` and `export BLENDER_USER_RESOURCES=~/build/blender-user`.
+
 Stage 0 (the spec, `docs/AUTOPACK.md`, and the benchmark folders) is done,
 waiting for the owner's review and the open questions in its §13. Stage 1 is
 next: `pack/meshio.py`, `pack/metrics.py`, the density report. The plan, the

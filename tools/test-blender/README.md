@@ -19,8 +19,12 @@ Result, under `$ROOT` (default `~/build`):
 Run the windowed copy with `SDL_VIDEO_FORCE_EGL=1` (there is no GLX).
 
 These scripts were assembled from the commands that worked when the builds
-were first made, one step at a time. The steps are the same, but the scripts
-as a whole have not been run from start to finish, so expect to nurse them.
+were first made, one step at a time. They have since been run from start to
+finish unchanged (2026-10-12, a fresh sandbox with 2 cores, 7 GB and 30 GB of
+disk): both copies were built in about two hours, using under 3 GB of
+`$ROOT` beyond the sources, and `tests/blender_test.py` (197 checks) and
+`tests/gui_on_xvfb.sh` passed on them. Start it in the background with
+`setsid nohup`, and wait with foreground `sleep` loops (see below).
 
 ## What went wrong the first time, and the fix that is now in the scripts
 
