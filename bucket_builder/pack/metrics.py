@@ -250,7 +250,7 @@ class PartResult:
 
 
 def classify(lo, hi, vlo, vhi, eps=EPS):
-    if np.any(hi < vlo - eps) or np.any(lo > vhi + eps):
+    if np.any(hi <= vlo + eps) or np.any(lo >= vhi - eps):
         return OUTSIDE
     if np.all(lo >= vlo - eps) and np.all(hi <= vhi + eps):
         return INSIDE

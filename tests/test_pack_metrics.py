@@ -217,6 +217,8 @@ def test_status_and_report():
     rep = metrics.measure(parts, vlo, vhi, band=1.0)
     check((rep.n_inside, rep.n_partial, rep.n_outside) == (2, 1, 1), 'statuses 2 / 1 / 1: %s'
           % ((rep.n_inside, rep.n_partial, rep.n_outside),))
+    wall = metrics.measure([('t', b, pose(t=(105, 50, 25)))], vlo, vhi, band=1.0)   # x 100 .. 110
+    check(wall.n_outside == 1 and wall.n_partial == 0, 'touching a wall from outside is outside')
     close(rep.volume, 3000.0, 1e-9, 'volume counts inside and partial parts, not the outside one')
     close(rep.volume_outside, 1000.0, 1e-9, 'volume outside is kept apart')
     close(rep.height, 30.0, 1e-9, 'height is the highest point above the floor')
