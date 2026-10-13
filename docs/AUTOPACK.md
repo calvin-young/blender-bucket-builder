@@ -278,10 +278,10 @@ workflow, so it comes first.
 * Part volume: signed tetrahedron sum over the closed mesh, exact, per unique
   mesh, scaled by the object's determinant. Non-closed meshes are reported,
   not guessed.
-* Reported: total part volume, packed height, and density against
-  **(a)** the full build volume and **(b)** the build area times packed
-  height. Which one the printer vendor's software reports is an open question (§13); the
-  maximum-density limit applies to the one the owner names.
+* Reported: total part volume, packed height, and **density against the
+  build area times packed height** (the figure the owner uses; the commercial packer's
+  full-bucket figure is dropped, §13). The maximum-density limit applies to
+  it.
 * Parts partly outside the volume: their volume is counted, and a **warning
   sits next to the density** ("2 parts partly out of bounds; density counts
   their full volume"). A part wholly outside is listed and excluded.
@@ -299,13 +299,15 @@ workflow, so it comes first.
   0.08 mm; a single layer is too fine to matter thermally), configurable.
 * Layer density = band volume / (build area x band thickness).
 * Displayed as a small profile plot (density against Z) in the sidebar, with
-  the soft maximum drawn as a line, and as a coloured strip beside the volume
-  in the viewport (later).
-* **Spread penalty**: the profile is smoothed over a window (default 5 mm,
-  to calibrate) and penalised (a) above the soft maximum and (b) for
-  variation across the packed height (coefficient of variation of the
-  smoothed profile). The cube-array example scores badly on (b). Defaults are
-  guesses until calibrated.
+  the cap drawn as a line, and as a coloured strip beside the volume in the
+  viewport (later).
+* **Spread penalty**: the profile is smoothed over a window (**5 mm**, the
+  owner's choice) and penalised mainly for variation across the packed height
+  (coefficient of variation of the smoothed profile): the owner wants density
+  spread across layers when that is easy, not a limit. A per-layer **cap of
+  50 %** is only a backstop, with a steep penalty above it. The cube-array
+  example scores badly on the variation term. Weights are guesses until
+  calibrated.
 
 ### 6.3 Where it is shown
 
@@ -400,9 +402,10 @@ and the referee. They are listed in the solver dropdown; `auto` picks one
   penalty. The layer term is one-dimensional: adding the part's profile at
   height z changes the bucket's profile, and the penalty for every candidate z
   comes from one 1-D convolution, so it costs almost nothing.
-* Orientations per mode: `fixed`: 1; `z`: rotations about Z in steps of
-  **30 degrees** (12; to confirm); `free`: the 24 axis-aligned orientations of
-  the part's principal frame, each also with the Z steps of its mode, pruned
+* Orientations per mode: `fixed`: 1; `z`: rotations about Z sampled
+  every **30 degrees** by default (a setting; the owner wants continuous
+  rotation, so the improvement stage may refine angles continuously);
+  `free`: the 24 axis-aligned orientations of the part's principal frame, each also with the Z steps of its mode, pruned
   by the meniscus penalty. Orientation grids are cached per (mesh, rotation).
 * Stop when every part is placed, when none of the remaining fits, or at the
   density cap.
@@ -572,9 +575,12 @@ minimal exporter in `pack/meshio.py` is decided at Stage 5.
 
 ## 11. Labels (Stage 7)
 
-* Text from a pattern (`{job}-{n:04}`) placed on a chosen flat region of the
-  part (largest planar patch not facing up, or one the user picks), embossed
-  by a set height and **embedded 0.5 mm** (parameter) into the part.
+* Text from a pattern (`{job}-{n:04}`) placed on a surface **the user
+  picks** (as in the commercial packer's dialog: pick the surface, then size, depth and
+  text), embossed and **embedded 0.5 mm** (parameter) into the part.
+  Defaults: **5 mm text height, 0.5 mm emboss**. Engraving is also offered; it
+  changes the part's mesh, so that part becomes single-user and loses
+  instancing (the dialog says so).
 * Mode **separate** (default): one label object per copy, parented to it; the
   part's mesh stays shared. In 3MF each build item becomes a component object
   (shared part mesh + its own label mesh). Mode **booleaned**: union at
@@ -604,15 +610,46 @@ minimal exporter in `pack/meshio.py` is decided at Stage 5.
 
 ---
 
-## 13. Open questions for the owner
+## 13. Open questions, as answered by the owner (2026-10-12)
 
-1. **Density reference**: does the vendor software's "packing density" divide by the
-   full build volume or by area x job height? The 12 % limit applies to that.
-2. **Layer spread defaults**: smoothing window (5 mm?), soft per-layer
-   maximum (what value?), and how strongly to fight variation.
-3. **Rotation about Z**: step of 30 degrees by default, or finer?
-4. **Halo calibration**: a few real parts with the gap he would use for each.
-5. **Labels**: where on a part they usually go; text height and depth.
+1. **Density reference**: the commercial packer reports both full bucket height and max
+   part height; the latter is the useful one, "almost nobody cares about" the
+   former. **Decision: report density against build area x packed height
+   only.** The 12 % limit applies to it. (§6.1 mentioned both; the full-volume
+   figure is dropped.)
+2. **Layer spread**: smoothing window **5 mm**. A per-layer *cap* is not the
+   right way to think about it: the goal is to spread density across layers
+   when that is easy. If a cap is needed, **50 %** is the default. So the
+   spread term (variation of the smoothed profile) carries the weight, and
+   the cap is a backstop with a steep penalty.
+3. **Rotation about Z**: no reason to limit it to steps; **continuous**. The
+   greedy solver samples angles (default step 30 degrees, a setting); the
+   improvement and compaction stages may refine an angle continuously.
+4. **Halo calibration** (the owner's rules of thumb for the spacing he gives,
+   which is gap = sum of two halos):
+
+   | Part | Wall | Gap he uses |
+   |---|---|---|
+   | transtibial socket (half a 580 bucket) | 3 - 5 mm | 3 - 5 mm |
+   | D&D figurine, 1" base | solid | 1 mm (0.5 mm "if naughty") |
+   | cube 50 mm | solid | 5 mm |
+   | cube 50 mm | 2 mm shell | 3 mm (to another cube) |
+   | sphere 50 mm | solid | 3 mm |
+   | sphere 50 mm | 2 mm shell | 1 mm |
+   | typical AFO | 3 - 4 mm | 3 - 5 mm (rarely parallel surfaces) |
+
+   These are the first calibration points for the halo table (§7): flat
+   faces and bulk raise the gap, thin walls and curvature lower it. Shell
+   thickness is what takes a cube from 5 to 3 mm and a sphere from 3 to 1 mm.
+5. **Labels**: placement needs user input. In the commercial packer a dialog lets the user
+   pick a surface, then size, depth and text. **Defaults: 5 mm tall text,
+   0.5 mm emboss.** Engraving is also wanted; it changes the mesh, so that
+   part becomes single-user and loses instancing (the UI says so).
+
+**Halo cost gate** (owner): the halo engine change goes ahead only if it has
+no large performance hit. Measure `tests/bench.py --quick` and the scale
+benchmarks before and after, in the same session; if the cost is large,
+table the feature (the packer works with a uniform gap without it).
 
 ---
 
