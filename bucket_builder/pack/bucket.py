@@ -30,11 +30,25 @@ except Exception:                    # pragma: no cover
 
 
 def rfftn(a, s):
-    return _fft.rfftn(a, s=s, **_FFT_KW)
+    return _fft.rfftn(a, s=s, axes=(0, 1, 2), **_FFT_KW)
 
 
 def irfftn(a, s):
-    return _fft.irfftn(a, s=s, **_FFT_KW)
+    return _fft.irfftn(a, s=s, axes=(0, 1, 2), **_FFT_KW)
+
+
+def fast_size(n):
+    """The smallest n' >= n whose prime factors are 2, 3 and 5 (FFTs of a
+    prime length such as 71 are several times slower)."""
+    n = max(1, int(n))
+    while True:
+        m = n
+        for p in (2, 3, 5):
+            while m % p == 0:
+                m //= p
+        if m == 1:
+            return n
+        n += 1
 
 
 class _SpecCache:
@@ -80,7 +94,8 @@ class Bucket:
         self.M = int(margin)
         n = np.ceil((self.vhi - self.vlo) / h - 1e-9).astype(int)
         dims = n + 2 * self.M
-        dims = (np.ceil(dims / self.f) * self.f).astype(int)      # whole blocks
+        # whole blocks, and a coarse grid of FFT-friendly size (the extra cells are margin)
+        dims = np.array([fast_size(int(np.ceil(d / self.f))) * self.f for d in dims])
         self.n = n
         self.fine = np.zeros(tuple(dims), dtype=bool)
         self.count = np.zeros(tuple(dims // self.f), dtype=np.int32)
@@ -160,11 +175,25 @@ class Bucket:
         return done
 
     # ------------------------------------------------------------ coarse search
-    def spectrum(self):
+    def spectrum(self, dtype=np.float64):
         if self._spec is None:
-            occ = (self.count > 0).astype(np.float64)
-            self._spec = rfftn(occ, occ.shape)
-        return self._spec
+            self._spec = {}
+        sp = self._spec.get(dtype)
+        if sp is None:
+            occ = (self.count > 0).astype(dtype)
+            sp = self._spec[dtype] = rfftn(occ, occ.shape)
+        return sp
+
+    def _dtype(self, n_kernel):
+        """Single precision where its rounding cannot matter: the error of an
+        FFT correlation is below about eps * log2(N) * |taken| * |kernel|
+        (L2 norms), and it has to stay well under the 0.5 that separates
+        "no overlap" from one cell of overlap.  NumPy's FFT is double only."""
+        if _fft is np.fft:
+            return np.float64
+        n_taken = int(np.count_nonzero(self.count))
+        bound = 1.2e-7 * math.log2(self.count.size) * math.sqrt(max(n_taken, 1) * max(n_kernel, 1))
+        return np.float32 if bound < 0.05 else np.float64
 
     def coarse_feasible(self, pg, key, phase):
         """(mask, c0): mask[i] is True where the part fits at coarse offset
@@ -185,9 +214,10 @@ class Bucket:
         if not self.count.any():
             mask = np.ones(tuple(cmax - cmin + 1), dtype=bool)
             return mask, cmin
-        ks = SPECTRA.get((key, f, tuple(phase), C),
-                         lambda: np.conj(rfftn(kc.astype(np.float64), C)))
-        corr = irfftn(self.spectrum() * ks, C)
+        dt = self._dtype(int(kc.sum()))
+        ks = SPECTRA.get((key, f, tuple(phase), C, dt),
+                         lambda: np.conj(rfftn(kc.astype(dt), C)))
+        corr = irfftn(self.spectrum(dt) * ks, C)
         sl = tuple(slice(a, b + 1) for a, b in zip(cmin, cmax))
         return corr[sl] < 0.5, cmin
 
