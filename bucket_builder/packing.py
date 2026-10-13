@@ -24,7 +24,7 @@ from bpy.types import Operator
 from . import monitor, props
 from .pack import greedy, metrics, worker
 from .pack.meshio import Mesh
-from .pack.problem import Part, Settings
+from .pack.problem import Part, Settings, group_key
 
 MODE_ITEMS = (
     ('FIXED', "Fixed", "Keep the part's rotation; only move it"),
@@ -188,7 +188,7 @@ class BUCKETBUILDER_OT_pack(Operator):
             mw = np.array(o.matrix_world, dtype=np.float64)
             L = mw[:3, :3] * k
             mode = st.pack_mode if o.bucket_builder_pack_mode == 'DEFAULT' else o.bucket_builder_pack_mode
-            gkey = (key_mesh, np.round(L, 9).tobytes(), mode)
+            gkey = (key_mesh, group_key(L, _MODE[mode]))
             if gkey not in groups:
                 groups[gkey] = (Part(o.name, cache[key_mesh], 0, _MODE[mode], base=L.copy()), [])
             groups[gkey][0].quantity += 1

@@ -69,11 +69,11 @@ def parts_of(scene, mode, copies):
     """Build items grouped into parts: copies of one mesh in one orientation
     are one part with a quantity.  Each part keeps its orientation as given
     (its scale too) as the base its mode turns."""
-    from .problem import Part
+    from .problem import Part, group_key
     groups = {}
     for it in scene.items:
         L = np.asarray(it.matrix, float)[:3, :3]
-        key = (id(it.mesh), np.round(L, 9).tobytes())
+        key = (id(it.mesh), group_key(L, mode))
         if key not in groups:
             groups[key] = Part('part-%03d' % (len(groups) + 1), it.mesh, 0, mode, base=L.copy())
         groups[key].quantity += copies

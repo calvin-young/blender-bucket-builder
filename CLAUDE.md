@@ -455,6 +455,20 @@ packing and for Measure Packer Speed (progress from "@@progress f" lines the
 timing run prints; taken out of the copied text), a green "measured" badge
 for a minute and a popup when the measurement is done (the owner asked:
 he lets it run while doing other work).
+**The owner's keycap bucket (2026-10-13)**: 81 copies of one keycap mesh,
+scale 2 (34 x 34 x 22 mm), free rotation, every copy turned differently.
+Two findings: (1) the copies became 52 "unique parts" (grouped by their
+exact matrix), so 52 x 24 orientations were voxelised: 120 s. Fixed in
+1.3.94: `problem.group_key` groups free-mode copies by mesh and uniform
+scale only (tolerance 1e-3, 3MF decimals): 11 s. (2) No foresight: greedy
+puts 63 flat (bottom 0, the lowest bottom wins) and 18 on a second layer,
+52.8 mm; restricting the part to one orientation class ("probe" runs,
+2.5 s each) gives 35.3 mm with all 81 standing in one layer. Plan for
+Stage 3 (agreed direction, not built): probe/multi-start runs over
+orientation classes per part type (in parallel processes on his 22 CPUs),
+best final height wins; then ruin and recreate from the best; "jiggle"
+(his word) = the same improvement loop started from the scene's current
+layout (compaction + re-drop + local re-orientation), as its own button.
 GPU decision: no CuPy in Blender's
 Python and the CPU path is the default; a GPU backend is not worth it before
 Stage 3 shows where time goes.

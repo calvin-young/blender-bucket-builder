@@ -7,4 +7,4 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 from pack.cli import main  # noqa: E402
 
 argv = sys.argv[1:]
-sys.exit(main(argv if argv[:1] == ['report'] else ['report'] + argv))
+sys.exit(main(argv if argv[:1] in (['report'], ['pack']) else ['report'] + argv))

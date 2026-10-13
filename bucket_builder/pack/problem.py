@@ -115,6 +115,21 @@ def principal_frame(verts):
     return R
 
 
+def group_key(L, mode):
+    """What two copies of one mesh must share to be one Part (one set of
+    orientations to try).  Free rotation tries every axis-aligned turn of the
+    mesh's principal frame, which does not depend on how a copy happens to be
+    turned: copies that differ only by a rotation (and a uniform scale, the
+    same) are one part.  Otherwise the linear part itself."""
+    L = np.asarray(L, float)
+    if mode == 'free':
+        sv = np.linalg.svd(L, compute_uv=False)
+        # (files keep a few decimals: a scale of 2 comes back as 1.9998 .. 2.0002)
+        if sv[0] - sv[-1] <= 1e-3 * max(sv[0], 1e-12) and np.linalg.det(L) > 0:
+            return ('free', round(float(np.exp(np.log(sv).mean())), 3))
+    return (mode, np.round(L, 9).tobytes())
+
+
 def orientations(part, z_step=30.0):
     """The linear parts to try for a part, as 3 x 3 arrays."""
     base = np.asarray(part.base, float)
