@@ -234,7 +234,7 @@ def main():
     assert 'Collision' in labels and 'Clearance' in labels, 'the display switches have no headings'
     # the panels are separate ones now, each with its own header
     tops = [c.bl_label for c in ui.CLASSES if issubclass(c, bpy.types.Panel) and not getattr(c, 'bl_parent_id', '')]
-    assert tops == ['Bucket Builder', 'Collision Detection', 'Build Volume', 'Build Report', 'Options',
+    assert tops == ['Bucket Builder', 'Collision Detection', 'Build Volume', 'Build Report', 'Pack (Experimental)', 'Options',
                     'Export'], tops
     assert bpy.ops.bucketbuilder.export_3mf() == {'CANCELLED'}, 'the placeholder must do nothing'
     assert bpy.ops.bucketbuilder.status() == {'CANCELLED'}

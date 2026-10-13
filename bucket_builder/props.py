@@ -239,6 +239,31 @@ class BucketBuilderSettings(PropertyGroup):
                     "above, which read the parts",
         default=False, update=_poke_report)
 
+    # the packer (experimental)
+    pack_mode: EnumProperty(
+        name="Rotation", default='Z',
+        items=(('FIXED', "Fixed", "Keep each part's rotation; only move it"),
+               ('Z', "About Z", "Turn parts about the vertical axis"),
+               ('FREE', "Free", "Any of the 24 axis-aligned orientations of a part's principal axes")),
+        description="How the packer may turn the parts (a part's own setting overrides this)")
+    pack_gap: FloatProperty(
+        name="Gap", default=3.0, min=0.0, soft_max=20.0, precision=2, step=50,
+        description="Distance the packer keeps between parts, in millimetres")
+    pack_wall_gap: FloatProperty(
+        name="Wall Gap", default=5.0, min=0.0, soft_max=30.0, precision=2, step=50,
+        description="Distance the packer keeps from the side walls of the build volume, in millimetres")
+    pack_max_density: FloatProperty(
+        name="Max Density", default=12.0, min=0.0, max=100.0, precision=1, subtype='NONE',
+        description="Highest 3D density (part volume / build area x packed height) in percent; "
+                    "the packer builds higher rather than exceed it. 0: no limit")
+    pack_z_step: FloatProperty(
+        name="Turn Step", default=30.0, min=1.0, max=180.0, precision=0,
+        description="Degrees between the turns about Z the packer tries")
+    pack_cell: FloatProperty(
+        name="Cell Size", default=1.0, min=0.25, max=5.0, precision=2,
+        description="Voxel size of the packer in millimetres; smaller packs tighter and slower")
+    pack_last: StringProperty(options={'SKIP_SAVE'})
+
     use_clearance: BoolProperty(
         name="Clearance Between Parts",
         description="Warn when two parts are closer to each other than the distance beside "

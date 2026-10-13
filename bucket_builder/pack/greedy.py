@@ -47,6 +47,9 @@ class Greedy:
         self._close = {}
         self._sigs = {}
         self._clouds = {}
+        self._extent = {}
+        self.progress = (0, 0)
+        self.cancel = False
         n = metrics.default_workers() if threads is None else threads
         self._pool = ThreadPoolExecutor(max_workers=n) if n > 1 else None
 
@@ -235,6 +238,17 @@ class Greedy:
                     best = (sc, cand)
         return best
 
+    def _may_fit(self, bucket, i, k):
+        """Whether part i in orientation k is no larger than the volume less
+        the wall gap (from its vertices: cheap, and exact)."""
+        key = (i, k)
+        ext = self._extent.get(key)
+        if ext is None:
+            V = np.asarray(self.parts[i].mesh.verts, float) @ np.asarray(self.orients(i)[k]).T
+            ext = self._extent[key] = V.max(axis=0) - V.min(axis=0)
+        room = (bucket.ihi - bucket.ilo + 1) * bucket.h
+        return bool(np.all(ext <= room + 1e-9))
+
     def place_one(self, bucket, i):
         """Best placement of part i over its orientations, or None.  The
         coarse searches of the orientations run in threads (the FFTs release
@@ -242,6 +256,8 @@ class Greedy:
         why = 'too large for the volume'
         todo = []
         for k in range(len(self.orients(i))):
+            if not self._may_fit(bucket, i, k):
+                continue                                    # (decided before voxelising it)
             p = self.pose(i, k)
             if p.same_as is not None:
                 continue
@@ -284,7 +300,21 @@ class Greedy:
             out += [(i, c) for c in range(self.parts[i].quantity)]
         return out
 
-    def run(self, bucket=None):
+    def lock(self, bucket, mesh, M):
+        """A part that stays where it is (mm, 4 x 4): its solid becomes taken
+        cells, and its volume and height count for the limits."""
+        M = np.asarray(M, float)
+        V = np.asarray(mesh.verts, float) @ M[:3, :3].T + M[:3, 3] - bucket.vlo
+        g = voxel.voxelize(V, mesh.tris, np.eye(3), bucket.h, 0.0)
+        b = np.rint(g.origin / bucket.h).astype(int) + bucket.M
+        vol = abs(metrics.mesh_stats(mesh)[0] * np.linalg.det(M[:3, :3]))
+        cnt = g.solid.sum(axis=(0, 1)).astype(np.float64)
+        bucket.place(g, b, cnt * (vol / max(cnt.sum(), 1.0)), vol, float(V[:, 2].max()))
+
+    def run(self, bucket=None, locked=()):
+        """Place every part.  `locked`: [(mesh, 4 x 4 matrix)] that stay put.
+        `self.progress` is (done, total) while it runs; setting `self.cancel`
+        stops it after the part at hand (the rest are reported unplaced)."""
         s = self.s
         t0 = time.perf_counter()
         if bucket is None:
@@ -292,8 +322,16 @@ class Greedy:
             margin = voxel.gap_cells(s.gap, s.h) + close + 2
             bucket = Bucket(s.vlo, s.vhi, s.h, s.wall_gap, margin, s.coarse)
         self.bucket = bucket
+        for mesh, M in locked:
+            self.lock(bucket, mesh, M)
         res = Result()
-        for i, c in self.order():
+        order = self.order()
+        self.progress = (0, len(order))
+        for n, (i, c) in enumerate(order):
+            self.progress = (n, len(order))
+            if self.cancel:
+                res.unplaced.append((i, c, 'stopped'))
+                continue
             if s.time_limit is not None and time.perf_counter() - t0 > s.time_limit:
                 res.unplaced.append((i, c, 'time limit'))
                 continue
@@ -309,6 +347,7 @@ class Greedy:
             M[:3, 3] = t
             bucket.place(p.grid, b, p.profile, p.volume, self._top(bucket, p, b))
             res.placements.append(Placement(i, c, M, k))
+        self.progress = (len(order), len(order))
         res.seconds = time.perf_counter() - t0
         res.volume = bucket.volume
         res.height = bucket.height

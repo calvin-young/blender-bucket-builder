@@ -126,6 +126,26 @@ def test_large_meshes():
         greedy.CLOUD_FROM = old
 
 
+def test_locked():
+    print('locked parts stay, and others pack around them')
+    big = S.box(120, 80, 30)
+    L = np.eye(4)
+    L[:3, :3] = S.rot('z', 20)
+    L[:3, 3] = (90, 60, 15)                         # on the floor, turned, in the middle
+    parts = [Part('cube', S.box(20, 20, 20), 12, 'fixed')]
+    s = Settings(vlo=(0, 0, 0), vhi=(180, 120, 100), gap=2.0, wall_gap=0.0, max_density=None)
+    g = greedy.Greedy(parts, s, threads=1)
+    res = g.run(locked=[(big, L)])
+    items = res.items(parts) + [('locked', big, L)]
+    v = referee.check(items, s.vlo, s.vhi, s.gap, 0.0)
+    check(v.ok and len(res.placements) == 12, '%d cubes around a locked slab, referee clean' % len(res.placements))
+    check(g.progress == (12, 12), 'progress reaches the end')
+    g2 = greedy.Greedy(parts, s, threads=1)
+    g2.cancel = True
+    r2 = g2.run()
+    check(not r2.placements and all(u[2] == 'stopped' for u in r2.unplaced), 'cancel stops it')
+
+
 def test_referee_catches():
     print('the referee is not blind')
     m = S.box(20, 20, 20)
@@ -151,6 +171,7 @@ if __name__ == '__main__':
     test_walls_and_room()
     test_modes()
     test_large_meshes()
+    test_locked()
     print()
     if FAILS:
         print('FAILED: %d' % len(FAILS))

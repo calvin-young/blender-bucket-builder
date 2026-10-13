@@ -429,6 +429,51 @@ class BUCKETBUILDER_PT_report(_Base, Panel):
                 max(res.peak_layer, 0.05) * 108.0, res.height))
 
 
+# ---------------------------------------------------------------------------
+# Pack (experimental)
+# ---------------------------------------------------------------------------
+
+class BUCKETBUILDER_PT_pack(_Base, Panel):
+    bl_label = "Pack (Experimental)"
+    bl_idname = "BUCKETBUILDER_PT_pack"
+
+    def draw(self, context):
+        layout = self.layout
+        st = props.settings(context.scene)
+        sel = [o for o in context.selected_objects if o.type == 'MESH']
+        row = layout.row()
+        row.scale_y = 1.6
+        op = row.operator("bucketbuilder.pack", icon='MOD_ARRAY',
+                          text=("Pack %d Selected Parts" % len(sel)) if sel else "Pack All Parts")
+        op.selected_only = bool(sel)
+        col = _split(layout)
+        col.prop(st, "pack_mode")
+        sub = col.column(align=True)
+        sub.active = st.pack_mode == 'Z' or any(o.bucket_builder_pack_mode == 'Z' for o in sel)
+        sub.prop(st, "pack_z_step")
+        col.prop(st, "pack_gap")
+        col.prop(st, "pack_wall_gap")
+        col.prop(st, "pack_max_density")
+        header, body = layout.panel("bucketbuilder_pack_advanced", default_closed=True)
+        header.label(text="Advanced")
+        if body is not None:
+            _split(body).prop(st, "pack_cell")
+        obj = context.active_object
+        if obj is not None and obj.type == 'MESH':
+            box = layout.box()
+            box.label(text=obj.name, icon='OBJECT_DATA')
+            col = _split(box)
+            col.prop(obj, "bucket_builder_pack_mode")
+            col.prop(obj, "bucket_builder_pack_lock")
+        if st.pack_last:
+            col = layout.column(align=True)
+            col.active = False
+            _wrapped(col, st.pack_last, 'INFO')
+        col = layout.column(align=True)
+        col.active = False
+        _wrapped(col, "First, greedy version. Esc stops it; Ctrl+Z puts the parts back.", 'EXPERIMENTAL')
+
+
 class BUCKETBUILDER_PT_options(_Base, Panel):
     bl_label = "Options"
     bl_idname = "BUCKETBUILDER_PT_options"
@@ -575,6 +620,7 @@ CLASSES = (
     BUCKETBUILDER_PT_parts,
     BUCKETBUILDER_PT_volume,
     BUCKETBUILDER_PT_report,
+    BUCKETBUILDER_PT_pack,
     BUCKETBUILDER_PT_options,
     BUCKETBUILDER_PT_display,
     BUCKETBUILDER_PT_performance,

@@ -16,12 +16,14 @@ if "bpy" in locals():
     # "Reload Scripts": refresh sub-modules, dependencies first
     import importlib
     for _name in ("core.tritri", "core.arena", "core.bvh", "core.narrow", "core.world", "core",
-                  "props", "icons", "monitor", "overlay", "ops", "ui"):
+                  "pack.meshio", "pack.metrics", "pack.plot", "pack.voxel", "pack.problem",
+                  "pack.bucket", "pack.greedy", "props", "icons", "report", "monitor", "overlay", "ops",
+                  "packing", "ui"):
         importlib.reload(importlib.import_module("." + _name, __package__))
 
 import bpy
 
-from . import icons, monitor, ops, overlay, props, ui
+from . import icons, monitor, ops, overlay, packing, props, ui
 
 
 def _seed_later():
@@ -38,6 +40,7 @@ def register():
     props.register()
     icons.register()
     ops.register()
+    packing.register()
     ui.register()
     overlay.register()
     monitor.register()
@@ -53,6 +56,7 @@ def unregister():
     monitor.unregister()
     overlay.unregister()
     ui.unregister()
+    packing.unregister()
     ops.unregister()
     icons.unregister()
     props.unregister()

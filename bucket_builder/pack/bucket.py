@@ -232,20 +232,31 @@ class Bucket:
         of h from its cell 0; volume: its exact volume; top: its highest
         point above the floor once placed."""
         b = [int(x) for x in b]
-        s = pg.solid
-        win = tuple(slice(x, x + n) for x, n in zip(b, s.shape))
-        self.fine[win] |= s
-        f = self.f
-        phase = [x % f for x in b]
-        c0 = [x // f for x in b]
-        sums = pool_sum(s, f, phase)
-        self.count[tuple(slice(c, c + n) for c, n in zip(c0, sums.shape))] += sums
+        self.mark(pg.solid, b)
         z0 = b[2] - self.M
         lo, hi = max(z0, 0), min(z0 + len(profile), len(self.profile))
         if hi > lo:
             self.profile[lo:hi] += profile[lo - z0:hi - z0]
         self.volume += volume
         self.height = max(self.height, top)
+        self._spec = None
+        self.version += 1
+
+    def mark(self, solid, b):
+        """OR a solid grid into the taken cells at fine offset b (clipped to
+        the grid) and bring the block counts of that region up to date."""
+        dst, src = [], []
+        for x, n, N in zip(b, solid.shape, self.fine.shape):
+            lo, hi = max(x, 0), min(x + n, N)
+            if lo >= hi:
+                return
+            dst.append(slice(lo, hi))
+            src.append(slice(lo - x, hi - x))
+        self.fine[tuple(dst)] |= solid[tuple(src)]
+        f = self.f
+        blk = tuple(slice(d.start // f, -(-d.stop // f)) for d in dst)
+        fine = self.fine[tuple(slice(c.start * f, c.stop * f) for c in blk)]
+        self.count[blk] = pool_sum(fine, f, (0, 0, 0))
         self._spec = None
         self.version += 1
 

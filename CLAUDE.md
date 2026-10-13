@@ -400,6 +400,20 @@ made once per mesh (`voxel.Cloud`; 0.09 s per orientation instead of 2.5 s at
 4 M triangles; profile from the solid cells scaled to the exact volume).
 5 ellipsoids of 4 M triangles (20 M in all, z mode): packed in 21 s, referee
 clean. A screenshot of a greedy layout is in docs/images.
+**Pack (Experimental) panel** (2026-10-13 morning, owner asked to try it):
+`packing.py` (operator `bucketbuilder.pack`: reads evaluated meshes on the
+main thread, groups objects by mesh data + linear matrix + mode, runs
+`greedy` in a thread, modal with status-bar progress, Esc = `Greedy.cancel`,
+applies matrices at the end as one undo step (`bl_options={'UNDO'}`, no redo
+panel); unplaced parts go in a row beside the volume; `execute` runs it
+synchronously for scripts). Scene settings `pack_*`, object settings
+`bucket_builder_pack_mode` / `bucket_builder_pack_lock` (locked parts are
+voxelised in place: `Greedy.lock`). Tests: `blender_pack_test.py`,
+window `blender_gui_pack.py` (modal run, monitor says clean, undo restores).
+autopack's manifest says **1.3.90** (preview build sent to the owner);
+1.3.0 -> 1.3.90 upgrade test passes. The tag v1.3.0 is local only (this
+session may not push tags or make releases).
+
 **Stage 2 is done except what needs the owner**: his `tools/pack_timing.py`
 numbers (GPU decision) and his buckets (`python -m pack pack ... --referee`
 on them, compared with his commercial packer results). Then Stage 3 (Sonnet 5.5,
