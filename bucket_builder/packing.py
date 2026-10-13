@@ -8,6 +8,7 @@ the status bar, and moves the objects when it is done, as one undo step.
 Esc stops it; what was placed by then is kept.
 """
 
+import math
 import os
 import shutil
 import subprocess
@@ -225,9 +226,7 @@ class BUCKETBUILDER_OT_pack(Operator):
             context.workspace.status_text_set(text)
         except Exception:
             pass
-        for area in context.screen.areas if context.screen else ():
-            if area.type == 'VIEW_3D':
-                area.tag_redraw()
+        _redraw_views()
 
     def _end(self, context):
         wm = context.window_manager
@@ -247,6 +246,7 @@ class BUCKETBUILDER_OT_pack(Operator):
             self._dir = None
         JOB.update(running=False, stopping=False)
         _pause_pairs(context.scene, False)
+        _redraw_views()
 
     def _poll_process(self):
         """Take what the worker has reported.  Returns True when it is done."""
@@ -387,6 +387,9 @@ class BUCKETBUILDER_OT_pack_timing(Operator):
         TIMING['proc'] = subprocess.Popen([exe, '-I', '-c', code], stdout=self._out,
                                           stderr=subprocess.STDOUT, **kw)
         TIMING['t0'] = time.perf_counter()
+        TIMING['fraction'] = 0.0
+        TIMING['eta'] = None
+        TIMING['done_at'] = None
         self._timer = context.window_manager.event_timer_add(0.5, window=context.window)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -395,11 +398,16 @@ class BUCKETBUILDER_OT_pack_timing(Operator):
         if event.type != 'TIMER':
             return {'PASS_THROUGH'}
         proc = TIMING['proc']
+        TIMING['fraction'] = _last_progress(self._out.name, TIMING.get('fraction', 0.0))
+        el = time.perf_counter() - TIMING['t0']
+        f = TIMING['fraction']
+        TIMING['eta'] = el / f * (1.0 - f) if f > 0.02 else None
         try:
-            context.workspace.status_text_set("Measuring the packer's speed: %s   (it runs in the background)"
-                                              % _duration(time.perf_counter() - TIMING['t0']))
+            context.workspace.status_text_set("Measuring the packer's speed: %d %%, %s   (it runs in the background)"
+                                              % (round(100 * f), _duration(el)))
         except Exception:
             pass
+        _redraw_views()
         if proc.poll() is None:
             return {'PASS_THROUGH'}
         context.window_manager.event_timer_remove(self._timer)
@@ -410,7 +418,7 @@ class BUCKETBUILDER_OT_pack_timing(Operator):
         TIMING['proc'] = None
         self._out.close()
         with open(self._out.name, encoding='utf-8', errors='replace') as f:
-            text = f.read()
+            text = ''.join(line for line in f if not line.startswith('@@'))
         os.unlink(self._out.name)
         from . import ops
         text = "Bucket Builder %s packer speed\n\n%s" % (ops.addon_version(), text)
@@ -418,12 +426,139 @@ class BUCKETBUILDER_OT_pack_timing(Operator):
         txt.clear()
         txt.write(text)
         context.window_manager.clipboard = text
+        TIMING['done_at'] = time.perf_counter()
+        _redraw_views()
+        bpy.app.timers.register(_redraw_views, first_interval=DONE_SHOWN + 0.5)    # (to take the badge away)
+
+        def popup(menu, context):
+            menu.layout.label(text="The table is on the clipboard: paste it into the chat.", icon='COPYDOWN')
+            menu.layout.label(text="It is also in the text \"Bucket Builder speed\".", icon='TEXT')
+
+        context.window_manager.popup_menu(popup, title="Packer speed measured", icon='CHECKMARK')
         self.report({'INFO'}, "Packer speed measured: copied to the clipboard (and the text "
                               "\"Bucket Builder speed\")")
         return {'FINISHED'}
 
 
-TIMING = {'proc': None, 't0': 0.0}
+DONE_SHOWN = 60.0      # seconds the "measured" badge stays in the viewport
+
+
+def _last_progress(path, old):
+    """The last "@@progress f" line the timing run has written so far."""
+    try:
+        with open(path, 'rb') as f:
+            f.seek(0, 2)
+            n = f.tell()
+            f.seek(max(0, n - 4096))
+            tail = f.read().decode('utf-8', 'replace')
+        lines = [ln for ln in tail.splitlines() if ln.startswith('@@progress')]
+        return float(lines[-1].split()[1]) if lines else old
+    except (OSError, ValueError, IndexError):
+        return old
+
+
+def _redraw_views():
+    """Ask every 3D viewport of every window to redraw (for the badge)."""
+    try:
+        for win in bpy.context.window_manager.windows:
+            for area in win.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+    except Exception:
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# the badge at the top of the viewport while the packer (or its speed
+# measurement) works in the background, and for a minute after a measurement
+# ---------------------------------------------------------------------------
+
+ACCENT = (0.33, 0.62, 1.0, 1.0)
+DONE = (0.3, 0.86, 0.4, 1.0)
+
+
+def badge_state(now=None):
+    """(title, detail, fraction or None, colour) of what to show, or None."""
+    now = time.perf_counter() if now is None else now
+    if JOB['running']:
+        done, total = JOB['done'], max(JOB['total'], 1)
+        if JOB['stopping']:
+            return ("Stopping the packer...", "the parts placed so far stay", done / total, ACCENT)
+        left = "" if JOB['eta'] is None else "about %s left, " % _duration(JOB['eta'])
+        return ("Packing: %d of %d parts" % (done, total), left + "Esc to stop", done / total, ACCENT)
+    if TIMING.get('proc') is not None:
+        f = TIMING.get('fraction', 0.0)
+        left = "" if TIMING.get('eta') is None else "about %s left, " % _duration(TIMING['eta'])
+        return ("Measuring packer speed: %d %%" % round(100 * f), left + "runs in the background", f, ACCENT)
+    t = TIMING.get('done_at')
+    if t is not None and now - t < DONE_SHOWN:
+        return ("Packer speed measured", "copied to the clipboard: paste it into the chat", 1.0, DONE)
+    return None
+
+
+def _wedge(cx, cy, r, frac, n=48):
+    """Triangles of a pie slice from 12 o'clock, clockwise."""
+    k = max(1, int(round(n * frac)))
+    a = math.pi / 2 - np.linspace(0.0, 2 * math.pi * frac, k + 1)
+    ring = np.stack([cx + r * np.cos(a), cy + r * np.sin(a)], axis=1)
+    tri = np.empty((k, 3, 2), dtype=np.float32)
+    tri[:, 0] = (cx, cy)
+    tri[:, 1] = ring[:-1]
+    tri[:, 2] = ring[1:]
+    return tri.reshape(-1, 2)
+
+
+def draw_badge():
+    state = badge_state()
+    if state is None:
+        return
+    try:
+        import gpu
+        from gpu_extras.batch import batch_for_shader
+        from . import overlay
+        title, detail, frac, colour = state
+        context = bpy.context
+        region = context.region
+        ui = context.preferences.system.ui_scale
+        r = 20.0 * ui
+        big, small = 17.0 * ui, 12.0 * ui
+        tw = max(overlay._text_width(title, big), overlay._text_width(detail, small))
+        w = 2 * r + 14 * ui + tw + 28 * ui
+        h = 2 * r + 20 * ui
+        x0 = 0.5 * (region.width - w)
+        y0 = region.height - h - 46 * ui                 # (below the header and its tools)
+        sh = gpu.shader.from_builtin('UNIFORM_COLOR')
+        gpu.state.blend_set('ALPHA')
+        quad = np.array([[x0, y0], [x0 + w, y0], [x0 + w, y0 + h],
+                         [x0, y0], [x0 + w, y0 + h], [x0, y0 + h]], dtype=np.float32)
+        sh.bind()
+        sh.uniform_float("color", (0.08, 0.08, 0.08, 0.78))
+        batch_for_shader(sh, 'TRIS', {"pos": quad}).draw(sh)
+        sh.uniform_float("color", colour[:3] + (1.0,))
+        edge = np.array([[x0, y0], [x0 + 3 * ui, y0], [x0 + 3 * ui, y0 + h],
+                         [x0, y0], [x0 + 3 * ui, y0 + h], [x0, y0 + h]], dtype=np.float32)
+        batch_for_shader(sh, 'TRIS', {"pos": edge}).draw(sh)
+        cx, cy = x0 + 14 * ui + r, y0 + 0.5 * h
+        sh.uniform_float("color", (0.35, 0.35, 0.35, 0.9))
+        batch_for_shader(sh, 'TRIS', {"pos": overlay._fan(cx, cy, r)}).draw(sh)
+        if frac is not None and frac > 0:
+            sh.uniform_float("color", colour)
+            batch_for_shader(sh, 'TRIS', {"pos": _wedge(cx, cy, r, min(frac, 1.0))}).draw(sh)
+        tx = cx + r + 14 * ui
+        overlay._text_shadow(True)
+        overlay._text(tx, y0 + 0.5 * h + 3 * ui, title, big, (1.0, 1.0, 1.0, 1.0))
+        overlay._text(tx, y0 + 0.5 * h - small - 4 * ui, detail, small, (0.85, 0.85, 0.85, 1.0))
+        overlay._text_shadow(False)
+        gpu.state.blend_set('NONE')
+    except Exception as ex:                      # a badge must never break the viewport
+        print("Bucket Builder: badge not drawn:", ex)
+
+
+_badge_handle = []
+
+
+TIMING = {'proc': None, 't0': 0.0, 'fraction': 0.0, 'eta': None, 'done_at': None}
 
 
 JOB = {'running': False, 'done': 0, 'total': 0, 'eta': None, 'elapsed': 0.0, 'stopping': False}
@@ -481,6 +616,7 @@ CLASSES = (BUCKETBUILDER_OT_pack, BUCKETBUILDER_OT_pack_stop, BUCKETBUILDER_OT_p
 def register():
     for c in CLASSES:
         bpy.utils.register_class(c)
+    _badge_handle.append(bpy.types.SpaceView3D.draw_handler_add(draw_badge, (), 'WINDOW', 'POST_PIXEL'))
     bpy.types.Object.bucket_builder_pack_mode = EnumProperty(
         name="Pack Rotation", items=OBJECT_MODE_ITEMS, default='DEFAULT',
         description="How the packer may turn this part")
@@ -490,6 +626,8 @@ def register():
 
 
 def unregister():
+    while _badge_handle:
+        bpy.types.SpaceView3D.draw_handler_remove(_badge_handle.pop(), 'WINDOW')
     del bpy.types.Object.bucket_builder_pack_lock
     del bpy.types.Object.bucket_builder_pack_mode
     for c in reversed(CLASSES):

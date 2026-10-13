@@ -70,6 +70,19 @@ def time_corr(xp, fft, kw, shape, dtype, reps=5):
     return t_fwd, best
 
 
+# Share of the whole run each step takes (from a laptop's run of 1.3.92), for
+# the progress shown in Blender: lines "@@progress <fraction>" in the output,
+# which the add-on takes out of the text it copies.
+WEIGHT = {'fft': 4.0, 'threads': 1.0, 'bureau-day': 20.0, 'pringles': 40.0, 'figurines': 10.0,
+          'sockets': 5.0, 'giant': 8.0}
+_done = [0.0, 1.0]
+
+
+def progress(step):
+    _done[0] += WEIGHT.get(step, 1.0)
+    print('@@progress %.4f' % min(1.0, _done[0] / _done[1]), flush=True)
+
+
 def fft_table():
     print('FFT correlation over the 5600 volume (best of 5; forward = one spectrum)')
     print('%-20s %-7s %-14s %12s %12s' % ('backend', 'cells', 'grid', 'forward', 'query'))
@@ -85,7 +98,9 @@ def fft_table():
                     print('%-20s %-7s %-14s   failed: %s' % (name, label, 'x'.join(map(str, shape)), ex))
                     continue
                 print('%-20s %-7s %-14s %9.1f ms %9.1f ms   %s'
-                      % (name, label, 'x'.join(map(str, shape)), f * 1e3, q * 1e3, np.dtype(dtype).name))
+                      % (name, label, 'x'.join(map(str, shape)), f * 1e3, q * 1e3, np.dtype(dtype).name),
+                      flush=True)
+    progress('fft')
 
 
 def thread_table():
@@ -111,7 +126,8 @@ def thread_table():
         par = time.perf_counter() - t
     print()
     print('%d NumPy 4 mm queries: one after the other %.0f ms, in %d threads %.0f ms (%.1f x)'
-          % (n, serial * 1e3, default_workers(), par * 1e3, serial / max(par, 1e-9)))
+          % (n, serial * 1e3, default_workers(), par * 1e3, serial / max(par, 1e-9)), flush=True)
+    progress('threads')
 
 
 def greedy_table():
@@ -142,6 +158,7 @@ def greedy_table():
                                             % (v.collisions, v.too_close, v.outside, v.near_wall))
         print('%-11s %4d/%-3d %6.1f mm %7.2f %% %6.1f s  %s'
               % (name, len(res.placements), n, rep.height, 100 * (rep.density or 0), dt, verdict), flush=True)
+        progress(name)
 
 
 def main(args=None):
@@ -162,9 +179,12 @@ def main(args=None):
     except Exception as ex:
         print('GPU: none usable (%s)' % type(ex).__name__)
     print()
+    greedy = '--greedy' in args
+    _done[1] = WEIGHT['fft'] + WEIGHT['threads'] + (sum(v for k, v in WEIGHT.items()
+                                                        if k not in ('fft', 'threads')) if greedy else 0.0)
     fft_table()
     thread_table()
-    if '--greedy' in args:
+    if greedy:
         greedy_table()
 
 

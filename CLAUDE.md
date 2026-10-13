@@ -441,7 +441,21 @@ here the NumPy-only path gives 109 mm too, and turning the pringle's
 degenerate principal axes (two equal moments) by 0 - 45 degrees gives
 108 - 122 mm. 1.3.92 adds the exact referee, the pringle's principal frame
 and a thread-scaling line to Measure Packer Speed, to tell an invalid
-layout from a platform difference. GPU decision: no CuPy in Blender's
+layout from a platform difference. His 1.3.92 table (energy saver on, he keeps it so): pringles again 66 mm,
+and the exact referee says **clean** on all five, so it is a platform
+difference, not a broken layout. His NumPy FFTs scale 4.0 x on 8 threads.
+His principal frame for the pringle: rows [[0.02, 1, 0], [1, -0.02, 0],
+[0, 0, -1]] (the two equal moments make the in-plane axes arbitrary); that
+frame, rounded as printed, gives 117 mm here, so the greedy is simply very
+sensitive to the orientation set and tie order. Stage 3: make free mode
+deterministic (canonical axes for degenerate moments) and let the
+improvement loop try more turns; 66 mm shows how much there is to win.
+1.3.93: a badge at the top of the viewport (pie + percent + time left) for
+packing and for Measure Packer Speed (progress from "@@progress f" lines the
+timing run prints; taken out of the copied text), a green "measured" badge
+for a minute and a popup when the measurement is done (the owner asked:
+he lets it run while doing other work).
+GPU decision: no CuPy in Blender's
 Python and the CPU path is the default; a GPU backend is not worth it before
 Stage 3 shows where time goes.
 

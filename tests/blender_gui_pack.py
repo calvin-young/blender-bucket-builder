@@ -192,6 +192,11 @@ def step_timing():
 
 
 def step_timing_wait():
+    f = bc.packing.TIMING.get('fraction', 0.0)
+    if bc.packing.TIMING['proc'] is not None and f > 0.3 and 'tshot' not in STATE:
+        STATE['tshot'] = True
+        log('measuring: %.0f %%, badge:' % (100 * f), bc.packing.badge_state())
+        shot('gui_pack_2_measuring')
     if bc.packing.TIMING['proc'] is not None:
         if time.perf_counter() - STATE['t'] > 900:
             raise AssertionError('the speed measurement did not finish')
@@ -202,11 +207,20 @@ def step_timing_wait():
     log('speed measurement (%.0f s):' % (time.perf_counter() - STATE['t']))
     print(text, flush=True)
     assert 'FFT correlation' in text and 'Greedy packer' in text and 'bureau-day' in text, text[-500:]
+    assert '@@' not in text, 'progress markers left in the copied text'
+    assert STATE.get('tshot'), 'progress never passed 30 %'
+    b = bc.packing.badge_state()
+    assert b is not None and b[0] == 'Packer speed measured', b
+    return 1.0
+
+
+def step_timing_shot():
+    shot('gui_pack_3_measured')
     return 0.2
 
 
 STEPS = [step_setup, step_before, step_before_shot, step_start, step_wait, step_after, step_undo, step_undone,
-         step_start2, step_stop_midway, step_stopped, step_timing, step_timing_wait]
+         step_start2, step_stop_midway, step_stopped, step_timing, step_timing_wait, step_timing_shot]
 
 
 def runner():
