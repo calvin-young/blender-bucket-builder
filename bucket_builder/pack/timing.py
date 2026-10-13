@@ -88,21 +88,60 @@ def fft_table():
                       % (name, label, 'x'.join(map(str, shape)), f * 1e3, q * 1e3, np.dtype(dtype).name))
 
 
-def greedy_table():
-    from . import greedy, metrics, synthetic
-    from .problem import Settings
+def thread_table():
+    """Do NumPy's FFTs run side by side in threads here (they should: the
+    packer searches a part's orientations in parallel)?"""
+    from concurrent.futures import ThreadPoolExecutor
+    from .metrics import default_workers
+    shape = SIZES['4 mm']
+    rng = np.random.default_rng(1)
+    B = np.fft.rfftn(rng.random(shape), s=shape, axes=(0, 1, 2))
+
+    def q(_):
+        return float(np.fft.irfftn(B * B, s=shape, axes=(0, 1, 2))[0, 0, 0])
+
+    n = 2 * default_workers()
+    t = time.perf_counter()
+    for i in range(n):
+        q(i)
+    serial = time.perf_counter() - t
+    with ThreadPoolExecutor(default_workers()) as ex:
+        t = time.perf_counter()
+        list(ex.map(q, range(n)))
+        par = time.perf_counter() - t
     print()
-    print('Greedy packer on the synthetic buckets (CPU)')
-    print('%-11s %8s %9s %9s %8s' % ('bucket', 'placed', 'height', 'density', 'time'))
+    print('%d NumPy 4 mm queries: one after the other %.0f ms, in %d threads %.0f ms (%.1f x)'
+          % (n, serial * 1e3, default_workers(), par * 1e3, serial / max(par, 1e-9)))
+
+
+def greedy_table():
+    from . import greedy, metrics, problem, synthetic
+    from .problem import Settings
+    try:
+        from . import referee
+    except Exception as ex:              # (the exact engine is needed for the check)
+        referee = None
+        print('referee unavailable:', ex)
+    print()
+    print('Greedy packer on the synthetic buckets (CPU, %d threads)' % metrics.default_workers())
+    m = synthetic.pringle()
+    print('pringle principal frame (rows): %s' % np.round(problem.principal_frame(m.verts), 3).tolist())
+    print('%-11s %8s %9s %9s %8s  %s' % ('bucket', 'placed', 'height', 'density', 'time', 'exact check'))
     for name, (desc, parts, kw) in synthetic.buckets().items():
         s = Settings(**kw)
         t = time.perf_counter()
         res = greedy.solve(parts, s)
         dt = time.perf_counter() - t
-        rep = metrics.measure(res.items(parts), s.vlo, s.vhi)
+        items = res.items(parts)
+        rep = metrics.measure(items, s.vlo, s.vhi)
         n = sum(p.quantity for p in parts)
-        print('%-11s %4d/%-3d %6.1f mm %7.2f %% %6.1f s'
-              % (name, len(res.placements), n, rep.height, 100 * (rep.density or 0), dt))
+        verdict = '-'
+        if referee is not None:
+            v = referee.check(items, s.vlo, s.vhi, s.gap, s.wall_gap)
+            verdict = 'clean' if v.ok else ('%d collisions, %d too close, %d outside, %d at walls'
+                                            % (v.collisions, v.too_close, v.outside, v.near_wall))
+        print('%-11s %4d/%-3d %6.1f mm %7.2f %% %6.1f s  %s'
+              % (name, len(res.placements), n, rep.height, 100 * (rep.density or 0), dt, verdict), flush=True)
 
 
 def main(args=None):
@@ -124,6 +163,7 @@ def main(args=None):
         print('GPU: none usable (%s)' % type(ex).__name__)
     print()
     fft_table()
+    thread_table()
     if '--greedy' in args:
         greedy_table()
 

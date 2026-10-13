@@ -430,6 +430,21 @@ autopack's manifest says **1.3.91** (1.3.90 was the first preview);
 1.3.0 -> 1.3.90 upgrade test passes. The tag v1.3.0 is local only (this
 session may not push tags or make releases).
 
+**The owner's first speed table (1.3.91, 2026-10-13)**: Windows 11, Intel
+Family 6 Model 170 (Meteor Lake), 22 logical CPUs, Blender's Python 3.13,
+NumPy 2.3.4, no SciPy, no CuPy. NumPy FFT queries 2.5 / 24 / 200 ms at
+8 / 4 / 2 mm (about 2 x slower than this VM); greedy bureau-day 18.5 s,
+pringles 61 s, figurines 12.5 s, sockets 5.1 s, giant 9.5 s (slower than here:
+threads not helping? power plan?). **Pringles came out 66 mm / 11.88 %
+there against 109 mm / 7.19 % here** (identical elsewhere). Not explained:
+here the NumPy-only path gives 109 mm too, and turning the pringle's
+degenerate principal axes (two equal moments) by 0 - 45 degrees gives
+108 - 122 mm. 1.3.92 adds the exact referee, the pringle's principal frame
+and a thread-scaling line to Measure Packer Speed, to tell an invalid
+layout from a platform difference. GPU decision: no CuPy in Blender's
+Python and the CPU path is the default; a GPU backend is not worth it before
+Stage 3 shows where time goes.
+
 **Stage 2 is done except what needs the owner**: his `tools/pack_timing.py`
 numbers (GPU decision) and his buckets (`python -m pack pack ... --referee`
 on them, compared with his commercial packer results). Then Stage 3 (Sonnet 5.5,
