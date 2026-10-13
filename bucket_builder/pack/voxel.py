@@ -45,25 +45,33 @@ def have_scipy():
 # ------------------------------------------------------------------ surface
 
 def _subdivide(P, h):
-    """Triangles (n, 3, 3) split into four by their midpoints until no edge is
-    longer than h.  Returns a list of arrays."""
-    out = []
+    """Triangles (n, 3, 3) cut in two across their longest edge until no edge
+    is longer than h.  Yields arrays of finished triangles; the work is done
+    depth first in batches, so a few huge triangles never hold more than a
+    few batches in memory (a 200 mm face at h = 1 becomes some thousands of
+    pieces, not millions)."""
     h2 = h * h * (1.0 - 1e-12)
-    while P.shape[0]:
-        e0 = ((P[:, 1] - P[:, 0]) ** 2).sum(1)
-        e1 = ((P[:, 2] - P[:, 1]) ** 2).sum(1)
-        e2 = ((P[:, 0] - P[:, 2]) ** 2).sum(1)
-        big = np.maximum(np.maximum(e0, e1), e2) > h2
+    stack = [P]
+    while stack:
+        Q = stack.pop()
+        if Q.shape[0] > CHUNK:
+            stack.append(Q[CHUNK:])
+            Q = Q[:CHUNK]
+        e = np.stack([((Q[:, 1] - Q[:, 0]) ** 2).sum(1), ((Q[:, 2] - Q[:, 1]) ** 2).sum(1),
+                      ((Q[:, 0] - Q[:, 2]) ** 2).sum(1)], 1)
+        big = e.max(1) > h2
         if not big.all():
-            out.append(P[~big])
-        P = P[big]
-        if not P.shape[0]:
-            break
-        a, b, c = P[:, 0], P[:, 1], P[:, 2]
-        ab, bc, ca = 0.5 * (a + b), 0.5 * (b + c), 0.5 * (c + a)
-        P = np.concatenate([np.stack([a, ab, ca], 1), np.stack([ab, b, bc], 1),
-                            np.stack([ca, bc, c], 1), np.stack([ab, bc, ca], 1)])
-    return out
+            yield Q[~big]
+        if not big.any():
+            continue
+        Q = Q[big]
+        k = e[big].argmax(1)                      # longest edge: (k, k + 1)
+        n = np.arange(Q.shape[0])
+        a = Q[n, k]
+        b = Q[n, (k + 1) % 3]
+        c = Q[n, (k + 2) % 3]
+        m = 0.5 * (a + b)
+        stack.append(np.concatenate([np.stack([a, m, c], 1), np.stack([m, b, c], 1)]))
 
 
 def _mark(grid, P, origin, h):

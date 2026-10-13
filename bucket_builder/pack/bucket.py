@@ -119,6 +119,46 @@ class Bucket:
         win = self.fine[tuple(dst)]
         return not np.logical_and(win, k[tuple(src)]).any()
 
+    def _faces(self, pg, axis):
+        """Flat offsets (in this grid) of the kernel cells that lead when the
+        part moves towards -axis: set, with the cell before them not set."""
+        key = ('faces', axis, self.fine.shape)
+        off = pg._coarse.get(key)
+        if off is None:
+            k = pg.kernel
+            prev = np.zeros_like(k)
+            sl_dst = [slice(None)] * 3
+            sl_src = [slice(None)] * 3
+            sl_dst[axis] = slice(1, None)
+            sl_src[axis] = slice(0, -1)
+            prev[tuple(sl_dst)] = k[tuple(sl_src)]
+            u = np.argwhere(k & ~prev)
+            st = np.array(self.fine.strides) // self.fine.itemsize
+            off = (u * st).sum(1).astype(np.int64)
+            pg._coarse[key] = off
+        return off
+
+    def slide(self, pg, b, axis, limit):
+        """How many cells (0 .. limit) a part that fits at b can move towards
+        -axis and still fit.  Only the leading cells of its kernel can meet
+        something new at each step."""
+        if limit <= 0:
+            return 0
+        st = np.array(self.fine.strides) // self.fine.itemsize
+        base = int(np.dot(np.asarray(b, np.int64), st))
+        off = self._faces(pg, axis)
+        flat = self.fine.reshape(-1)
+        step = int(st[axis])
+        done = 0
+        while done < limit:
+            n = min(8, limit - done)
+            js = np.arange(done + 1, done + n + 1, dtype=np.int64)
+            hit = flat[base - js[:, None] * step + off[None, :]].any(axis=1)
+            if hit.any():
+                return done + int(np.argmax(hit))
+            done += n
+        return done
+
     # ------------------------------------------------------------ coarse search
     def spectrum(self):
         if self._spec is None:

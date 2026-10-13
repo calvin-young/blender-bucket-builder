@@ -132,24 +132,22 @@ class Greedy:
                 and bucket.fits(p.grid, b))
 
     def _refine(self, bucket, p, b, need):
-        """Move down, back, left a cell at a time while the part still fits."""
-        b = np.array(b, dtype=int)
+        """Move down, back, left while the part still fits (b must fit)."""
+        b = np.array(b, dtype=np.int64)
         limit = 6 * bucket.f + 8
-        moved = True
-        steps = 0
-        while moved and steps < 3 * limit:
+        g = p.grid
+        for _ in range(4):
             moved = False
             for ax in (2, 1, 0):
-                n = 0
-                while n < limit:
-                    b[ax] -= 1
-                    if self._ok(bucket, p, b, need):
-                        n += 1
-                        moved = True
-                        steps += 1
-                    else:
-                        b[ax] += 1
-                        break
+                room = int(b[ax] + g.s_lo[ax] - bucket.ilo[ax])         # cells to the wall
+                if ax == 2 and need > -np.inf:
+                    room = min(room, int(np.floor((self._top(bucket, p, b) - need) / bucket.h + 1e-9)))
+                n = bucket.slide(g, b, ax, min(limit, room))
+                if n > 0:
+                    b[ax] -= n
+                    moved = True
+            if not moved:
+                break
         return b
 
     def _best_for_pose(self, bucket, p, need):
@@ -204,17 +202,25 @@ class Greedy:
     def place_one(self, bucket, i):
         """Best placement of part i over its orientations, or None."""
         best = None
-        need_any = None
+        why = 'too large for the volume'
         for k in range(len(self.orients(i))):
             p = self.pose(i, k)
             if p.same_as is not None:
                 continue
+            g = p.grid
+            if np.any(g.s_hi - g.s_lo > bucket.ihi - bucket.ilo + 1):
+                continue                                    # does not fit the empty volume this way
             need = self._need(bucket, p)
-            need_any = need
+            if why == 'too large for the volume':
+                why = 'no room'
+            if need > -np.inf and why == 'no room':
+                full = bucket.vhi[2] - bucket.vlo[2]
+                why = ('over the density limit even at full height' if need > full + 1e-9
+                       else 'no room within the density limit')
             r = self._best_for_pose(bucket, p, need)
             if r is not None and (best is None or r[0] < best[0]):
                 best = (r[0], k, r[1])
-        return best, need_any
+        return best, why
 
     # ------------------------------------------------------------ the run
     def order(self):
@@ -242,9 +248,8 @@ class Greedy:
             if s.time_limit is not None and time.perf_counter() - t0 > s.time_limit:
                 res.unplaced.append((i, c, 'time limit'))
                 continue
-            best, need = self.place_one(bucket, i)
+            best, why = self.place_one(bucket, i)
             if best is None:
-                why = 'no room' if need is None or need == -np.inf else 'no room within the density limit'
                 res.unplaced.append((i, c, why))
                 continue
             _, k, b = best

@@ -372,6 +372,23 @@ decisions so far, in the order of the work:
 5. `benchmarks/synthetic.py`: shapes and bucket recipes; `tools/pack_fft_timing.py`
    for the owner's GPU numbers (CuPy if installed).
 
+Done so far (all pushed): `pack/voxel.py` (+ `tests/test_pack_voxel.py`),
+`pack/problem.py` (Part, Settings, Result, orientations), `pack/bucket.py`
+(grid, coarse FFT feasibility, `slide` = moves checking only the kernel's
+leading cells), `pack/greedy.py`, `pack/referee.py`, `pack/_core.py`,
+`benchmarks/synthetic.py` (5 buckets), `tests/test_pack_greedy.py`,
+`tests/bench_pack_greedy.py`. All 5 synthetic buckets: every part placed,
+referee clean. Times (2 cores): bureau-day 82 parts 18 s, pringles 150 (free,
+24 orientations) 46 s, figurines 80 13 s, sockets 30 5 s, giant 31 8 s.
+Where time goes now: the coarse inverse FFT (about 5 ms each, one per part
+and orientation), then `coarse_feasible` bookkeeping. Learned: the density
+cap can make a part unplaceable in a small box (it is a hard limit); the
+greedy prefers the floor to a cavity, so cavities fill only when the floor
+is full (fine for now; the score is Stage 3's business).
+Still to do in Stage 2: the GPU/CPU timing script, coarse factor and phase
+measurements (where the crossover lies), notes in AUTOPACK.md, then the
+owner's buckets when he sends them.
+
 
 The owner still owes: Suzanne STLs at several subdivision levels, non-sensitive
 benchmark buckets.
