@@ -96,6 +96,18 @@ def main():
              for n, s in re.findall(r'\("([^"]+)", \(([^)]+)\)\)', block)}
     check(found == printers.PRINTERS, 'printer sizes match props.DEFAULT_PROFILES')
 
+    print('pack')
+    packed = os.path.join(tmp, 'AcmeCorp_packed.3mf')
+    code, text = run(['pack', secret, '--volume', '150', '150', '100', '--mode', 'fixed', '--gap', '2',
+                      '--wall-gap', '2', '--max-density', '0', '--out', packed, '--referee'])
+    check(code == 0 and 'placed         5 of 5' in text, 'five cubes packed: ' +
+          [l for l in text.split('\n') if 'placed' in l][0].strip())
+    check('referee        clean' in text, 'the exact engine finds nothing wrong')
+    check(not any(w in text for w in ('Acme', 'orthosis', tmp)), 'and no names in the output')
+    code, text = run(['report', packed, '--volume', '150', '150', '100'])
+    check('5 inside, 0 partly outside, 0 outside' in text and 'packed height  20.0 mm' in text,
+          'the written 3MF reads back: all inside, 20 mm high')
+
     print('as a program')
     for argv in ([sys.executable, '-m', 'pack', 'report', secret],
                  [sys.executable, os.path.join(ROOT, 'tools', 'pack_report.py'), secret]):

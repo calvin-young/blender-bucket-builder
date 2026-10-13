@@ -4,6 +4,7 @@
     python -m pack report bucket.3mf                  # density report
     python -m pack report bucket.3mf --printer 1200 --profile
     python -m pack report part.stl --volume 380 284 380 --center
+    python -m pack pack parts.3mf --mode z --gap 3 --out packed.3mf --referee
 
 Run it from the `bucket_builder` folder (or use tools/pack_report.py).
 
@@ -43,7 +44,81 @@ def build_parser():
     r.add_argument('--names', action='store_true',
                    help='print file and part names (do not for private buckets)')
     r.add_argument('--workers', type=int, default=None, help='threads (default: all cores)')
+
+    k = sub.add_parser('pack', help='pack the parts of a 3MF or STL into one bucket (greedy, Stage 2)')
+    k.add_argument('file', help='.3mf (each build item a part; copies of one mesh are grouped) or .stl')
+    k.add_argument('--out', help='write the packed build to this .3mf')
+    g = k.add_mutually_exclusive_group()
+    g.add_argument('--printer', default=None, help='printer name or part of it (default %s)'
+                   % printers.DEFAULT_PRINTER)
+    g.add_argument('--volume', nargs=3, type=float, metavar=('X', 'Y', 'Z'), help='build volume in mm')
+    k.add_argument('--center', action='store_true', help='volume centred on x = y = 0')
+    k.add_argument('--mode', choices=('fixed', 'z', 'free'), default='z', help='rotation of every part (z)')
+    k.add_argument('--copies', type=int, default=1, help='make this many of every part (1)')
+    k.add_argument('--gap', type=float, default=5.0, help='between parts, mm (5)')
+    k.add_argument('--wall-gap', type=float, default=5.0, help='from the side walls, mm (5)')
+    k.add_argument('--max-density', type=float, default=12.0, help='3D density limit in %% (12; 0: none)')
+    k.add_argument('--cell', type=float, default=1.0, help='voxel size, mm (1)')
+    k.add_argument('--z-step', type=float, default=30.0, help='degrees between turns about z (30)')
+    k.add_argument('--referee', action='store_true', help='check the result with the exact engine')
+    k.add_argument('--names', action='store_true', help='print file and part names')
     return ap
+
+
+def parts_of(scene, mode, copies):
+    """Build items grouped into parts: copies of one mesh in one orientation
+    are one part with a quantity.  Each part keeps its orientation as given
+    (its scale too) as the base its mode turns."""
+    from .problem import Part
+    groups = {}
+    for it in scene.items:
+        L = np.asarray(it.matrix, float)[:3, :3]
+        key = (id(it.mesh), np.round(L, 9).tobytes())
+        if key not in groups:
+            groups[key] = Part('part-%03d' % (len(groups) + 1), it.mesh, 0, mode, base=L.copy())
+        groups[key].quantity += copies
+    return list(groups.values())
+
+
+def pack_one(args, out):
+    from . import greedy, referee
+    from .problem import Settings
+    p = lambda s='': print(s, file=out)  # noqa: E731
+    t0 = time.perf_counter()
+    scene = meshio.read(args.file)
+    pname, vlo, vhi = volume_of(args)
+    parts = parts_of(scene, args.mode, args.copies)
+    s = Settings(vlo=vlo, vhi=vhi, gap=args.gap, wall_gap=args.wall_gap, h=args.cell,
+                 z_step=args.z_step, max_density=(args.max_density / 100.0) or None)
+    t_read = time.perf_counter() - t0
+    res = greedy.solve(parts, s)
+    items = res.items(parts)
+    rep = metrics.measure(items, vlo, vhi)
+    n = sum(q.quantity for q in parts)
+    p(args.file if args.names else 'bucket-01')
+    p('  printer        %s  (%.1f x %.1f x %.1f mm), gap %.1f mm, wall gap %.1f mm, rotation %s'
+      % (pname, *(vhi - vlo), args.gap, args.wall_gap, args.mode))
+    p('  placed         %d of %d  (%d unique parts)' % (len(res.placements), n, len(parts)))
+    if res.unplaced:
+        why = {}
+        for _, _, r in res.unplaced:
+            why[r] = why.get(r, 0) + 1
+        for r, c in why.items():
+            p('  not placed     %d: %s' % (c, r))
+    if rep.density is not None:
+        p('  packed height  %.1f mm' % rep.height)
+        p('  3D density     %.2f %%   (limit %s)' % (100 * rep.density,
+                                                     '%.1f %%' % args.max_density if args.max_density else 'none'))
+        p('  layer density  peak %.1f %%, spread %s' % (100 * rep.peak_layer, fmt_cv(rep)))
+    p('  time           read %.1f s, pack %.1f s' % (t_read, res.seconds))
+    if args.referee:
+        v = referee.check(items, vlo, vhi, args.gap, args.wall_gap)
+        p('  referee        %s (%.1f s)' % ('clean' if v.ok else 'VIOLATIONS: %s' % v, v.seconds))
+    if args.out:
+        meshio.write_3mf(args.out, [(m, M, name if args.names else 'part-%03d' % (i + 1))
+                                    for i, (name, m, M) in enumerate(items)])
+        p('  written        %s' % (args.out if args.names else 'the packed 3MF'))
+    return 0
 
 
 def volume_of(args):
@@ -125,6 +200,13 @@ def main(argv=None, out=None):
     out = out or sys.stdout
     args = build_parser().parse_args(argv)
     code = 0
+    if args.cmd == 'pack':
+        try:
+            return pack_one(args, out)
+        except (meshio.ReadError, OSError, KeyError) as e:
+            print('error: ' + (str(e) if args.names else 'could not read the file (%s)' % type(e).__name__),
+                  file=sys.stderr)
+            return 1
     if args.cmd == 'report':
         for i, path in enumerate(args.files):
             try:
