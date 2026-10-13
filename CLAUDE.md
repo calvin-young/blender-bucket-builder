@@ -385,9 +385,18 @@ and orientation), then `coarse_feasible` bookkeeping. Learned: the density
 cap can make a part unplaceable in a small box (it is a hard limit); the
 greedy prefers the floor to a cavity, so cavities fill only when the floor
 is full (fine for now; the score is Stage 3's business).
-Still to do in Stage 2: the GPU/CPU timing script, coarse factor and phase
-measurements (where the crossover lies), notes in AUTOPACK.md, then the
-owner's buckets when he sends them.
+Measured (2026-10-13): with the density cap binding, height is set by the
+cap, so quality comparisons use `bench_pack_greedy.py --max-density 0
+--scale-qty 3`. Coarse 4 vs 8 (bureau-day x3): 161 vs 183 mm, 25 vs 12 s;
+candidates 3 = 8 in quality (default now 3); phases 2 no better, 3 x slower.
+NumPy's FFT (Blender's only one) is single-threaded double: 12 ms per
+4 mm query vs 2.7 ms SciPy float32, so the orientations of a part are now
+searched in a thread pool (scipy workers=1 inside it).
+`python -m pack pack file.3mf --out packed.3mf --referee` packs a 3MF headless;
+`tools/pack_timing.py` is for the owner's GPU numbers (not yet run by him).
+Still to do in Stage 2: finish the coarse-2 / h-2 measurements
+(scratchpad/quality_bench2.txt), the GPU decision (needs his numbers),
+AUTOPACK.md §14 results, then the owner's buckets when he sends them.
 
 
 The owner still owes: Suzanne STLs at several subdivision levels, non-sensitive

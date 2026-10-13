@@ -365,6 +365,22 @@ and the referee. They are listed in the solver dropdown; `auto` picks one
 
 ### 8.1 The voxel layer
 
+> **As built (Stage 2, `pack/voxel.py`, `pack/bucket.py`).** Differences from
+> the plan below: the bucket grid holds the placed parts' *solid* cells, and
+> only the candidate is dilated, by the whole gap g (dilating both sides by
+> g/2 adds the conservative neighbour ring twice). The dilation is by exactly
+> the cell offsets d with h^2 sum max(|d_i| - 1, 0)^2 < g^2, the infimum
+> distance between points of two half-open cells, so no shared cell means a
+> real gap of at least g (checked against brute force). Triangles are cut
+> across their longest edge until no edge exceeds h, then their bounding-box
+> cells are marked; open meshes get a morphological closing before the flood
+> fill. SciPy is optional (Blender does not ship it and PyPI was unreachable,
+> so no wheels are bundled): NumPy paths give identical grids. The coarse
+> grid is rounded up to sizes with factors 2, 3, 5 only (a prime length was
+> 2.5 x slower), and single precision is used only where a bound on the
+> FFT's rounding keeps it far from 0.5. Refinement slides a part a cell at a
+> time checking only the kernel cells that lead in that direction.
+
 * Grid over the bucket at resolution h (default **1 mm**; finer levels for
   refinement). The bucket grid holds, per cell, whether it is taken by an
   already placed part's *dilated* shape.

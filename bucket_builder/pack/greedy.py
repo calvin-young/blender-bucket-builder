@@ -15,6 +15,7 @@ height: with V placed, a new part of volume v must leave the build at least
 """
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
@@ -34,7 +35,7 @@ def _open(mesh):
 
 
 class Greedy:
-    def __init__(self, parts, settings):
+    def __init__(self, parts, settings, threads=None):
         self.parts = parts
         self.s = settings
         self._poses = {}            # (part index, orientation index) -> _Pose
@@ -42,6 +43,8 @@ class Greedy:
         self._volume = {}
         self._close = {}
         self._sigs = {}
+        n = metrics.default_workers() if threads is None else threads
+        self._pool = ThreadPoolExecutor(max_workers=n) if n > 1 else None
 
     # ------------------------------------------------------------ poses
     def _part_volume(self, i):
@@ -150,16 +153,20 @@ class Greedy:
                 break
         return b
 
-    def _best_for_pose(self, bucket, p, need):
+    def _phases(self, f):
+        if self.s.phases > 1:
+            half = f // 2
+            return [(x, y, z) for x in (0, half) for y in (0, half) for z in (0, half)]
+        return [(0, 0, 0)]
+
+    def _coarse(self, bucket, p):
+        return [(ph,) + tuple(bucket.coarse_feasible(p.grid, p.key, ph)) for ph in self._phases(bucket.f)]
+
+    def _best_for_pose(self, bucket, p, need, coarse=None):
         s = self.s
         f = bucket.f
-        phases = [(0, 0, 0)]
-        if s.phases > 1:
-            half = f // 2
-            phases = [(x, y, z) for x in (0, half) for y in (0, half) for z in (0, half)]
         best = None
-        for phase in phases:
-            mask, c0 = bucket.coarse_feasible(p.grid, p.key, phase)
+        for phase, mask, c0 in (coarse if coarse is not None else self._coarse(bucket, p)):
             if mask is None or not mask.any():
                 continue
             # the lowest coarse layers that hold candidates (the density
@@ -200,9 +207,11 @@ class Greedy:
         return best
 
     def place_one(self, bucket, i):
-        """Best placement of part i over its orientations, or None."""
-        best = None
+        """Best placement of part i over its orientations, or None.  The
+        coarse searches of the orientations run in threads (the FFTs release
+        the GIL); refinement is sequential."""
         why = 'too large for the volume'
+        todo = []
         for k in range(len(self.orients(i))):
             p = self.pose(i, k)
             if p.same_as is not None:
@@ -217,7 +226,18 @@ class Greedy:
                 full = bucket.vhi[2] - bucket.vlo[2]
                 why = ('over the density limit even at full height' if need > full + 1e-9
                        else 'no room within the density limit')
-            r = self._best_for_pose(bucket, p, need)
+            todo.append((k, p, need))
+        if not todo:
+            return None, why
+        for _, p, _ in todo:                                 # (the bucket's spectra, once, before the threads)
+            bucket.spectrum(bucket._dtype(int(p.grid.coarse(bucket.f).sum())))
+        if self._pool is not None and len(todo) > 1:
+            coarse = list(self._pool.map(lambda t: self._coarse(bucket, t[1]), todo))
+        else:
+            coarse = [self._coarse(bucket, t[1]) for t in todo]
+        best = None
+        for (k, p, need), co in zip(todo, coarse):
+            r = self._best_for_pose(bucket, p, need, co)
             if r is not None and (best is None or r[0] < best[0]):
                 best = (r[0], k, r[1])
         return best, why
@@ -267,5 +287,10 @@ class Greedy:
         return res
 
 
-def solve(parts, settings):
-    return Greedy(parts, settings).run()
+def solve(parts, settings, threads=None):
+    g = Greedy(parts, settings, threads)
+    try:
+        return g.run()
+    finally:
+        if g._pool is not None:
+            g._pool.shutdown()

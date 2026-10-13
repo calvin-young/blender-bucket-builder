@@ -42,7 +42,7 @@ class Settings:
     max_density: float = 0.12         # 3D density limit (None: no limit)
     layer_cap: float = 0.5            # soft per-layer density limit
     layer_weight: float = 100.0       # mm of height one unit of squared excess is worth
-    candidates: int = 8               # coarse positions refined per orientation
+    candidates: int = 3               # coarse positions refined per orientation (8 was no better)
     time_limit: float = None          # seconds (None: no limit)
 
     def __post_init__(self):

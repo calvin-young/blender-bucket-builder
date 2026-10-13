@@ -17,13 +17,14 @@ direct window checks.
 """
 
 import math
+import threading
 from collections import OrderedDict
 
 import numpy as np
 
 try:
     from scipy import fft as _fft
-    _FFT_KW = {'workers': -1}
+    _FFT_KW = {'workers': 1}          # (orientations are searched in parallel threads instead)
 except Exception:                    # pragma: no cover
     _fft = np.fft
     _FFT_KW = {}
@@ -58,18 +59,22 @@ class _SpecCache:
         self.limit = limit
         self.bytes = 0
         self.d = OrderedDict()
+        self.lock = threading.Lock()
 
     def get(self, key, make):
-        v = self.d.get(key)
-        if v is not None:
-            self.d.move_to_end(key)
-            return v
-        v = make()
-        self.d[key] = v
-        self.bytes += v.nbytes
-        while self.bytes > self.limit and len(self.d) > 1:
-            _, old = self.d.popitem(last=False)
-            self.bytes -= old.nbytes
+        with self.lock:
+            v = self.d.get(key)
+            if v is not None:
+                self.d.move_to_end(key)
+                return v
+        v = make()                           # (outside the lock: two threads may both make it)
+        with self.lock:
+            if key not in self.d:
+                self.d[key] = v
+                self.bytes += v.nbytes
+            while self.bytes > self.limit and len(self.d) > 1:
+                _, old = self.d.popitem(last=False)
+                self.bytes -= old.nbytes
         return v
 
 

@@ -25,9 +25,12 @@ def main():
     ap.add_argument('names', nargs='*')
     ap.add_argument('--h', type=float, default=1.0)
     ap.add_argument('--coarse', type=int, default=4)
-    ap.add_argument('--candidates', type=int, default=8)
+    ap.add_argument('--candidates', type=int, default=3)
     ap.add_argument('--phases', type=int, default=1)
     ap.add_argument('--no-referee', action='store_true')
+    ap.add_argument('--max-density', type=float, default=None,
+                    help='3D density limit in %% (default: the Settings default; 0: none)')
+    ap.add_argument('--scale-qty', type=int, default=1, help='multiply every quantity (to fill the bucket)')
     a = ap.parse_args()
     all_b = synthetic.buckets()
     names = a.names or list(all_b)
@@ -35,6 +38,10 @@ def main():
     bad = 0
     for name in names:
         desc, parts, kw = all_b[name]
+        if a.max_density is not None:
+            kw = dict(kw, max_density=(a.max_density / 100.0) or None)
+        if a.scale_qty > 1:
+            parts = [type(p)(p.name, p.mesh, p.quantity * a.scale_qty, p.mode, p.tier, p.base) for p in parts]
         s = Settings(h=a.h, coarse=a.coarse, candidates=a.candidates, phases=a.phases, **kw)
         t = time.perf_counter()
         res = greedy.solve(parts, s)
