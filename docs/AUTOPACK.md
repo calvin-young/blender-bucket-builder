@@ -723,6 +723,10 @@ array-module backend (CuPy) for the coarse search; otherwise the CPU at
 4 mm stays the default and Stage 3's compaction and improvement recover the
 rest.
 
+![The bureau-day bucket packed by the greedy solver, loaded into Blender:
+the monitor, with its clearance set to the 3 mm packing gap, finds nothing
+wrong](images/autopack-greedy-bureau-day.png)
+
 Blender in the sandbox: `download.blender.org` and PyPI are blocked by the
 sandbox's network policy (2026-10-12); GitHub is reachable. Stages 1 - 4 are
 engine work tested headless. Blender is needed from the Blender parts of
