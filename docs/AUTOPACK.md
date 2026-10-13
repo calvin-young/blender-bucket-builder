@@ -698,6 +698,31 @@ triangles 15 s. In Blender, 46 parts of 490 k triangles (22 M in all, 40 of
 them copies): first report 1.8 s, a lift 0.3 s, main-thread slices under
 25 ms. Reading a 3MF costs 2.2 s per million triangles.
 
+Stage 2 results so far (2026-10-13, 2 cores; `tests/bench_pack_greedy.py`,
+every layout checked by the exact engine: no violation anywhere):
+
+| Bucket (default settings, 12 % cap) | parts | height | density | time |
+|---|---|---|---|---|
+| bureau-day (7 kinds, mixed modes, gap 3) | 82/82 | 85 mm | 11.9 % | 9.7 s |
+| pringles (free rotation, gap 2) | 150/150 | 109 mm | 7.2 % | 18.8 s |
+| figurines (z, gap 1) | 80/80 | 55.5 mm | 4.8 % | 4.8 s |
+| sockets + insoles (gap 3) | 30/30 | 140 mm | 7.3 % | 3.4 s |
+| giant housing + keycaps | 31/31 | 180 mm | 5.6 % | 4.9 s |
+
+The same in Blender's Python (NumPy only): identical layouts, same times
+(the orientations of a part are searched in threads). With the cap binding
+the height is the cap's, so resolution was compared without it, quantities
+x 3 (bureau-day, 246 parts): cell 1 mm with coarse blocks of 2 / 4 / 8
+cells: 153 / 161 / 182 mm in 500 / 25 / 12 s; cell 2 mm: 193 mm (blocks of
+2) and 201 mm (4). So 1 mm cells matter (+20 % height at 2 mm), and a finer
+coarse search buys about 5 % for 20 x the time on the CPU. That is the GPU
+question: on a GPU a 2 mm-block query (200 x 150 x 200 cells) should cost
+about what a 4 mm one costs here. Decision waits for `tools/pack_timing.py`
+on the owner's laptop: if a 2 mm query is under about 2 ms there, add an
+array-module backend (CuPy) for the coarse search; otherwise the CPU at
+4 mm stays the default and Stage 3's compaction and improvement recover the
+rest.
+
 Blender in the sandbox: `download.blender.org` and PyPI are blocked by the
 sandbox's network policy (2026-10-12); GitHub is reachable. Stages 1 - 4 are
 engine work tested headless. Blender is needed from the Blender parts of

@@ -31,7 +31,8 @@ def main():
     ap.add_argument('--max-density', type=float, default=None,
                     help='3D density limit in %% (default: the Settings default; 0: none)')
     ap.add_argument('--scale-qty', type=int, default=1, help='multiply every quantity (to fill the bucket)')
-    a = ap.parse_args()
+    argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else sys.argv[1:]
+    a = ap.parse_args(argv)   # (inside Blender: blender --background --python this -- args)
     all_b = synthetic.buckets()
     names = a.names or list(all_b)
     print('%-11s %8s %8s %8s %8s %9s  %s' % ('bucket', 'placed', 'height', 'density', 'time', 'referee', 'verdict'))
