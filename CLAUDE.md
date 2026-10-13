@@ -410,7 +410,23 @@ synchronously for scripts). Scene settings `pack_*`, object settings
 `bucket_builder_pack_mode` / `bucket_builder_pack_lock` (locked parts are
 voxelised in place: `Greedy.lock`). Tests: `blender_pack_test.py`,
 window `blender_gui_pack.py` (modal run, monitor says clean, undo restores).
-autopack's manifest says **1.3.90** (preview build sent to the owner);
+**The packer runs in a separate process** (1.3.91, the owner's feedback:
+1.3.90 froze Blender). Python threads inside Blender share the GIL with the
+UI, and a packer busy in many short NumPy calls starved it. Now
+`pack/worker.py` runs in Blender's own Python (`packing.python_exe()`:
+`sys.executable`, or `<version>/python/bin/python*` beside the binary) with
+`-I`, reading a job folder (npz + json) and writing `progress.json`
+atomically; the modal operator polls it every 0.2 s, moves parts into place
+as they are placed, shows a progress bar with time left in the panel and the
+status bar, and pauses the monitor's pair checks (`Monitor.packing`). Stop
+button / Esc write a `stop` file (killed after 5 s if needed); the threaded
+path is the fallback if no Python is found. The window test checks that
+timers keep running, progress arrives, stop works in about 1.5 s, and undo.
+Measure Packer Speed (Pack > Advanced) runs `pack/timing.py` the same way
+and copies the table to the clipboard: the owner's `tools/pack_timing.py`
+failed because the add-on zip has no `tools/`. `synthetic.py` moved into
+`pack/` for that (benchmarks/synthetic.py re-exports it).
+autopack's manifest says **1.3.91** (1.3.90 was the first preview);
 1.3.0 -> 1.3.90 upgrade test passes. The tag v1.3.0 is local only (this
 session may not push tags or make releases).
 

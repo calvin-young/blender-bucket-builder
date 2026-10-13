@@ -266,6 +266,7 @@ class Monitor:
         self.mm_per_unit = 1.0
         self.unit_note = ''
         self.report = report.BuildReport()
+        self.packing = False      # the packer is moving parts: pair checks wait
         # mesh data uid -> geometry key, for unmodified shared meshes: a
         # shortcut that saves reading a mesh again.  It is dropped whenever
         # the mesh may have changed, also when no part that is checked uses it.
@@ -395,7 +396,7 @@ class Monitor:
         # the engine could also call a gap below some distance a collision)
         w.set_thresholds(0.0, st.clearance_mm * k if st.use_clearance else 0.0)
         w.set_detect_enclosed(st.detect_enclosed)
-        pairs = bool(st.detect_collisions)
+        pairs = bool(st.detect_collisions) and not self.packing    # (paused while the packer works)
         if pairs != self.pairs_on:
             self.pairs_on = pairs
             w.set_pair_check(pairs)

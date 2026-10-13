@@ -50,6 +50,7 @@ class Greedy:
         self._extent = {}
         self.progress = (0, 0)
         self.cancel = False
+        self.on_place = None          # called with the Result so far after every placement
         n = metrics.default_workers() if threads is None else threads
         self._pool = ThreadPoolExecutor(max_workers=n) if n > 1 else None
 
@@ -347,6 +348,8 @@ class Greedy:
             M[:3, 3] = t
             bucket.place(p.grid, b, p.profile, p.volume, self._top(bucket, p, b))
             res.placements.append(Placement(i, c, M, k))
+            if self.on_place is not None:
+                self.on_place(res)
         self.progress = (len(order), len(order))
         res.seconds = time.perf_counter() - t0
         res.volume = bucket.volume

@@ -13,7 +13,7 @@ the sidebar where an object can be left out of the checks.
 import bpy
 from bpy.types import Panel, UIList
 
-from . import icons, monitor, ops, overlay, props, report
+from . import icons, monitor, ops, overlay, packing, props, report
 
 LIST_ROWS = 10
 IGNORED_ROWS = 12
@@ -441,11 +441,22 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
         layout = self.layout
         st = props.settings(context.scene)
         sel = [o for o in context.selected_objects if o.type == 'MESH']
-        row = layout.row()
-        row.scale_y = 1.6
-        op = row.operator("bucketbuilder.pack", icon='MOD_ARRAY',
-                          text=("Pack %d Selected Parts" % len(sel)) if sel else "Pack All Parts")
-        op.selected_only = bool(sel)
+        job = packing.JOB
+        if job['running']:
+            done, total = job['done'], max(job['total'], 1)
+            left = "" if job['eta'] is None else ", ~%s left" % packing._duration(job['eta'])
+            row = layout.row()
+            row.scale_y = 1.4
+            row.progress(factor=done / total, type='BAR',
+                         text="Stopping..." if job['stopping'] else "%d of %d placed%s" % (done, total, left))
+            row = layout.row()
+            row.operator("bucketbuilder.pack_stop", icon='CANCEL')
+        else:
+            row = layout.row()
+            row.scale_y = 1.6
+            op = row.operator("bucketbuilder.pack", icon='MOD_ARRAY',
+                              text=("Pack %d Selected Parts" % len(sel)) if sel else "Pack All Parts")
+            op.selected_only = bool(sel)
         col = _split(layout)
         col.prop(st, "pack_mode")
         sub = col.column(align=True)
@@ -458,6 +469,11 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
         header.label(text="Advanced")
         if body is not None:
             _split(body).prop(st, "pack_cell")
+            idle = packing.TIMING.get('proc') is None
+            row = body.row()
+            row.enabled = idle
+            row.operator("bucketbuilder.pack_timing", icon='TIME',
+                         text="Measure Packer Speed" if idle else "Measuring...")
         obj = context.active_object
         if obj is not None and obj.type == 'MESH':
             box = layout.box()
@@ -471,7 +487,8 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
             _wrapped(col, st.pack_last, 'INFO')
         col = layout.column(align=True)
         col.active = False
-        _wrapped(col, "First, greedy version. Esc stops it; Ctrl+Z puts the parts back.", 'EXPERIMENTAL')
+        _wrapped(col, "First, greedy version. It runs in the background; Esc or Stop ends it, "
+                      "Ctrl+Z puts the parts back.", 'EXPERIMENTAL')
 
 
 class BUCKETBUILDER_PT_options(_Base, Panel):

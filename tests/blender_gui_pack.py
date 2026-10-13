@@ -101,12 +101,25 @@ def step_start():
 
 def step_wait():
     st = win().scene.bucket_builder
+    STATE.setdefault('ticks', 0)
+    STATE['ticks'] += 1
+    if bc.packing.JOB['running']:
+        STATE['seen_running'] = True
+        STATE['max_done'] = max(STATE.get('max_done', 0), bc.packing.JOB['done'])
+        if 'mid' not in STATE and bc.packing.JOB['done'] >= 8:
+            STATE['mid'] = True
+            shot('gui_pack_0b_during')
     if not st.pack_last:
         if time.perf_counter() - STATE['t'] > 300:
             raise AssertionError('packing did not finish')
         STEPS.insert(0, step_wait)
         return 0.5
-    log('result:', st.pack_last)
+    log('result:', st.pack_last, '| ticks of this test while it ran:', STATE['ticks'],
+        '| progress seen up to', STATE.get('max_done'))
+    assert STATE['ticks'] >= 5, 'Blender did not run its timers while packing (the window froze)'
+    assert STATE.get('max_done', 0) > 0, 'no progress was reported'
+    proc = bc.packing.python_exe()
+    log('packing process:', proc)
     assert st.pack_last.startswith('Packed 30 of 30'), st.pack_last
     return 6.0                                  # (the monitor checks the new layout)
 
@@ -131,10 +144,69 @@ def step_undone():
     now = tuple(o.matrix_world.translation)
     log('after undo:', now, 'before packing:', STATE['before'])
     assert max(abs(a - b) for a, b in zip(now, STATE['before'])) < 1e-4, 'undo did not put the part back'
+    return 0.5
+
+
+def step_start2():
+    win().scene.bucket_builder.pack_last = ''
+    with bpy.context.temp_override(window=win(), area=area()):
+        bpy.ops.object.select_all(action='SELECT')
+        r = bpy.ops.bucketbuilder.pack('INVOKE_DEFAULT', selected_only=True)
+    assert r == {'RUNNING_MODAL'}, r
+    STATE['t'] = time.perf_counter()
+    return 0.5
+
+
+def step_stop_midway():
+    if bc.packing.JOB['done'] < 5:
+        if time.perf_counter() - STATE['t'] > 120:
+            raise AssertionError('no progress in the second run')
+        STEPS.insert(0, step_stop_midway)
+        return 0.3
+    with bpy.context.temp_override(window=win(), area=area()):
+        bpy.ops.bucketbuilder.pack_stop()
+    log('stop pressed at', bc.packing.JOB['done'], 'parts')
+    STATE['t'] = time.perf_counter()
+    return 0.5
+
+
+def step_stopped():
+    st = win().scene.bucket_builder
+    if not st.pack_last:
+        if time.perf_counter() - STATE['t'] > 15:
+            raise AssertionError('it did not stop within 15 s')
+        STEPS.insert(0, step_stopped)
+        return 0.3
+    log('after stop (%.1f s):' % (time.perf_counter() - STATE['t']), st.pack_last)
+    assert 'left beside the volume' in st.pack_last and 'stopped' in st.pack_last, st.pack_last
+    assert not bc.packing.JOB['running']
     return 0.2
 
 
-STEPS = [step_setup, step_before, step_before_shot, step_start, step_wait, step_after, step_undo, step_undone]
+def step_timing():
+    with bpy.context.temp_override(window=win(), area=area()):
+        r = bpy.ops.bucketbuilder.pack_timing('INVOKE_DEFAULT')
+    assert r == {'RUNNING_MODAL'}, r
+    STATE['t'] = time.perf_counter()
+    return 1.0
+
+
+def step_timing_wait():
+    if bc.packing.TIMING['proc'] is not None:
+        if time.perf_counter() - STATE['t'] > 900:
+            raise AssertionError('the speed measurement did not finish')
+        STEPS.insert(0, step_timing_wait)
+        return 2.0
+    txt = bpy.data.texts.get("Bucket Builder speed")
+    text = txt.as_string() if txt else ''
+    log('speed measurement (%.0f s):' % (time.perf_counter() - STATE['t']))
+    print(text, flush=True)
+    assert 'FFT correlation' in text and 'Greedy packer' in text and 'bureau-day' in text, text[-500:]
+    return 0.2
+
+
+STEPS = [step_setup, step_before, step_before_shot, step_start, step_wait, step_after, step_undo, step_undone,
+         step_start2, step_stop_midway, step_stopped, step_timing, step_timing_wait]
 
 
 def runner():
