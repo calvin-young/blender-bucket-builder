@@ -116,6 +116,27 @@ def test_conservative():
                   '%s at h=%.1f: points covered, solid %.2f x the volume' % (kind, h, ratio))
 
 
+def test_cloud():
+    print('large meshes: the cloud path is conservative and close to the exact one')
+    v, f = meshes.uv_sphere(10.0, 64, 32)
+    v, f = np.asarray(v, float), np.asarray(f)
+    for h in (1.0, 0.7):
+        for scale in (1.0, 1.7):
+            A = rotation(RNG) * scale
+            cl = voxel.Cloud(v, f, voxel.cloud_cell(h, scale))
+            g = voxel.voxelize(v, f, A, h, 0.0, cloud=cl)
+            ref = voxel.voxelize(v, f, A, h, 0.0)
+            S = surface_points(v, f, 4000, RNG)
+            P = inside_points('sphere', 4000, RNG) * 0.985
+            ok = True
+            for pts in (P, S):
+                c = cells_of(pts @ A.T, g.origin, h)
+                ok &= bool(g.solid[c[:, 0], c[:, 1], c[:, 2]].all())
+            check(ok and ref.n_solid <= g.n_solid <= 1.6 * ref.n_solid,
+                  'h=%.1f, scale %.1f: points covered; %d cells against %d from the triangles'
+                  % (h, scale, g.n_solid, ref.n_solid))
+
+
 def test_cavities():
     print('open cavities stay empty, sealed voids are solid')
     v, f = cup()
@@ -217,6 +238,19 @@ def test_timing():
     g = voxel.voxelize(np.asarray(v), np.asarray(f), rotation(RNG), 1.0, 5.0)
     dt = time.perf_counter() - t
     print('       box 150 x 100 x 60 mm (12 triangles), h=1, gap 5: %.2f s, grid %s' % (dt, g.shape))
+    v, f = meshes.uv_sphere(40.0, 2000, 1000)
+    v, f = np.asarray(v), np.asarray(f)
+    t = time.perf_counter()
+    voxel.voxelize(v, f, rotation(RNG), 1.0, 5.0)
+    t1 = time.perf_counter() - t
+    t = time.perf_counter()
+    cl = voxel.Cloud(v, f, voxel.cloud_cell(1.0, 1.0))
+    t2 = time.perf_counter() - t
+    t = time.perf_counter()
+    voxel.voxelize(v, f, rotation(RNG), 1.0, 5.0, cloud=cl)
+    t3 = time.perf_counter() - t
+    print('       sphere r=40, %.1f M triangles: %.2f s per orientation from triangles; cloud %.2f s once '
+          '(%d points), then %.2f s per orientation' % (len(f) / 1e6, t1, t2, len(cl.centers), t3))
     if SCIPY is not None:
         t = time.perf_counter()
         numpy_only(voxel.voxelize, np.asarray(v), np.asarray(f), np.eye(3), 1.0, 5.0)
@@ -225,6 +259,7 @@ def test_timing():
 
 if __name__ == '__main__':
     test_conservative()
+    test_cloud()
     test_cavities()
     test_dilation_brute_force()
     test_numpy_matches_scipy()

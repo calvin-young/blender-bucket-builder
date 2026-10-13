@@ -394,9 +394,17 @@ NumPy's FFT (Blender's only one) is single-threaded double: 12 ms per
 searched in a thread pool (scipy workers=1 inside it).
 `python -m pack pack file.3mf --out packed.3mf --referee` packs a 3MF headless;
 `tools/pack_timing.py` is for the owner's GPU numbers (not yet run by him).
-Still to do in Stage 2: finish the coarse-2 / h-2 measurements
-(scratchpad/quality_bench2.txt), the GPU decision (needs his numbers),
-AUTOPACK.md §14 results, then the owner's buckets when he sends them.
+Coarse 2 / cell 2 mm measured (AUTOPACK.md §14). Large meshes that turn
+(> 200 k triangles, `greedy.CLOUD_FROM`) are voxelised from a surface cloud
+made once per mesh (`voxel.Cloud`; 0.09 s per orientation instead of 2.5 s at
+4 M triangles; profile from the solid cells scaled to the exact volume).
+5 ellipsoids of 4 M triangles (20 M in all, z mode): packed in 21 s, referee
+clean. A screenshot of a greedy layout is in docs/images.
+**Stage 2 is done except what needs the owner**: his `tools/pack_timing.py`
+numbers (GPU decision) and his buckets (`python -m pack pack ... --referee`
+on them, compared with his commercial packer results). Then Stage 3 (Sonnet 5.5,
+medium): Job loop, ruin and recreate, compaction to exact gaps (recovers the
+voxel slack), score presets, Pack panel.
 
 
 The owner still owes: Suzanne STLs at several subdivision levels, non-sensitive

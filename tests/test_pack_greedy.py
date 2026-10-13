@@ -108,6 +108,24 @@ def test_modes():
     check(all(abs(np.linalg.det(p.matrix[:3, :3]) - 1) < 1e-9 for p in res.placements), 'no mirroring')
 
 
+def test_large_meshes():
+    print('large turned meshes go through a surface cloud')
+    old = greedy.CLOUD_FROM
+    greedy.CLOUD_FROM = 1000              # (so that small test meshes take that path)
+    try:
+        parts = [Part('ball', S.sphere(15, 64, 32), 4, 'z'), Part('ring', S.ring(), 4, 'free'),
+                 Part('figurine', S.figurine(), 4, 'z')]
+        s = Settings(vlo=(0, 0, 0), vhi=(160, 120, 120), gap=2.0, wall_gap=2.0, z_step=45.0)
+        g = greedy.Greedy(parts, s, threads=1)
+        res = g.run()
+        check(all(g._cloud(i) is not None for i in range(3)), 'every part used a cloud')
+        items = res.items(parts)
+        v = referee.check(items, s.vlo, s.vhi, s.gap, s.wall_gap)
+        check(v.ok and not res.unplaced, '%d placed, referee clean (%s)' % (len(res.placements), v.ok))
+    finally:
+        greedy.CLOUD_FROM = old
+
+
 def test_referee_catches():
     print('the referee is not blind')
     m = S.box(20, 20, 20)
@@ -132,6 +150,7 @@ if __name__ == '__main__':
     test_density_limit()
     test_walls_and_room()
     test_modes()
+    test_large_meshes()
     print()
     if FAILS:
         print('FAILED: %d' % len(FAILS))

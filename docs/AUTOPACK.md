@@ -723,6 +723,11 @@ array-module backend (CuPy) for the coarse search; otherwise the CPU at
 4 mm stays the default and Stage 3's compaction and improvement recover the
 rest.
 
+Large meshes that turn are voxelised from a surface cloud made once per
+mesh (`voxel.Cloud`), so an orientation costs what the part's size costs,
+not its triangle count: 5 ellipsoids of 4 M triangles (20 M) packed in 21 s
+here, referee clean (10 s).
+
 ![The bureau-day bucket packed by the greedy solver, loaded into Blender:
 the monitor, with its clearance set to the 3 mm packing gap, finds nothing
 wrong](images/autopack-greedy-bureau-day.png)

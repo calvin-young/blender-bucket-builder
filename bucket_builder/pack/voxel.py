@@ -111,6 +111,49 @@ def surface_grid(verts, tris, A, h, pad):
     return grid, origin
 
 
+# ------------------------------------------------------------------ large meshes
+
+class Cloud:
+    """A mesh's surface as the centres of the cells (side hl, in its own
+    frame) that the surface lies in.  Made once per mesh; a turned copy is
+    then voxelised from these points, at a cost set by the part's size, not
+    its triangle count (docs/AUTOPACK.md section 8.10)."""
+
+    def __init__(self, verts, tris, hl):
+        grid, origin = surface_grid(verts, tris, np.eye(3), hl, 0)
+        self.hl = hl
+        self.centers = origin + (np.argwhere(grid) + 0.5) * hl
+        self.lo = np.asarray(verts).min(axis=0)
+        self.hi = np.asarray(verts).max(axis=0)
+
+
+def cloud_cell(h, sigma):
+    """Local cell size for a cloud that a map with largest stretch sigma turns
+    into boxes no wider than h (each then touches at most 2 cells per axis)."""
+    return 0.999 * h / (max(sigma, 1e-12) * math.sqrt(3.0))
+
+
+def surface_grid_cloud(cloud, A, h, pad):
+    """surface_grid from a Cloud: every point of a local cell lies within
+    sigma * hl * sqrt(3) / 2 of the turned centre, so the cells of that
+    box around it hold the turned surface (conservative)."""
+    A = np.asarray(A, np.float64)
+    sigma = float(np.linalg.svd(A, compute_uv=False)[0])
+    R = 0.5 * sigma * cloud.hl * math.sqrt(3.0)
+    if 2 * R > h:
+        raise ValueError('cloud too coarse for this cell size and scale')
+    C = cloud.centers @ A.T
+    lo = C.min(axis=0) - R
+    hi = C.max(axis=0) + R
+    origin = (np.floor(lo / h) - pad) * h
+    dims = (np.floor((hi - origin) / h).astype(np.int64) + 1 + pad)
+    grid = np.zeros(tuple(int(d) for d in dims), dtype=bool)
+    for s in range(0, C.shape[0], CHUNK):
+        c = C[s:s + CHUNK]
+        _mark(grid, np.stack([c - R, c + R], axis=1), origin, h)
+    return grid, origin
+
+
 # ------------------------------------------------------------------ outside
 
 def _propagate(empty, out, axis):
@@ -315,13 +358,17 @@ def pool(grid, f, phase=(0, 0, 0)):
     return big.reshape(dims[0], f, dims[1], f, dims[2], f).any(axis=(1, 3, 5))
 
 
-def voxelize(verts, tris, A, h, gap, close_cells=0):
+def voxelize(verts, tris, A, h, gap, close_cells=0, cloud=None):
     """PartGrid of a mesh posed by A, at cell size h, for gap `gap`.
 
     close_cells > 0 closes holes up to about twice that many cells wide
-    before the flood fill (for open meshes; costs concavities that narrow)."""
+    before the flood fill (for open meshes; costs concavities that narrow).
+    With a `Cloud` the surface comes from it instead of the triangles."""
     pad = gap_cells(gap, h) + close_cells + 1
-    surf, origin = surface_grid(verts, tris, A, h, pad)
+    if cloud is not None:
+        surf, origin = surface_grid_cloud(cloud, A, h, pad)
+    else:
+        surf, origin = surface_grid(verts, tris, A, h, pad)
     if close_cells > 0:
         thick = dilate_cube(surf, close_cells)
         out = outside(thick)

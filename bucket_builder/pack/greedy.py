@@ -23,6 +23,9 @@ from . import metrics, voxel
 from .bucket import Bucket
 from .problem import Placement, Result, orientations
 
+CLOUD_FROM = 200_000          # triangles: larger meshes that turn are voxelised from a cloud
+CLOUD_MAX_CELLS = 300_000_000  # local cells: beyond this the cloud's grid is too big
+
 
 class _Pose:
     """A part in one orientation, ready to place."""
@@ -43,6 +46,7 @@ class Greedy:
         self._volume = {}
         self._close = {}
         self._sigs = {}
+        self._clouds = {}
         n = metrics.default_workers() if threads is None else threads
         self._pool = ThreadPoolExecutor(max_workers=n) if n > 1 else None
 
@@ -55,6 +59,20 @@ class Greedy:
             if self._close[i] is None:
                 self._close[i] = 2 if openness > metrics.OPEN_TOL else 0
         return self._volume[i]
+
+    def _cloud(self, i):
+        """A surface cloud for a large mesh that is turned (made once, used
+        by every orientation), or None."""
+        part = self.parts[i]
+        if part.mesh.nt < CLOUD_FROM or len(self.orients(i)) < 2:
+            return None
+        if i not in self._clouds:
+            sigma = float(np.linalg.svd(np.asarray(part.base, float), compute_uv=False)[0])
+            hl = voxel.cloud_cell(self.s.h, sigma)
+            ext = (part.mesh.verts.max(0) - part.mesh.verts.min(0)) / hl
+            self._clouds[i] = None if float(np.prod(ext + 2)) > CLOUD_MAX_CELLS else \
+                voxel.Cloud(part.mesh.verts, part.mesh.tris, hl)
+        return self._clouds[i]
 
     def orients(self, i):
         if i not in self._orients:
@@ -70,21 +88,32 @@ class Greedy:
         A = self.orients(i)[k]
         s = self.s
         vol = self._part_volume(i) * abs(np.linalg.det(A))
-        g = voxel.voxelize(part.mesh.verts, part.mesh.tris, A, s.h, s.gap, self._close[i])
-        # exact volume per band of h, from the grid's cell 0
-        M = np.eye(4)
-        M[:3, :3] = A
-        M[:3, 3] = -g.origin
-        nz = g.shape[2]
-        r = metrics.measure_parts([('p', part.mesh, M)], [0, 0, 0], [1, 1, nz * s.h], band=s.h,
-                                  nbands=nz)[0]
+        g = voxel.voxelize(part.mesh.verts, part.mesh.tris, A, s.h, s.gap, self._close[i],
+                           cloud=self._cloud(i))
         p = _Pose()
         p.A = A
         p.grid = g
-        p.profile = np.maximum(np.diff(r.bounds), 0.0)
         p.volume = vol
-        p.z_lo = float(r.lo[2])            # exact extent, from cell 0's corner
-        p.z_hi = float(r.hi[2])
+        nz = g.shape[2]
+        if self._cloud(i) is None:
+            # exact volume per band of h, from the grid's cell 0
+            M = np.eye(4)
+            M[:3, :3] = A
+            M[:3, 3] = -g.origin
+            r = metrics.measure_parts([('p', part.mesh, M)], [0, 0, 0], [1, 1, nz * s.h], band=s.h,
+                                      nbands=nz)[0]
+            p.profile = np.maximum(np.diff(r.bounds), 0.0)
+            p.z_lo = float(r.lo[2])            # exact extent, from cell 0's corner
+            p.z_hi = float(r.hi[2])
+        else:
+            # a large mesh: the profile from the solid cells, scaled to the
+            # exact volume (a pass over all triangles per orientation would
+            # cost more than the search); the extent from the vertices
+            cnt = g.solid.sum(axis=(0, 1)).astype(np.float64)
+            p.profile = cnt * (vol / max(cnt.sum(), 1.0))
+            z = np.asarray(part.mesh.verts) @ A[2]
+            p.z_lo = float(z.min()) - g.origin[2]
+            p.z_hi = float(z.max()) - g.origin[2]
         p.key = ('pose', id(self), i, k)
         # an orientation whose grids are those of an earlier one (a symmetric
         # part turned onto itself) is not searched again
