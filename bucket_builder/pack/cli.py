@@ -207,6 +207,12 @@ def main(argv=None, out=None):
             print('error: ' + (str(e) if args.names else 'could not read the file (%s)' % type(e).__name__),
                   file=sys.stderr)
             return 1
+        except Exception as e:
+            if args.names:
+                raise                      # (names are allowed: show the traceback)
+            print('error: failed (%s); add --names to see the details' % type(e).__name__,
+                  file=sys.stderr)
+            return 1
     if args.cmd == 'report':
         for i, path in enumerate(args.files):
             try:
@@ -216,6 +222,12 @@ def main(argv=None, out=None):
                 if not args.names:
                     msg = 'could not read bucket-%02d (%s)' % (i + 1, type(e).__name__)
                 print('error: ' + msg, file=sys.stderr)
+                code = 1
+            except Exception as e:
+                if args.names:
+                    raise
+                print('error: failed on bucket-%02d (%s); add --names to see the details'
+                      % (i + 1, type(e).__name__), file=sys.stderr)
                 code = 1
     return code
 

@@ -22,7 +22,7 @@ from bpy.props import BoolProperty, EnumProperty, FloatProperty
 from bpy.types import Operator
 
 from . import monitor, props
-from .pack import greedy, metrics, worker
+from .pack import greedy, metrics, safe, tempdir, worker
 from .pack.meshio import Mesh
 from .pack.problem import Part, Settings, group_key
 
@@ -155,7 +155,8 @@ class BUCKETBUILDER_OT_pack(Operator):
         return {'RUNNING_MODAL'}
 
     def _start_process(self, exe):
-        self._dir = tempfile.mkdtemp(prefix='bucket_builder_pack_')
+        tempdir.sweep_stale()                  # (what an earlier run left if Blender was killed)
+        self._dir = tempdir.new_job_folder()
         worker.write_job(self._dir, self._parts, self._settings, self._lock)
         addon = os.path.dirname(os.path.abspath(__file__))
         code = ("import sys; sys.path.insert(0, %r); from pack.worker import main; sys.exit(main(%r))"
@@ -289,7 +290,7 @@ class BUCKETBUILDER_OT_pack(Operator):
             return {'PASS_THROUGH'}
         self._end(context)
         if self._error is not None and self._result is None:
-            self.report({'ERROR'}, "Packing failed: %s" % self._error)
+            self.report({'ERROR'}, "Packing failed: %s" % safe.tidy(str(self._error)))
             return {'CANCELLED'}
         self._apply(context)
         return {'FINISHED'}
@@ -623,6 +624,7 @@ def register():
     bpy.types.Object.bucket_builder_pack_lock = BoolProperty(
         name="Locked", default=False,
         description="The packer leaves this part where it is and packs the others around it")
+    tempdir.sweep_stale()                      # (job folders left by a crashed session)
 
 
 def unregister():

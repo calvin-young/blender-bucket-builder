@@ -23,7 +23,7 @@ import traceback
 
 import numpy as np
 
-from . import greedy
+from . import greedy, safe
 from .meshio import Mesh
 from .problem import Part, Settings
 
@@ -33,7 +33,8 @@ SETTINGS = ('gap', 'wall_gap', 'h', 'coarse', 'phases', 'z_step', 'max_density',
 
 def write_job(folder, parts, settings, locked=()):
     """Write what a worker needs: parts (meshes shared by identity),
-    settings, locked (mesh, 4 x 4) pairs."""
+    settings, locked (mesh, 4 x 4) pairs.  Geometry and numbers only: the
+    worker needs no names, so the parts are numbered here (part-001 ...)."""
     arrays, meshes, spec = {}, {}, []
     for p in parts:
         j = meshes.get(id(p.mesh))
@@ -41,7 +42,7 @@ def write_job(folder, parts, settings, locked=()):
             j = meshes[id(p.mesh)] = len(meshes)
             arrays['v%d' % j] = np.asarray(p.mesh.verts, np.float64)
             arrays['t%d' % j] = np.asarray(p.mesh.tris, np.int32)
-        spec.append({'name': p.name, 'mesh': j, 'quantity': int(p.quantity), 'mode': p.mode,
+        spec.append({'name': 'part-%03d' % (len(spec) + 1), 'mesh': j, 'quantity': int(p.quantity), 'mode': p.mode,
                      'tier': int(p.tier), 'base': np.asarray(p.base, float).tolist(),
                      'close_cells': p.close_cells})
     for n, (m, M) in enumerate(locked):
@@ -115,7 +116,7 @@ def main(folder):
         state['finished'] = True
         report(res, final=True)
     except Exception:
-        state['error'] = traceback.format_exc()[-2000:]
+        state['error'] = safe.tidy(traceback.format_exc()[-2000:])
         state['finished'] = True
         _write(folder, state)
         return 1

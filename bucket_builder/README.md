@@ -308,6 +308,38 @@ text. Paste that into a message when you report something slow: it says where
 the time goes. **Recheck Everything** throws all cached data away and starts
 again.
 
+## Privacy and security
+
+Bucket Builder works on your computer and on your scene, and nothing else.
+
+* **Nothing leaves the computer.** The add-on has no network code and its
+  manifest asks for no network permission; the only permission it asks for is
+  the clipboard, to copy the performance report when you press the button.
+  (`tests/test_privacy.py` checks both.)
+* **Copy Report** (Performance) puts counts and timings on the clipboard:
+  versions, graphics card, number of parts and triangles, how long things
+  took. It names no object, mesh, scene, file or folder
+  (`tests/blender_privacy_test.py`).
+* **What it keeps:** its settings and the list of ignored problems live in the
+  scene, in your .blend file; the printer list is in Blender's preferences.
+  It writes nothing else to disk apart from the two temporary items below.
+* **The packer** (Pack, experimental) hands the meshes to a helper process,
+  Blender's own Python, through a folder in your account's temporary folder
+  (closed to other accounts where the system allows it). The folder holds
+  geometry and numbers for numbered parts and no names. It is removed when packing ends or is
+  stopped. If Blender is killed in the middle, it is removed the next time
+  Blender starts or you pack again, once nothing has touched it for six hours.
+  Measure Packer Speed writes a small text file there too; it uses built-in
+  test shapes, never your parts.
+* **Error messages** from the packer give the kind of failure, with the
+  add-on's folder, the temporary folder and your home folder shortened to
+  `<addon>`, `<temp>` and `~`, so that a message can be pasted into a bug
+  report.
+* **The command line** (`python -m pack report`, `python -m pack pack`) prints
+  `bucket-01` and `part-001` instead of file and part names, and its errors
+  say what kind of failure it was, not where. Add `--names` to see the names
+  (and the full details of an unexpected failure).
+
 ## How it stays fast
 
 * Each unique mesh is sorted once into a bounding-volume tree. Copies of a part

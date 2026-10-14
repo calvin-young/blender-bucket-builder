@@ -22,6 +22,14 @@ T0 = time.perf_counter()
 STATE = {}
 
 
+def job_folders():
+    import tempfile
+    return {n for n in os.listdir(tempfile.gettempdir()) if n.startswith('bucket_builder_pack_')}
+
+
+JOBS0 = job_folders()          # (what was there before this test packed anything)
+
+
 def log(*a):
     print(f'[{time.perf_counter() - T0:6.2f}s] ' + ' '.join(str(x) for x in a), flush=True)
 
@@ -130,6 +138,9 @@ def step_after():
     log('monitor:', {k: s[k] for k in ('collisions', 'clearance', 'partly_out', 'outside', 'busy')})
     shot('gui_pack_1_after')
     assert s['collisions'] == 0 and s['clearance'] == 0 and s['partly_out'] == 0 and s['outside'] == 0, s
+    left = job_folders() - JOBS0
+    assert not left, 'a finished run left its job folder behind: %s' % sorted(left)
+    log('no job folder left after a finished run')
     return 0.2
 
 
@@ -180,6 +191,9 @@ def step_stopped():
     log('after stop (%.1f s):' % (time.perf_counter() - STATE['t']), st.pack_last)
     assert 'left beside the volume' in st.pack_last and 'stopped' in st.pack_last, st.pack_last
     assert not bc.packing.JOB['running']
+    left = job_folders() - JOBS0
+    assert not left, 'a stopped run left its job folder behind: %s' % sorted(left)
+    log('no job folder left after a stopped run')
     return 0.2
 
 

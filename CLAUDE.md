@@ -284,7 +284,7 @@ limit but their scripts are in `scratchpad/review_*`):
 
 ## State
 
-Last updated: 2026-10-13 (session 3).
+Last updated: 2026-10-14 (session 3).
 
 * `main` is **1.3.0** (2026-10-13): 1.2.0 plus the Build Report (Stage 1 of the
   auto packer, merged from `autopack` by fast-forward). Zip sent to the owner.
@@ -322,6 +322,15 @@ Last updated: 2026-10-13 (session 3).
 * Do not wait for a background job with `pgrep -f <its command line>` in the
   same command: it matches the waiting shell itself.
 * Not tested: Blender 4.2 - 5.1, macOS, Vulkan / Metal, a real GPU.
+* **What the add-on does with a user's data** (1.3.95, `autopack`): no network
+  code or permission (the manifest asks only for the clipboard); Copy Report
+  holds counts and timings only; the packer's job folder has numbered parts
+  and no names, is removed at the end and swept when stale
+  (`pack/tempdir.py`); error text is tidied (`pack/safe.py`); the command
+  line prints generic labels and generic errors unless `--names`. Pinned by
+  `tests/test_privacy.py` and `tests/blender_privacy_test.py`; the user guide
+  has a section "Privacy and security". Keep these true when adding features
+  (an exporter should be able to leave names and metadata out).
 
 ## Next
 
@@ -506,7 +515,8 @@ Decided / told to him (checked against the docs that day):
 ### A. With the owner
 
 * **3MF export** is "the next project" (the button is a placeholder that
-  already warns about parts outside the volume).
+  already warns about parts outside the volume). It should be able to leave
+  out part names, metadata and the thumbnail.
 * **The "3D Printing" application template** (File > New): he said "take a
   crack at it"; for the owner / operator of an MJF machine, import through
   export, easier than the commercial print-prep tools. Not started. A template is a folder
