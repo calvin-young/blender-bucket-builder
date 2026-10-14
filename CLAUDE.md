@@ -483,6 +483,26 @@ voxel slack), score presets, Pack panel.
 The owner still owes: Suzanne STLs at several subdivision levels, non-sensitive
 benchmark buckets.
 
+**A local machine is being set up (asked 2026-10-14)**: an old desktop of the
+owner's, to run the packer on bigger sets of buckets and compare with the commercial packer.
+Decided / told to him (checked against the docs that day):
+
+* Windows 11 (the commercial packer is a Windows program; it is also where the add-on and
+  Blender's Python run in production, and the pringles 66 vs 109 mm
+  difference may be a platform effect). Claude desktop app, Code tab, Local;
+  computer use (driving a GUI such as the commercial packer) exists on Windows only in the
+  desktop app, not in the CLI. The CLI (`irm https://claude.ai/install.ps1 | iex`)
+  is the alternative for long unattended runs. No MCP server is needed to
+  start: shell, files and git come with Claude Code, `gh` covers GitHub.
+* The commercial packer can be run from a Lua script: `packer.exe /startluascript="x.lua"`
+  (parameters cannot be passed on that line: write them to a JSON file the
+  script reads). Not yet confirmed: whether the owner's edition exposes the
+  packer to Lua, and whether it runs without the GUI. Plan: judge both
+  layouts with the same tools (`python -m pack report`, `pack --referee`)
+  on the same gaps, never by each program's own numbers.
+* A local session needs no upload: bucket files just sit in a folder outside
+  the repo.
+
 ### A. With the owner
 
 * **3MF export** is "the next project" (the button is a placeholder that
