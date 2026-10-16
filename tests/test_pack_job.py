@@ -215,6 +215,72 @@ def test_cancel_and_locked():
           'cancelled during the first layout: %d placed, the rest "stopped"' % len(res.placements))
 
 
+def test_compact():
+    print('compaction to the exact gaps')
+    from pack import compact
+    rng = np.random.default_rng(7)
+    shapes = [S.box(20, 14, 9), S.figurine(0.7), S.pringle(18.0, 22.0, 2.0, 8, 24), S.ring(), S.bracket()]
+    for trial in range(3):
+        k = rng.choice(len(shapes), 3, replace=False)
+        parts = [Part('p%d' % j, shapes[j], int(rng.integers(3, 7)), 'z') for j in k]
+        gap = float(rng.choice([1.0, 2.0, 3.0]))
+        s = Settings(vlo=(0, 0, 0), vhi=(150, 120, 120), gap=gap, wall_gap=2.0, z_step=90.0, max_density=None)
+        r = greedy.solve(parts, s, threads=1)
+        items = [(parts[p.part].mesh, p.matrix) for p in r.placements]
+        Ms, c = compact.compact(items, s.vlo, s.vhi, s.gap, s.wall_gap)
+        new = [('x', m, M) for (m, _), M in zip(items, Ms)]
+        v = referee.check(new, s.vlo, s.vhi, s.gap, s.wall_gap)
+        top = max(float((m.verts @ M[:3, :3].T)[:, 2].max() + M[2, 3]) for _, m, M in new)
+        check(v.ok and c.moves > 0 and top <= r.height + 1e-6,
+              'trial %d (gap %.0f): %d parts moved %.0f mm in all, %.1f -> %.1f mm high, referee clean (%s)'
+              % (trial, gap, c.moves, c.travel, r.height, top, v.ok))
+
+
+def test_start_off_grid():
+    print('a layout off the grid is kept, pinned; a bad one is mended')
+    desc, parts, kw = S.buckets()['keycaps']
+    parts = [Part('keycap', parts[0].mesh, 20, 'free')]
+    s = Settings(vlo=(0, 0, 0), vhi=(200, 150, 100), time_budget=None, gap=3.0, wall_gap=3.0, max_density=None)
+    jb, res = _job(parts, s, max_iterations=0)
+    from pack import compact
+    items = [(parts[p.part].mesh, p.matrix) for p in res.placements]
+    Ms, c = compact.compact(items, s.vlo, s.vhi, s.gap, s.wall_gap)
+    start = {(p.part, p.copy): M for p, M in zip(res.placements, Ms)}
+    jb2 = J.Job(parts, s, threads=1, start=start, max_iterations=0)
+    lay = jb2._fresh()
+    jb2.cur = lay
+    left = jb2._load(lay, start)
+    pinned = sum(1 for r in lay.recs.values() if r[0] == 'pin')
+    check(not left and pinned > 0, 'every part kept (%d of 20 pinned off the grid)' % pinned)
+    r2 = jb2.result() if False else None
+    jb2.close()
+    jb3, r3 = _job(parts, s, start=start, max_iterations=4)
+    v = referee.check(r3.items(parts), s.vlo, s.vhi, s.gap, s.wall_gap)
+    check(v.ok and len(r3.placements) == 20, 'improving it gives a valid layout of all 20 (%.1f mm)' % r3.height)
+    bad = dict(start)
+    bad[(0, 3)] = bad[(0, 4)].copy()                     # (two in one place)
+    M = bad[(0, 7)].copy()
+    M[0, 3] = 500.0                                      # (one outside)
+    bad[(0, 7)] = M
+    jb4, r4 = _job(parts, s, start=bad, max_iterations=2)
+    v = referee.check(r4.items(parts), s.vlo, s.vhi, s.gap, s.wall_gap)
+    check(v.ok and len(r4.placements) == 20 and 'to place' in jb4.log[0] and ' 2 to place' in jb4.log[0],
+          'two bad parts are placed again: %s' % jb4.log[0].strip())
+
+
+def test_tiers():
+    print('essential parts first')
+    big = S.box(44, 44, 30)
+    small = S.box(12, 12, 12)
+    parts = [Part('small', small, 40, 'fixed', tier=2), Part('big', big, 4, 'fixed', tier=1)]
+    s = Settings(vlo=(0, 0, 0), vhi=(100, 100, 32), gap=2.0, wall_gap=2.0, max_density=None, time_budget=None)
+    jb, res = _job(parts, s, max_iterations=8)
+    nb = sum(1 for p in res.placements if p.part == 1)
+    ns = sum(1 for p in res.placements if p.part == 0)
+    v = referee.check(res.items(parts), s.vlo, s.vhi, s.gap, s.wall_gap)
+    check(nb == 4 and v.ok, 'all 4 essential boxes placed, %d of 40 others, referee clean' % ns)
+
+
 def test_worker():
     print('the worker process')
     import subprocess
@@ -258,6 +324,9 @@ if __name__ == '__main__':
     kc = test_keycaps()
     test_start(*kc)
     test_cancel_and_locked()
+    test_compact()
+    test_start_off_grid()
+    test_tiers()
     test_worker()
     print()
     if FAILS:

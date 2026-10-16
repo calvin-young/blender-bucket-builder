@@ -430,6 +430,33 @@ and the referee. They are listed in the solver dropdown; `auto` picks one
 
 ### 8.3 Improvement (progressive, anytime)
 
+> **As built (Stage 3, `pack/job.py`).** A `Job` runs, in order: greedy with
+> every orientation (the first result); **probes**, each part's copies alone
+> in an empty bucket in one orientation at a time, without the density limit,
+> tallest and one of each bounding-box shape first, a probe stopping as soon
+> as it is higher than the best finished one; **turned probes** near the
+> best (turned about the vertical in 15 degree steps, and in free mode the
+> best of each of the three best footprint shapes turned about its thinnest
+> horizontal axis); greedy with each part limited to its best 1, 2, 3
+> orientations; ruin and recreate (below); exact compaction (§8.5). It stops
+> early at a lower bound (the tallest part at its flattest, the height the
+> density limit demands). Why probes: greedy looks one part ahead, so it laid
+> 81 keycaps flat in two layers where standing they fit in one, and mixed
+> the orientations of 150 chips that nest when all are turned alike.
+> Ruin: the top layer, the tallest part and its neighbours, a region, or a
+> few at random; recreate in a shuffled size order; then every part settles
+> (down, back, left on the grid); accepted when better, or within a
+> threshold that shrinks to zero over the run. The bucket grid holds counts
+> so parts can be taken out. With more than two cores the probes, the
+> best-orientation runs and the ruin-and-recreate chains (slices of 8 s from
+> the best layout) run in up to eight `spawn` processes while the first
+> layout is built in the main one. Free mode is made deterministic: the
+> principal frame of a degenerate shape is fixed by its smallest bounding
+> rectangle (square shapes square to the axes) or, for a round outline, by
+> the direction it bends towards the third axis; orientations are sorted by
+> their posed shape. Score (`pack/score.py`): parts left out per tier, then
+> placed volume, then a preset's weighted height and layer spread.
+
 * **Ruin and recreate** (large neighbourhood search): repeatedly remove a set
   of placed parts (the top slab, a random region, the parts around a gap, or
   random parts), re-insert them and any unplaced parts greedily with a
@@ -462,6 +489,20 @@ For "one part, make 20" and for groups of identical copies:
   with the referee (all copies share them).
 
 ### 8.5 Compaction (all solvers)
+
+> **As built (Stage 3, `pack/compact.py`).** Conservative advancement on the
+> exact engine: the engine measures distances up to gap + 4 mm (its clearance
+> threshold set there); a part may move by d - gap in any direction without
+> coming closer than the gap, so it moves that much (less a margin of 1 % of
+> the gap plus 5 micrometres, for the engine's 1 % proofs), measures again,
+> and stops when the step is under 0.02 mm; a step after which the engine
+> finds a pair under the gap is halved until it does not. Floor, side walls
+> (wall gap) and the density limit's height are checked from the vertices.
+> The job keeps min(30 % of the time, 1 s + 0.15 s per part) for it, and
+> skips it when reading the meshes into the engine would take most of that.
+> A compacted layout is off the packer's grid, so Improve Current Layout
+> keeps such parts *pinned*: voxelised where they are (as locked parts),
+> placed again only if ruin and recreate takes them out.
 
 Voxel layouts waste up to about 2h of gap. A final pass moves each part, in
 order from the bottom, along -Z, then -Y, -X, by bisection between where it
@@ -682,7 +723,7 @@ for the owner to set before asking for the stage.
 | 0 | This spec; benchmark folders | spec reviewed by the owner | Opus 5.5, high |
 | 1 (**done**, 2026-10-13) | `pack/meshio.py` (STL, 3MF), `pack/metrics.py` (volume, layer profile, density, partial-OOB warning), sidebar report and profile plot, `python -m pack report` | exact against analytic shapes (boxes, spheres, tori, rotated) to 1e-9; report on a 60 x 1 M build in seconds | Sonnet 5.5, medium |
 | 2 | Voxel layer (conservative voxelisation, flood fill, dilation), FFT feasibility, coarse to fine, greedy placement; CPU and GPU timing script for the owner | feasible layouts verified by the referee on all synthetic buckets; timing table on the VM and the owner's laptop; a decision on the GPU path | Opus 5.5, high |
-| 3 | `Job` loop, improvement (ruin and recreate), compaction, rotation modes, locks, tiers, density cap, layer penalty; Pack panel and part list | beats or matches the owner's commercial packer baseline on the synthetic set; first result within the targets of §2 | Sonnet 5.5, medium |
+| 3 (**mostly done**, 2026-10-16) | `Job` loop, improvement (ruin and recreate), compaction, rotation modes, locks, tiers, density cap, layer penalty; Pack panel and part list | beats or matches the owner's commercial packer baseline on the synthetic set; first result within the targets of §2 | Sonnet 5.5, medium |
 | 4 | Pattern solver (lattices, double lattices) | beats the bounding-box array on pringle, figurine and Suzanne copies | Opus 5.5, high |
 | 5 | Planner (goals, ratios, quantities); Buckets panel; World groups; export all | multi-bucket jobs from the synthetic set; bucket workflow tested in a window | Opus to design, Sonnet to build |
 | 6 | Halos (adaptive, thickness), pair warnings, what-if, solver recommendation | what-if suggestions reproducible across seeds | Sonnet 5.5, medium |

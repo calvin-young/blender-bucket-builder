@@ -19,7 +19,7 @@ a newer version over an older one keeps your printers and settings.
 
 ## Use
 
-Open the sidebar in the 3D viewport (N) and the **Bucket** tab. It has six
+Open the sidebar in the 3D viewport (N) and the **Bucket** tab. It has seven
 panels; each can be folded away by a click on its title.
 
 | Panel | What is in it |
@@ -28,6 +28,7 @@ panels; each can be folded away by a click on its title.
 | **Collision Detection** | The switch for collisions and clearance, their settings, and which parts are checked. |
 | **Build Volume** | The switch for the build volume, the printer, the wall gap. |
 | **Build Report** | The switch for the density report: parts, volume, packed height, 3D density, the density of every layer and a picture of it. |
+| **Pack (Experimental)** | Arranging the parts in the build volume automatically. |
 | **Options** | Part colours, what is drawn, performance figures, units. |
 | **Export** | Writing the build to a 3MF file (not in this version yet). |
 
@@ -226,6 +227,56 @@ Without Blender, `python3 tools/pack_report.py bucket.3mf --printer 5600`
 prints the same figures for a 3MF or STL file. Its output has no file or
 part names unless `--names` is given.
 
+### Pack (Experimental)
+
+**Pack** arranges the selected parts (or all visible parts when nothing is
+selected) in the build volume. Parts marked **Locked** stay where they are and
+the others are packed around them. It works in the background: you can go on
+working, and the badge at the top of the viewport says how far it is.
+
+1. **The first layout** fills the volume part by part, largest first, each
+   one as low as it goes. You watch the parts fly in.
+2. **Improving**: for the rest of the **Time** you set, the packer looks for
+   better layouts, and the parts move whenever it finds one. It packs the
+   copies of each part on their own, one orientation at a time, to find the
+   ways they pack best together (81 keycaps standing on edge fit in one layer
+   where lying flat they need two), packs again with those, then takes parts
+   out and puts them back differently. It stops sooner when the build cannot
+   get any lower.
+3. **The exact gaps**: at the end every part moves down, back and left until
+   it is exactly the **Gap** from its neighbours, measured on the meshes (the
+   packer itself works on a grid of small cells, which leaves up to about two
+   cells of extra room between parts).
+
+**Stop** (or Esc) keeps the best layout found so far; during the first layout
+it keeps what has been placed and puts the rest in a row beside the volume.
+Ctrl+Z puts every part back where it was. Parts that cannot be placed go in a
+row beside the volume, and the panel says why.
+
+| Setting | What it does |
+| --- | --- |
+| **Goal** | *Most Parts*: as many parts as fit, then as low as possible. *Lowest Build*: as many parts, then the lowest build, whatever the layers look like. *Even Layers*: as many parts, then the most even density from layer to layer. |
+| **Time** | How long to look for better layouts after the first one (0: the first layout only). |
+| **Rotation** | *Fixed*: parts keep their rotation. *About Z*: they turn about the vertical, in steps of **Turn Step**. *Free*: any of the 24 ways a part's main axes can line up with the volume's. A part's own setting (below the settings, for the active part) overrides this. |
+| **Gap**, **Wall Gap** | The distance kept between parts, and from the side walls. |
+| **Max Density** | The packer builds higher rather than exceed this 3D density. |
+
+For the active part: **Pack Rotation** (its own rotation mode), **Locked**
+(it stays where it is), **Essential**: when some parts are marked essential,
+all of them are placed first and the others only where there is room left
+(no number of other parts outweighs one essential part).
+
+**Improve Current Layout** starts from where the parts are now instead of
+from an empty volume: every part the exact check finds in a valid place stays
+there (of two parts too close together, the higher one is placed again, as is
+a part outside the volume), the others are placed, and then it looks for a
+better layout for the time set. Use it to tighten a layout you arranged by
+hand, or to give a packed build more time.
+
+With several cores the packer uses several helper processes at once (up to
+eight, leaving two cores free), so a minute on a laptop with many cores goes
+much further than on two.
+
 ### Export
 
 **Export 3MF** is a placeholder: writing the build to a 3MF file comes in a
@@ -329,6 +380,8 @@ Bucket Builder works on your computer and on your scene, and nothing else.
   geometry and numbers for numbered parts and no names. It is removed when packing ends or is
   stopped. If Blender is killed in the middle, it is removed the next time
   Blender starts or you pack again, once nothing has touched it for six hours.
+  On a computer with several cores the helper starts a few more of its own,
+  which get the same geometry through pipes, not files, and end with it.
   Measure Packer Speed writes a small text file there too; it uses built-in
   test shapes, never your parts.
 * **Error messages** from the packer give the kind of failure, with the

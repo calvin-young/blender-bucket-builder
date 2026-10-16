@@ -242,7 +242,11 @@ class Job:
         part at its flattest, and the height the density limit demands."""
         lb = self.cur.base_height
         vol = self.cur.bucket.volume                 # (the locked parts')
+        self._too_large = set()
         for i, part in enumerate(self.parts):
+            if not any(self.g._may_fit(self.cur.bucket, i, k) for k in range(len(self.g.orients(i)))):
+                self._too_large.add(i)               # (left out whatever happens: no bound from it)
+                continue
             ext = []
             for A in self.g.orients(i):
                 z = np.asarray(part.mesh.verts, float) @ np.asarray(A[2], float)
@@ -254,7 +258,9 @@ class Job:
         return lb
 
     def _at_bound(self):
-        if self.best is None or len(self.best) < len(self.copies):
+        if self.best is None:
+            return False
+        if any(q not in self.best and q[0] not in self._too_large for q in self.copies):
             return False
         return self._best_height() <= self._lb + self.s.h
 
@@ -293,8 +299,11 @@ class Job:
                 yield
 
     def _probe_plan(self):
-        """[(part, its distinct orientations, tallest first)] for every part
-        whose copies are worth probing."""
+        """[(part, one orientation of each bounding-box shape, the other
+        distinct ones)], tallest first, for every part whose copies are worth
+        probing.  The turned probes go between the two (they find more than
+        the rest of the mode's own orientations, which are mostly the same
+        shapes flipped)."""
         plan = []
         for i, part in sorted(enumerate(self.parts), key=lambda t: -self._size(t[0]) * t[1].quantity):
             if part.quantity < 2 or part.mode == 'fixed':
@@ -309,7 +318,7 @@ class Job:
                     c = self._extents_class(i, k)
                     (rest if c in seen else first).append(k)
                     seen.add(c)
-                plan.append((i, first + rest))
+                plan.append((i, first, rest))
         return plan
 
     def _probe(self, i, ks, ranks, limit):
@@ -317,11 +326,17 @@ class Job:
         every copy, the others stop as soon as they are higher."""
         q = self.parts[i].quantity
         for k in ks:
-            if self._time_up():
+            if self._time_up(self._probe_keep()):
                 return
             lay = self._fresh()
             yield from self._build(lay, [(i, c) for c in range(q)], {i: [k]}, stop_above=limit[0])
             self._rank(i, k, q - len(lay.recs), lay.bucket.height, ranks, limit)
+
+    def _probe_keep(self):
+        """Seconds the probes leave: those kept for compaction and enough
+        for a run with the best orientations (much cheaper than the first,
+        which tried them all)."""
+        return self._reserve + 0.3 * getattr(self, 'first_seconds', 0.0)
 
     def _rank(self, i, k, left, height, ranks, limit):
         ranks.append(((left, round(height, 6), k), k))
@@ -472,21 +487,24 @@ class Job:
         cap0 = self.g.cap
         self.g.cap = None
         try:
-            for i, ks in self._probe_plan():
+            for i, first, rest in self._probe_plan():
                 ranks, limit = [], [None]
-                yield from self._probe(i, ks, ranks, limit)
-                turned = self._turns(i, ranks)
+                yield from self._probe(i, first, ranks, limit)
+                turned = self._turns(i, ranks) if not self._time_up(self._probe_keep()) else []
                 if turned:
                     yield from self._probe(i, turned, ranks, limit)
+                yield from self._probe(i, rest, ranks, limit)
                 if ranks:
                     self.cands[i] = [k for _, k in sorted(ranks)]
                     self.log.append('%6.1f s  probes     %s: orientations %s, best first'
                                     % (self.elapsed, self.parts[i].name, self.cands[i][:4]))
         finally:
             self.g.cap = cap0
-        # greedy with the best few orientations of each part
+        # greedy with the best few orientations of each part (the first of
+        # these runs is cheap and often the big step: it may use the time
+        # kept for compaction)
         for m in (1, 2, 3):
-            if not self.cands or self._time_up() or self._at_bound():
+            if not self.cands or self._time_up(0.0 if m == 1 else None) or self._at_bound():
                 break
             if m > 1 and all(len(v) < m for v in self.cands.values()):
                 break
@@ -663,7 +681,7 @@ class Job:
         the meshes into the exact engine would take most of them)."""
         if not self.s.compact or self.budget is None or self.budget <= 0:
             return 0.0
-        keep = min(0.3 * self.budget, 1.0 + 0.15 * len(self.copies))
+        keep = min(0.2 * self.budget, 1.0 + 0.1 * len(self.copies))
         nt = sum(m.nt for m in {id(p.mesh): p.mesh for p in self.parts}.values())
         if nt * self.SORT_S_PER_TRIANGLE > 0.5 * keep:
             self.log.append('%6.1f s  no compaction: the meshes are too large for the time set' % self.elapsed)
@@ -754,14 +772,16 @@ class Job:
         ranks = collections.defaultdict(list)
         n_probes = collections.Counter()
         turned = set()
-        for i, ks in self._probe_plan():
-            for k in ks:
+        later = {}
+        for i, first, rest in self._probe_plan():
+            for k in first:
                 pending.append((i, k))
                 n_probes[i] += 1
+            later[i] = rest
             limit[i] = [None]
 
         def pump():
-            while len(inflight) < n and pending and not self._time_up():
+            while len(inflight) < n and pending and not self._time_up(self._probe_keep()):
                 i, k = pending.popleft()
                 inflight[self._pool.submit(_task_probe, i, k, limit[i][0], self._extra.get(i, []))] = \
                     ('probe', i, k)
@@ -780,11 +800,10 @@ class Job:
                     i, k, left, h = r
                     self._rank(i, k, left, h, ranks[i], limit[i])
                     if len(ranks[i]) == n_probes[i]:
-                        more = [] if i in turned else self._turns(i, ranks[i])
+                        more = [] if i in turned else self._turns(i, ranks[i]) + later.get(i, [])
                         turned.add(i)
                         if more:
-                            for k in more:
-                                pending.appendleft((i, k))
+                            pending.extendleft((i, k) for k in reversed(more))
                             n_probes[i] += len(more)
                         else:
                             self.cands[i] = [k for _, k in sorted(ranks[i])]
@@ -824,21 +843,25 @@ class Job:
         if self._at_bound():
             return
         # 2. the rest of the probes
-        while (pending or inflight) and not self._time_up():
+        while (pending or inflight) and not self._time_up(self._probe_keep()):
             pump()
             idle()
             yield
+        # (probes still running are not waited for)
+        for f in [f for f, w in inflight.items() if w[0] == 'probe']:
+            f.cancel()
+        pending.clear()
         for i in ranks:
             if i not in self.cands and ranks[i]:
                 self.cands[i] = [k for _, k in sorted(ranks[i])]
         # 3. greedy with the best few orientations, one run per process
-        if self.cands and not self._time_up() and not self._at_bound():
+        if self.cands and not self._time_up(0.0) and not self._at_bound():
             for m in (1, 2, 3):
                 if m > 1 and all(len(v) < m for v in self.cands.values()):
                     break
                 choice = {i: v[:m] for i, v in self.cands.items()}
                 inflight[self._pool.submit(_task_run, choice, 'best %d' % m, self._extra)] = ('run',)
-            while inflight and not self._time_up():
+            while any(w[0] == 'run' for w in inflight.values()) and not self._time_up(0.0):
                 idle()
                 yield
         # 4. ruin and recreate, one chain per process, from the best layout

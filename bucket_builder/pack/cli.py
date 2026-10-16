@@ -4,7 +4,7 @@
     python -m pack report bucket.3mf                  # density report
     python -m pack report bucket.3mf --printer 1200 --profile
     python -m pack report part.stl --volume 380 284 380 --center
-    python -m pack pack parts.3mf --mode z --gap 3 --out packed.3mf --referee
+    python -m pack pack parts.3mf --mode z --gap 3 --time 60 --out packed.3mf --referee
 
 Run it from the `bucket_builder` folder (or use tools/pack_report.py).
 
@@ -45,7 +45,7 @@ def build_parser():
                    help='print file and part names (do not for private buckets)')
     r.add_argument('--workers', type=int, default=None, help='threads (default: all cores)')
 
-    k = sub.add_parser('pack', help='pack the parts of a 3MF or STL into one bucket (greedy, Stage 2)')
+    k = sub.add_parser('pack', help='pack the parts of a 3MF or STL into one bucket')
     k.add_argument('file', help='.3mf (each build item a part; copies of one mesh are grouped) or .stl')
     k.add_argument('--out', help='write the packed build to this .3mf')
     g = k.add_mutually_exclusive_group()
@@ -60,6 +60,13 @@ def build_parser():
     k.add_argument('--max-density', type=float, default=12.0, help='3D density limit in %% (12; 0: none)')
     k.add_argument('--cell', type=float, default=1.0, help='voxel size, mm (1)')
     k.add_argument('--z-step', type=float, default=30.0, help='degrees between turns about z (30)')
+    k.add_argument('--time', type=float, default=60.0,
+                   help='seconds to look for better layouts after the first (60; 0: the first only)')
+    k.add_argument('--goal', choices=('overnight', 'rush', 'quality'), default='overnight',
+                   help='most parts then lowest (overnight), lowest (rush), even layers (quality)')
+    k.add_argument('--seed', type=int, default=0, help='of the improvement loop (0)')
+    k.add_argument('--workers', type=int, default=None, help='processes (default: up to 8, two cores left)')
+    k.add_argument('--no-compact', action='store_true', help='skip the final move to the exact gaps')
     k.add_argument('--referee', action='store_true', help='check the result with the exact engine')
     k.add_argument('--names', action='store_true', help='print file and part names')
     return ap
@@ -81,7 +88,7 @@ def parts_of(scene, mode, copies):
 
 
 def pack_one(args, out):
-    from . import greedy, referee
+    from . import job as J, referee
     from .problem import Settings
     p = lambda s='': print(s, file=out)  # noqa: E731
     t0 = time.perf_counter()
@@ -89,9 +96,19 @@ def pack_one(args, out):
     pname, vlo, vhi = volume_of(args)
     parts = parts_of(scene, args.mode, args.copies)
     s = Settings(vlo=vlo, vhi=vhi, gap=args.gap, wall_gap=args.wall_gap, h=args.cell,
-                 z_step=args.z_step, max_density=(args.max_density / 100.0) or None)
+                 z_step=args.z_step, max_density=(args.max_density / 100.0) or None,
+                 time_budget=args.time, preset=args.goal, seed=args.seed, compact=not args.no_compact)
     t_read = time.perf_counter() - t0
-    res = greedy.solve(parts, s)
+    first = []
+
+    def upd(j):
+        if not first and j.best is not None:
+            first.append(j._best_height())
+    jb = J.Job(parts, s, workers=args.workers)
+    try:
+        res = jb.run(upd)
+    finally:
+        jb.close()
     items = res.items(parts)
     rep = metrics.measure(items, vlo, vhi)
     n = sum(q.quantity for q in parts)
@@ -110,7 +127,10 @@ def pack_one(args, out):
         p('  3D density     %.2f %%   (limit %s)' % (100 * rep.density,
                                                      '%.1f %%' % args.max_density if args.max_density else 'none'))
         p('  layer density  peak %.1f %%, spread %s' % (100 * rep.peak_layer, fmt_cv(rep)))
-    p('  time           read %.1f s, pack %.1f s' % (t_read, res.seconds))
+    if first and rep.density is not None:
+        p('  first layout   %.1f mm' % first[0])
+    p('  time           read %.1f s, pack %.1f s (%d process%s)' % (t_read, res.seconds, jb.workers,
+                                                                   '' if jb.workers == 1 else 'es'))
     if args.referee:
         v = referee.check(items, vlo, vhi, args.gap, args.wall_gap)
         p('  referee        %s (%.1f s)' % ('clean' if v.ok else 'VIOLATIONS: %s' % v, v.seconds))

@@ -494,6 +494,7 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
             col = _split(box)
             col.prop(obj, "bucket_builder_pack_mode")
             col.prop(obj, "bucket_builder_pack_lock")
+            col.prop(obj, "bucket_builder_pack_essential")
         if st.pack_last:
             col = layout.column(align=True)
             col.active = False

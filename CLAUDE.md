@@ -284,7 +284,7 @@ limit but their scripts are in `scratchpad/review_*`):
 
 ## State
 
-Last updated: 2026-10-14 (session 3).
+Last updated: 2026-10-16 (session 3).
 
 * `main` is **1.3.0** (2026-10-13): 1.2.0 plus the Build Report (Stage 1 of the
   auto packer, merged from `autopack` by fast-forward). Zip sent to the owner.
@@ -484,9 +484,46 @@ Stage 3 shows where time goes.
 
 **Stage 2 is done except what needs the owner**: his `tools/pack_timing.py`
 numbers (GPU decision) and his buckets (`python -m pack pack ... --referee`
-on them, compared with his commercial packer results). Then Stage 3 (Sonnet 5.5,
-medium): Job loop, ruin and recreate, compaction to exact gaps (recovers the
-voxel slack), score presets, Pack panel.
+on them, compared with his commercial packer results).
+
+**Stage 3 (1.3.96, 2026-10-16, Opus 5.5; the owner asked for "a solid
+effort")**: `pack/job.py` (anytime `Job`: greedy, probes, turned probes,
+best-1/2/3 runs, ruin and recreate, compaction; `step(budget)`, `result()`,
+`version` goes up with every better layout; up to 8 `spawn` worker
+processes, none inside Blender itself: `parallel_workers` checks
+`__name__ == 'pack.job'`), `pack/score.py` (tiers, volume, preset weights),
+`pack/compact.py` (exact gaps by conservative advancement on the engine),
+`referee.offenders` (what to drop from a start layout). Bucket grid holds
+uint8 counts (parts come out again). The coarse correlation is cropped to
+the build height (exact; greedy 1.5 x faster). Part grids align to their
+lowest corner (`voxel.voxelize(align='min')`); turns that map a part onto
+itself are found by the posed vertex set (`Greedy._shape_sig`). Free-mode
+frame made deterministic (`problem.principal_frame`: smallest rectangle via
+the hull, or the bend of a round outline; orientations sorted by shape).
+Operator: Goal (`pack_preset`), Time (`pack_time`), Improve Current Layout
+(`improve=True`: valid parts kept, on the grid or pinned), Essential
+(`bucket_builder_pack_essential`: tier 1). Worker reports `phase`
+(greedy / improving / compacting), `version`, `height`; the operator moves
+all parts when the version changes (at most twice a second). CLI `pack`
+runs a job (`--time --goal --seed --workers --no-compact`).
+Results (2 cores, sequential, 60 s): keycaps 48 -> 36 mm (density limit's
+bound 35.8; 34 without the limit, all standing), pringles 143 -> 66 mm with
+the limit (bound 65.3) and 143 -> 60 without (all on edge, one layer; found
+only by the turned probes: chips nest at some in-plane turns and not at
+others because of the cells' slack), bureau-day without the limit 66 -> 55.3
+mm (bound 55.1; compaction 57 -> 55.3), figurines x3 83 -> 55.1. Tests:
+`tests/test_pack_job.py` (crop exact, remove = undo, frame invariance, small
+jobs vs greedy and referee, seed repeats, keycaps, start layouts on and off
+the grid, invalid starts, compaction, tiers, worker), `blender_pack_test.py`
+(Improve Current Layout), window `blender_gui_pack.py` (sees the improving
+phase; 48 linked copies, every part free). Learned: a probe costs about
+12 ms per copy here (FFTs a third, the rest bookkeeping), so probes are most
+of the time on two cores; the window test's scene was at its lower bound
+right after greedy until the parts were allowed to lie down.
+Not done in Stage 3: the part list (UIList) in the Pack panel, the commercial packer
+comparison (needs the owner's baselines), compaction that makes room for
+parts left out (now it only tidies the final layout), a lattice / pattern
+solver (Stage 4) that would make the probes far cheaper.
 
 
 The owner still owes: Suzanne STLs at several subdivision levels,

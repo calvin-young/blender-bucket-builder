@@ -59,17 +59,29 @@ def step_setup():
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
     sc = win().scene
-    for i in range(12):
-        bpy.ops.mesh.primitive_monkey_add(size=40, location=(60 + 3 * i, 60, 30 + 2 * i))
-    for i in range(8):
-        bpy.ops.mesh.primitive_torus_add(major_radius=18, minor_radius=5, location=(80, 80 + 2 * i, 40))
-    for i in range(10):
-        bpy.ops.mesh.primitive_cylinder_add(radius=8, depth=60, location=(100 + i, 50, 40))
+    # linked copies, as builds usually are
+    def copies(n, make, at):
+        make()
+        first = bpy.context.active_object
+        for i in range(1, n):
+            o = first.copy()
+            sc.collection.objects.link(o)
+            o.location = at(i)
+        first.location = at(0)
+        return first
+    copies(30, lambda: bpy.ops.mesh.primitive_monkey_add(size=60), lambda i: (60 + 3 * i, 60, 30 + 2 * i))
+    copies(8, lambda: bpy.ops.mesh.primitive_torus_add(major_radius=18, minor_radius=5), lambda i: (80, 80 + 2 * i, 40))
+    cyl = copies(10, lambda: bpy.ops.mesh.primitive_cylinder_add(radius=8, depth=60), lambda i: (100 + i, 50, 40))
+    for o in sc.objects:
+        if o.data == cyl.data:
+            o.bucket_builder_pack_mode = 'FREE'          # (so that lying down is better)
     bpy.ops.object.select_all(action='SELECT')
     st = sc.bucket_builder
     st.detect_collisions = True
     st.monitor_volume = True
     st.clearance_mm = st.pack_gap - 0.01
+    st.pack_time = 20.0
+    st.pack_mode = 'FREE'          # (Suzanne may lie on her face: room for the improvement phase)
     sp = area().spaces.active
     sp.show_region_ui = True
     sp.overlay.show_floor = False
@@ -113,6 +125,13 @@ def step_wait():
     STATE['ticks'] += 1
     if bc.packing.JOB['running']:
         STATE['seen_running'] = True
+        STATE.setdefault('phases', set()).add((bc.packing.JOB.get('phase'), round(bc.packing.JOB.get('height') or 0, 1)))
+        if bc.packing.JOB.get('phase') != 'greedy':
+            STATE['improving'] = True
+            if 'ishot' not in STATE:
+                STATE['ishot'] = True
+                log('improving:', bc.packing.badge_state()[:2])
+                shot('gui_pack_0c_improving')
         STATE['max_done'] = max(STATE.get('max_done', 0), bc.packing.JOB['done'])
         if 'mid' not in STATE and bc.packing.JOB['done'] >= 8:
             STATE['mid'] = True
@@ -128,7 +147,8 @@ def step_wait():
     assert STATE.get('max_done', 0) > 0, 'no progress was reported'
     proc = bc.packing.python_exe()
     log('packing process:', proc)
-    assert st.pack_last.startswith('Packed 30 of 30'), st.pack_last
+    assert st.pack_last.startswith('Packed 48 of 48'), st.pack_last
+    assert STATE.get('improving'), 'the improvement phase was never reported: %s' % STATE.get('phases')
     return 6.0                                  # (the monitor checks the new layout)
 
 

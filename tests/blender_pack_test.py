@@ -62,6 +62,7 @@ def main():
     st.pack_gap = 3.0
     st.pack_wall_gap = 5.0
     st.pack_max_density = 0.0
+    st.pack_time = 8.0
     r = bpy.ops.bucketbuilder.pack(selected_only=False)
     check(r == {'FINISHED'}, 'the operator finishes', r)
     check(np.allclose(np.array(plate.matrix_world), plate_before), 'the locked plate did not move')
@@ -79,6 +80,31 @@ def main():
     check(s['collisions'] == 0 and s['clearance'] == 0, 'the monitor finds no collision or gap under 3 mm', s)
     check(s['partly_out'] == 0 and s['outside'] == 0 and s['near_wall'] == 0,
           'everything inside, the wall gap kept', s)
+
+    # improve the layout the scene has: every part kept, no new problem, no higher
+    h0 = float(st.pack_last.split('height ')[1].split(' mm')[0])
+    where = {o.name: np.array(o.matrix_world) for o in objs}
+    st.pack_time = 5.0
+    r = bpy.ops.bucketbuilder.pack(selected_only=False, improve=True)
+    print('  ', st.pack_last)
+    check(r == {'FINISHED'} and st.pack_last.startswith('Packed 17 of 17'), 'Improve Current Layout keeps every part')
+    h1 = float(st.pack_last.split('height ')[1].split(' mm')[0])
+    check(h1 <= h0 + 1e-6, 'and the build is no higher (%.1f, was %.1f mm)' % (h1, h0))
+    mon = settle()
+    s = mon.status()
+    check(s['collisions'] == 0 and s['clearance'] == 0 and s['partly_out'] == 0 and s['outside'] == 0
+          and s['near_wall'] == 0, 'and the monitor is still content', s)
+    # a part moved onto another: it is placed again, the others stay
+    a, b = objs[0], objs[1]
+    a.matrix_world = b.matrix_world.copy()
+    bpy.context.view_layer.update()
+    keep = {o.name: np.array(o.matrix_world) for o in objs[2:]}
+    r = bpy.ops.bucketbuilder.pack(selected_only=False, improve=True)
+    mon = settle()
+    s = mon.status()
+    check(s['collisions'] == 0 and s['clearance'] == 0, 'a part dropped onto another is placed again', s)
+    print('   (', sum(1 for o in objs[2:] if np.allclose(np.array(o.matrix_world), keep[o.name])),
+          'of', len(objs) - 2, 'others did not move)')
 
     # a part that cannot fit is put beside the volume, with a warning
     bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0))

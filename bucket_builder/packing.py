@@ -187,6 +187,7 @@ class BUCKETBUILDER_OT_pack(Operator):
         dg = context.evaluated_depsgraph_get()
         cache, groups = {}, {}
         start = {}
+        any_essential = any(o.bucket_builder_pack_essential for o in move)
         for o in move:
             key_mesh = (o.data.as_pointer(), bool(o.modifiers)) if not o.modifiers else ('obj', o.as_pointer())
             if key_mesh not in cache:
@@ -195,9 +196,10 @@ class BUCKETBUILDER_OT_pack(Operator):
             mw = np.array(o.matrix_world, dtype=np.float64)
             L = mw[:3, :3] * k
             mode = st.pack_mode if o.bucket_builder_pack_mode == 'DEFAULT' else o.bucket_builder_pack_mode
-            gkey = (key_mesh, group_key(L, _MODE[mode]))
+            tier = 1 if (o.bucket_builder_pack_essential or not any_essential) else 2
+            gkey = (key_mesh, group_key(L, _MODE[mode]), tier)
             if gkey not in groups:
-                groups[gkey] = (Part(o.name, cache[key_mesh], 0, _MODE[mode], base=L.copy()), [])
+                groups[gkey] = (Part(o.name, cache[key_mesh], 0, _MODE[mode], tier=tier, base=L.copy()), [])
             groups[gkey][0].quantity += 1
             groups[gkey][1].append(o)
             M = mw.copy()
@@ -671,12 +673,17 @@ def register():
     bpy.types.Object.bucket_builder_pack_lock = BoolProperty(
         name="Locked", default=False,
         description="The packer leaves this part where it is and packs the others around it")
+    bpy.types.Object.bucket_builder_pack_essential = BoolProperty(
+        name="Essential", default=False,
+        description="When some parts are marked essential, the packer places all of them first, "
+                    "and the others only where there is room left")
     tempdir.sweep_stale()                      # (job folders left by a crashed session)
 
 
 def unregister():
     while _badge_handle:
         bpy.types.SpaceView3D.draw_handler_remove(_badge_handle.pop(), 'WINDOW')
+    del bpy.types.Object.bucket_builder_pack_essential
     del bpy.types.Object.bucket_builder_pack_lock
     del bpy.types.Object.bucket_builder_pack_mode
     for c in reversed(CLASSES):
