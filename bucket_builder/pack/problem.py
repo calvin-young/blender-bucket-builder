@@ -47,6 +47,7 @@ class Settings:
     time_budget: float = 60.0         # seconds for a whole job, improvement included (None: until done)
     preset: str = 'overnight'         # weights of the score (pack.score.PRESETS)
     seed: int = 0                     # of the improvement loop's choices
+    compact: bool = True              # end with every part moved to the exact gap (pack.compact)
 
     def __post_init__(self):
         if self.vlo is None or self.vhi is None:

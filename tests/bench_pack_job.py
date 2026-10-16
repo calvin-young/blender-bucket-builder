@@ -24,6 +24,7 @@ def main():
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--preset', default='overnight')
     ap.add_argument('--threads', type=int, default=None)
+    ap.add_argument('--workers', type=int, default=None, help='processes (default: the job decides)')
     ap.add_argument('--max-density', type=float, default=None,
                     help='3D density limit in %% (default: the Settings default; 0: none)')
     ap.add_argument('--scale-qty', type=int, default=1)
@@ -42,7 +43,7 @@ def main():
             parts = [type(p)(p.name, p.mesh, p.quantity * a.scale_qty, p.mode, p.tier, p.base) for p in parts]
         s = Settings(time_budget=a.time, seed=a.seed, preset=a.preset, **kw)
         t = time.perf_counter()
-        job = J.Job(parts, s, threads=a.threads)
+        job = J.Job(parts, s, threads=a.threads, workers=a.workers)
         first = []
 
         def upd(j):
@@ -63,9 +64,10 @@ def main():
             verdict = 'clean' if v.ok else 'VIOLATIONS %s' % (v,)
             bad += not v.ok
         g = '%.1f mm' % first[0][0] if first else '-'
-        print('%-11s %4d/%-3d %10s %7.1f mm %6.2f %% %6d %6.0f s  %s   (first %.0f s, bound %.1f mm)'
+        print('%-11s %4d/%-3d %10s %7.1f mm %6.2f %% %6d %6.0f s  %s   (first %.0f s, bound %.1f mm, %d process%s)'
               % (name, len(res.placements), n, g, rep.height, 100 * (rep.density or 0), job.iterations, dt,
-                 verdict, first[0][1] if first else 0, job._lb), flush=True)
+                 verdict, first[0][1] if first else 0, job._lb, job.workers, '' if job.workers == 1 else 'es'),
+              flush=True)
         if a.log:
             for line in job.log:
                 print('            ' + line)

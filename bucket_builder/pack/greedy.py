@@ -82,7 +82,19 @@ class Greedy:
     def orients(self, i):
         if i not in self._orients:
             self._orients[i] = orientations(self.parts[i], self.s.z_step)
+            self._n_base = getattr(self, '_n_base', {})
+            self._n_base[i] = len(self._orients[i])
         return self._orients[i]
+
+    def add_orientations(self, i, extra):
+        """Orientations beyond the mode's set (the job's turned probes), in
+        the order given: `extra` is the whole list so far, so that every
+        process numbers them alike.  Returns their indices."""
+        o = self.orients(i)
+        n0 = self._n_base[i]
+        for A in extra[len(o) - n0:]:
+            o.append(np.asarray(A, float))
+        return list(range(n0, n0 + len(extra)))
 
     def pose(self, i, k):
         key = (i, k)
@@ -343,16 +355,21 @@ class Greedy:
             out += [(i, c) for c in range(self.parts[i].quantity)]
         return out
 
-    def lock(self, bucket, mesh, M):
-        """A part that stays where it is (mm, 4 x 4): its solid becomes taken
-        cells, and its volume and height count for the limits."""
+    def pin(self, bucket, mesh, M):
+        """A part exactly where it is (mm, 4 x 4), voxelised in the bucket's
+        own grid: (grid, cell, profile, volume, top)."""
         M = np.asarray(M, float)
         V = np.asarray(mesh.verts, float) @ M[:3, :3].T + M[:3, 3] - bucket.vlo
         g = voxel.voxelize(V, mesh.tris, np.eye(3), bucket.h, 0.0)
-        b = np.rint(g.origin / bucket.h).astype(int) + bucket.M
+        b = tuple(int(x) for x in np.rint(g.origin / bucket.h).astype(int) + bucket.M)
         vol = abs(metrics.mesh_stats(mesh)[0] * np.linalg.det(M[:3, :3]))
         cnt = g.solid.sum(axis=(0, 1)).astype(np.float64)
-        bucket.place(g, b, cnt * (vol / max(cnt.sum(), 1.0)), vol, float(V[:, 2].max()))
+        return g, b, cnt * (vol / max(cnt.sum(), 1.0)), vol, float(V[:, 2].max())
+
+    def lock(self, bucket, mesh, M):
+        """A part that stays where it is (mm, 4 x 4): its solid becomes taken
+        cells, and its volume and height count for the limits."""
+        bucket.place(*self.pin(bucket, mesh, M))
 
     def run(self, bucket=None, locked=()):
         """Place every part.  `locked`: [(mesh, 4 x 4 matrix)] that stay put.

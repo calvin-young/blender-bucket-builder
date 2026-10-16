@@ -229,7 +229,7 @@ def test_worker():
         p = subprocess.run([sys.executable, '-I', '-c', code], capture_output=True, timeout=300)
         r = worker.read_progress(d)
         check(p.returncode == 0 and r and r['finished'] and not r['error'], 'it finishes (%.1f s)' % (time.perf_counter() - t))
-        check(len(r['placements']) == 12 and r['phase'] == 'improving' and r['version'] >= 1,
+        check(len(r['placements']) == 12 and r['phase'] in ('improving', 'compacting') and r['version'] >= 1,
               'all 12 placed, phase %s, layout version %s' % (r['phase'], r['version']))
         items = [(parts[i].name, parts[i].mesh, np.array(m).reshape(4, 4)) for i, c, k, m in r['placements']]
         v = referee.check(items, s.vlo, s.vhi, s.gap, s.wall_gap)
