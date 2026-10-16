@@ -262,6 +262,16 @@ class BucketBuilderSettings(PropertyGroup):
     pack_cell: FloatProperty(
         name="Cell Size", default=1.0, min=0.25, max=5.0, precision=2,
         description="Voxel size of the packer in millimetres; smaller packs tighter and slower")
+    pack_time: FloatProperty(
+        name="Time", default=60.0, min=0.0, soft_max=600.0, precision=0, subtype='TIME_ABSOLUTE',
+        description="How long the packer looks for better layouts after its first one, in seconds "
+                    "(it stops sooner when the build cannot get lower). 0: the first layout only")
+    pack_preset: EnumProperty(
+        name="Goal", default='OVERNIGHT',
+        items=(('OVERNIGHT', "Most Parts", "Fit as many parts as possible, then build as low as possible"),
+               ('RUSH', "Lowest Build", "As many parts, then the lowest build, ignoring how even the layers are"),
+               ('QUALITY', "Even Layers", "As many parts, then the most even density from layer to layer")),
+        description="What the packer looks for once every part has a place")
     pack_last: StringProperty(options={'SKIP_SAVE'})
 
     use_clearance: BoolProperty(

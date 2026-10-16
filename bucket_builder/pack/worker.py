@@ -10,9 +10,10 @@ The add-on writes a job folder (`write_job`); Blender's bundled Python runs
 
     python -I -c "import sys; sys.path.insert(0, ADDON); from pack.worker import main; main(JOB)"
 
-which writes `progress.json` as parts are placed (atomically: written to a
-temporary name, then renamed), and stops at the next part when a file
-`stop` appears.  No `bpy` here.
+which runs a `pack.job.Job` and writes `progress.json` (atomically: written
+to a temporary name, then renamed) as parts are placed and whenever the
+best layout improves, and stops within a part or two when a file `stop`
+appears.  No `bpy` here.
 """
 
 import json
@@ -23,7 +24,7 @@ import traceback
 
 import numpy as np
 
-from . import greedy, safe
+from . import job as J, safe
 from .meshio import Mesh
 from .problem import Part, Settings
 
@@ -31,10 +32,11 @@ SETTINGS = ('gap', 'wall_gap', 'h', 'coarse', 'phases', 'z_step', 'max_density',
             'layer_weight', 'candidates', 'time_limit', 'time_budget', 'preset', 'seed')
 
 
-def write_job(folder, parts, settings, locked=()):
+def write_job(folder, parts, settings, locked=(), start=None):
     """Write what a worker needs: parts (meshes shared by identity),
-    settings, locked (mesh, 4 x 4) pairs.  Geometry and numbers only: the
-    worker needs no names, so the parts are numbered here (part-001 ...)."""
+    settings, locked (mesh, 4 x 4) pairs, and optionally the layout to start
+    from ({(part, copy): 4 x 4}).  Geometry and numbers only: the worker
+    needs no names, so the parts are numbered here (part-001 ...)."""
     arrays, meshes, spec = {}, {}, []
     for p in parts:
         j = meshes.get(id(p.mesh))
@@ -49,9 +51,13 @@ def write_job(folder, parts, settings, locked=()):
         arrays['lv%d' % n] = np.asarray(m.verts, np.float64)
         arrays['lt%d' % n] = np.asarray(m.tris, np.int32)
         arrays['lM%d' % n] = np.asarray(M, np.float64)
+    st = []
+    for n, ((i, c), M) in enumerate(sorted((start or {}).items())):
+        arrays['sM%d' % n] = np.asarray(M, np.float64)
+        st.append([int(i), int(c)])
     np.savez(os.path.join(folder, 'job.npz'), **arrays)
     job = {'parts': spec, 'locked': len(locked), 'vlo': list(map(float, settings.vlo)),
-           'vhi': list(map(float, settings.vhi)),
+           'vhi': list(map(float, settings.vhi)), 'start': st,
            'settings': {k: getattr(settings, k) for k in SETTINGS}}
     with open(os.path.join(folder, 'job.json'), 'w') as f:
         json.dump(job, f)
@@ -76,7 +82,8 @@ def _write(folder, data):
 def main(folder):
     t0 = time.perf_counter()
     state = {'done': 0, 'total': 0, 'placements': [], 'unplaced': [], 'finished': False,
-             'error': '', 'seconds': 0.0}
+             'error': '', 'seconds': 0.0, 'phase': 'greedy', 'version': 0, 'height': 0.0,
+             'budget': None, 'iterations': 0, 'log': []}
     try:
         with open(os.path.join(folder, 'job.json')) as f:
             job = json.load(f)
@@ -90,31 +97,45 @@ def main(folder):
             parts.append(Part(sp['name'], meshes[j], sp['quantity'], sp['mode'], sp['tier'],
                               np.array(sp['base']), sp['close_cells']))
         locked = [(Mesh(z['lv%d' % n], z['lt%d' % n], 'locked'), z['lM%d' % n]) for n in range(job['locked'])]
+        start = {(i, c): z['sM%d' % n] for n, (i, c) in enumerate(job.get('start', []))} or None
         s = Settings(vlo=job['vlo'], vhi=job['vhi'], **job['settings'])
-        g = greedy.Greedy(parts, s)
+        jb = J.Job(parts, s, locked, start=start)
         stop = os.path.join(folder, 'stop')
-        last = [0.0]
+        last = [0.0, -1, -1]
 
-        def report(res, final=False):
+        def report(final=False):
             if os.path.exists(stop):
-                g.cancel = True
+                jb.cancel = True
             now = time.perf_counter()
-            if not final and now - last[0] < 0.2:
+            n_now = len(jb.cur.recs) if jb.cur is not None else 0
+            changed = jb.version != last[1] or (jb.best is None and n_now != last[2])
+            if not final and (now - last[0] < 0.2 or not changed) and now - last[0] < 1.0:
                 return
             last[0] = now
-            state['done'], state['total'] = g.progress
-            state['done'] += 0 if final else 1
-            state['placements'] = [[p.part, p.copy, p.orientation, np.asarray(p.matrix).ravel().tolist()]
-                                   for p in res.placements]
-            state['unplaced'] = [[i, c, why] for i, c, why in res.unplaced]
+            res = jb.result()
+            state['done'], state['total'] = jb.progress
+            state['phase'] = jb.phase
+            state['version'] = jb.version
+            state['budget'] = jb.budget
+            state['iterations'] = jb.iterations
+            state['height'] = float(res.height or 0.0)
+            state['log'] = jb.log[-20:]
+            if changed or final:
+                last[1], last[2] = jb.version, n_now
+                state['placements'] = [[p.part, p.copy, p.orientation, np.asarray(p.matrix).ravel().tolist()]
+                                       for p in res.placements]
+                state['unplaced'] = [[i, c, why] for i, c, why in res.unplaced]
             state['seconds'] = now - t0
             _write(folder, state)
 
-        g.on_place = report
         _write(folder, state)
-        res = g.run(locked=locked)
+        try:
+            while jb.step(0.1):
+                report()
+        finally:
+            jb.close()
         state['finished'] = True
-        report(res, final=True)
+        report(final=True)
     except Exception:
         state['error'] = safe.tidy(traceback.format_exc()[-2000:])
         state['finished'] = True

@@ -119,6 +119,25 @@ def _canonical_sign(c, e):
     return e if e[j] > 0 else -e
 
 
+def _hull2d(P):
+    """Convex hull of 2-D points, counter-clockwise (monotone chain)."""
+    P = np.unique(np.round(np.asarray(P, float), 9), axis=0)
+    if len(P) < 3:
+        return P
+
+    def half(pts):
+        out = []
+        for p in pts:
+            while len(out) >= 2 and ((out[-1][0] - out[-2][0]) * (p[1] - out[-2][1])
+                                     - (out[-1][1] - out[-2][1]) * (p[0] - out[-2][0])) <= 0:
+                out.pop()
+            out.append(p)
+        return out
+    lo = half(P)
+    hi = half(P[::-1])
+    return np.array(lo[:-1] + hi[:-1])
+
+
 def principal_frame(verts, tol=1e-6):
     """Rotation whose rows are the principal axes of the vertices (largest
     first), made definite where the moments leave it open.
@@ -155,23 +174,32 @@ def principal_frame(verts, tol=1e-6):
         d = None
         # the turn in the plane with the smallest bounding rectangle (what
         # boxes and grids want: a square part square to the axes) ...
-        Ps = P[::max(1, len(P) // 20000)]
-        th = np.radians(np.arange(0.0, 90.0, 0.25))
-        D = np.stack([np.cos(th), np.sin(th)])
-        u = Ps @ D
-        w2 = Ps @ np.stack([-np.sin(th), np.cos(th)])
-        area = (u.max(0) - u.min(0)) * (w2.max(0) - w2.min(0))
-        if area.max() - area.min() > 1e-3 * area.max():
+        H = _hull2d(P[::max(1, len(P) // 20000)])
+
+        def rect(th):
+            D = np.stack([np.cos(th), np.sin(th)])
+            u = H @ D
+            w2 = H @ np.stack([-np.sin(th), np.cos(th)])
+            return D, u.max(0) - u.min(0), w2.max(0) - w2.min(0)
+        _, lu, lw = rect(np.radians(np.arange(0.0, 90.0, 1.0)))
+        area = lu * lw
+        if area.max() - area.min() > 0.05 * area.max():         # (a polygon of many sides is round)
+            # one side of the smallest rectangle lies along an edge of the hull
+            e = np.roll(H, -1, axis=0) - H
+            th = np.unique(np.round(np.mod(np.arctan2(e[:, 1], e[:, 0]), np.pi / 2), 12))
+            D, lu, lw = rect(th)
+            area = lu * lw
             j = int(np.argmin(area + np.arange(len(th)) * 1e-12 * area.max()))
             d = D[:, j]
-            if (w2[:, j].max() - w2[:, j].min()) > (u[:, j].max() - u[:, j].min()) * (1 + 1e-9):
+            if lw[j] > lu[j] * (1 + 1e-9):
                 d = np.array([-d[1], d[0]])          # (the longer side first)
         else:
             # ... and for a round outline, where it bends most towards the
             # third axis (a saddle's rising direction)
             wt = c @ n
             q, V = np.linalg.eigh((P * wt[:, None]).T @ P)
-            if q[1] - q[0] > tol * (abs(q[0]) + abs(q[1])) and abs(q[1]) + abs(q[0]) > 1e-300:
+            scale = float((np.abs(wt) * (P * P).sum(1)).sum())
+            if q[1] - q[0] > 1e-6 * scale:
                 d = V[:, 1]
         if d is None:
             d = np.array([1.0, 0.0])
@@ -214,11 +242,18 @@ def orientations(part, z_step=30.0):
         P = principal_frame(V)
         out = [G @ P @ base for G in cube_group()]
         # in an order that depends on the shape only, so that ties go the
-        # same way everywhere: lowest first, then by extent and centre
+        # same way everywhere: lowest first, then by extent and centre, then
+        # by the posed vertices themselves
+        V0 = np.asarray(part.mesh.verts, float)
+
         def key(A):
-            W = np.asarray(part.mesh.verts, float) @ A.T
+            W = V0 @ A.T
             lo, hi = W.min(0), W.max(0)
             cen = W.mean(0) - lo
-            return tuple(np.round(np.concatenate([(hi - lo)[::-1], cen[::-1]]), 6))
+            k = tuple(np.round(np.concatenate([(hi - lo)[::-1], cen[::-1]]), 6))
+            if len(W) <= 200_000:
+                n = np.rint((W - lo) * 1000.0).astype(np.int64)      # (micrometres, >= 0)
+                k += (n[np.lexsort(n.T[::-1])].astype('>i8').tobytes(),)   # (bytes in numeric order)
+            return k
         return sorted(out, key=key)
     raise ValueError('unknown rotation mode: %r' % part.mode)

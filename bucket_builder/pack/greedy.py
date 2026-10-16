@@ -141,9 +141,8 @@ class Greedy:
         if len(V) > 200_000:
             return None
         W = V @ np.asarray(A, float).T
-        W = np.round(W - W.min(axis=0), 5) + 0.0               # (+ 0.0: no -0.0)
-        W = W[np.lexsort(W.T[::-1])]
-        return ('verts', W.tobytes())
+        n = np.rint((W - W.min(axis=0)) * 1e4).astype(np.int64)      # (0.1 micrometre)
+        return ('verts', n[np.lexsort(n.T[::-1])].tobytes())
 
     # ------------------------------------------------------------ one part
     def _top(self, bucket, p, b):

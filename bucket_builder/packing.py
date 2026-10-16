@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pack (experimental): the greedy packer of `pack/` on the objects of the
-scene (docs/AUTOPACK.md, Stage 2).
+"""Pack (experimental): the packer of `pack/` on the objects of the scene
+(docs/AUTOPACK.md, Stages 2 and 3).
 
-The operator reads the parts on the main thread, runs the packer in a
-worker thread (NumPy releases the GIL in the heavy calls), shows progress in
-the status bar, and moves the objects when it is done, as one undo step.
-Esc stops it; what was placed by then is kept.
+The operator reads the parts on the main thread and runs a `pack.job.Job`
+in a separate process (`pack/worker.py`; a thread if Blender's own Python
+cannot be found): a first layout, then better ones for the time set.  The
+parts move as the layout fills and improves; at the end the best layout is
+applied as one undo step.  Esc stops it; the best layout so far is kept (or
+what the first one has placed by then).
 """
 
 import math
@@ -22,7 +24,7 @@ from bpy.props import BoolProperty, EnumProperty, FloatProperty
 from bpy.types import Operator
 
 from . import monitor, props
-from .pack import greedy, metrics, safe, tempdir, worker
+from .pack import job as J, metrics, safe, tempdir, worker
 from .pack.meshio import Mesh
 from .pack.problem import Part, Settings, group_key
 
@@ -90,19 +92,21 @@ def candidates(context, selected_only):
 
 
 class BUCKETBUILDER_OT_pack(Operator):
-    """Arrange the parts in the build volume automatically (experimental: the
-    first, greedy packer). Parts marked Locked stay where they are and the
-    others are packed around them"""
+    """Arrange the parts in the build volume automatically (experimental). Parts
+    marked Locked stay where they are and the others are packed around them"""
     bl_idname = "bucketbuilder.pack"
     bl_label = "Pack Parts"
     bl_options = {'UNDO'}          # (no redo panel: redoing would pack again, without progress)
 
     selected_only: BoolProperty(name="Selected Only", default=True,
                                 description="Pack the selected parts (otherwise every visible part)")
+    improve: BoolProperty(name="Improve Current Layout", default=False,
+                          description="Start from where the parts are now: keep those that fit, place "
+                                      "the others, then look for a better layout")
 
     _thread = None
     _timer = None
-    _g = None
+    _job = None
 
     @classmethod
     def poll(cls, context):
@@ -112,9 +116,10 @@ class BUCKETBUILDER_OT_pack(Operator):
         """Without a window (scripts, tests): pack in one go."""
         if not self._prepare(context):
             return {'CANCELLED'}
-        self._result = self._g.run(locked=self._lock)
-        if self._g._pool is not None:
-            self._g._pool.shutdown()
+        try:
+            self._result = self._job.run()
+        finally:
+            self._job.close()
         self._apply(context)
         return {'FINISHED'}
 
@@ -133,20 +138,20 @@ class BUCKETBUILDER_OT_pack(Operator):
                 print("Bucket Builder: packing in a separate process failed (%s); using a thread" % ex)
                 self._proc = None
         if self._proc is None:
-            lock = self._lock
-
             def work():
                 try:
-                    self._result = self._g.run(locked=lock)
+                    self._result = self._job.run()
                 except Exception as ex:          # reported by the modal handler
                     self._error = ex
 
             self._thread = threading.Thread(target=work, name='bucket_builder_pack', daemon=True)
             self._thread.start()
         self._applied = 0
+        self._shown = (0, 0.0)                   # (version of the layout shown, when)
         self._stop_t = None
         JOB.update(running=True, done=0, total=sum(p.quantity for p in self._parts), eta=None,
-                   elapsed=0.0, stopping=False)
+                   elapsed=0.0, stopping=False, phase='greedy', height=0.0, first_height=None,
+                   budget=self._settings.time_budget, time_left=None)
         _pause_pairs(context.scene, True)
         wm = context.window_manager
         self._timer = wm.event_timer_add(0.2, window=context.window)
@@ -157,7 +162,7 @@ class BUCKETBUILDER_OT_pack(Operator):
     def _start_process(self, exe):
         tempdir.sweep_stale()                  # (what an earlier run left if Blender was killed)
         self._dir = tempdir.new_job_folder()
-        worker.write_job(self._dir, self._parts, self._settings, self._lock)
+        worker.write_job(self._dir, self._parts, self._settings, self._lock, self._start)
         addon = os.path.dirname(os.path.abspath(__file__))
         code = ("import sys; sys.path.insert(0, %r); from pack.worker import main; sys.exit(main(%r))"
                 % (addon, self._dir))
@@ -181,6 +186,7 @@ class BUCKETBUILDER_OT_pack(Operator):
         vlo, vhi = volume_mm(scene, k)
         dg = context.evaluated_depsgraph_get()
         cache, groups = {}, {}
+        start = {}
         for o in move:
             key_mesh = (o.data.as_pointer(), bool(o.modifiers)) if not o.modifiers else ('obj', o.as_pointer())
             if key_mesh not in cache:
@@ -194,6 +200,9 @@ class BUCKETBUILDER_OT_pack(Operator):
                 groups[gkey] = (Part(o.name, cache[key_mesh], 0, _MODE[mode], base=L.copy()), [])
             groups[gkey][0].quantity += 1
             groups[gkey][1].append(o)
+            M = mw.copy()
+            M[:3, :] *= k                           # (mm)
+            start[(list(groups).index(gkey), len(groups[gkey][1]) - 1)] = M
         lock = []
         for o in locked:
             v, t = _mesh_arrays(o, dg)
@@ -206,9 +215,11 @@ class BUCKETBUILDER_OT_pack(Operator):
         self._vlo, self._vhi = vlo, vhi
         s = Settings(vlo=vlo, vhi=vhi, gap=st.pack_gap, wall_gap=st.pack_wall_gap,
                      h=st.pack_cell, z_step=st.pack_z_step,
-                     max_density=(st.pack_max_density / 100.0) or None)
+                     max_density=(st.pack_max_density / 100.0) or None,
+                     time_budget=float(st.pack_time), preset=st.pack_preset.lower())
         self._settings = s
-        self._g = greedy.Greedy(self._parts, s)
+        self._start = start if self.improve else None
+        self._job = J.Job(self._parts, s, lock, start=self._start)
         self._result = None
         self._error = None
         self._t0 = time.perf_counter()
@@ -219,10 +230,18 @@ class BUCKETBUILDER_OT_pack(Operator):
         done, total = JOB['done'], JOB['total']
         el = time.perf_counter() - self._t0
         JOB['elapsed'] = el
-        JOB['eta'] = (el / done * (total - done)) if done >= 2 else None
+        if JOB['phase'] == 'greedy':
+            JOB['eta'] = (el / done * (total - done)) if done >= 2 else None
+        else:
+            JOB['eta'] = JOB['time_left']
         left = "" if JOB['eta'] is None else ", about %s left" % _duration(JOB['eta'])
-        text = ("Stopping..." if JOB['stopping'] else
-                "Packing: %d of %d parts, %s%s   (Esc to stop)" % (done, total, _duration(el), left))
+        if JOB['stopping']:
+            text = "Stopping..."
+        elif JOB['phase'] == 'greedy':
+            text = "Packing: %d of %d parts, %s%s   (Esc to stop)" % (done, total, _duration(el), left)
+        else:
+            text = "Improving the layout: %.1f mm high, %s%s   (Esc to stop, the best layout stays)" % (
+                JOB['height'], _duration(el), left)
         try:
             context.workspace.status_text_set(text)
         except Exception:
@@ -238,8 +257,8 @@ class BUCKETBUILDER_OT_pack(Operator):
             context.workspace.status_text_set(None)
         except Exception:
             pass
-        if self._g is not None and self._g._pool is not None:
-            self._g._pool.shutdown(wait=False)
+        if self._job is not None:
+            self._job.close()
         if getattr(self, '_proc', None) is not None and self._proc.poll() is None:
             self._proc.kill()
         if getattr(self, '_dir', None):
@@ -255,7 +274,10 @@ class BUCKETBUILDER_OT_pack(Operator):
         alive = self._proc.poll() is None
         if r is not None:
             JOB['done'] = r['done']
+            self._take_state(r.get('phase', 'greedy'), r.get('height', 0.0), r.get('budget'),
+                             r.get('seconds', 0.0))
             self._result = _result_from(r)
+            self._version = r.get('version', 0)
             if r.get('error'):
                 self._error = r['error'].strip().splitlines()[-1]
         if not alive and (r is None or not r.get('finished')):
@@ -273,7 +295,7 @@ class BUCKETBUILDER_OT_pack(Operator):
             if self._proc is not None:
                 open(os.path.join(self._dir, 'stop'), 'w').close()
             else:
-                self._g.cancel = True
+                self._job.cancel = True
             self._status(context)
         if event.type != 'TIMER':
             return {'PASS_THROUGH'}          # (the user goes on working meanwhile)
@@ -283,7 +305,9 @@ class BUCKETBUILDER_OT_pack(Operator):
                 self._proc.kill()                # (it did not stop at the next part: stop it now)
             self._show_progress(context)
         else:
-            JOB['done'] = self._g.progress[0]
+            jb = self._job
+            JOB['done'] = jb.progress[0]
+            self._take_state(jb.phase, jb._best_height() if jb.best else 0.0, jb.budget, jb.elapsed)
             done = not self._thread.is_alive()
         if not done:
             self._status(context)
@@ -295,14 +319,29 @@ class BUCKETBUILDER_OT_pack(Operator):
         self._apply(context)
         return {'FINISHED'}
 
+    def _take_state(self, phase, height, budget, seconds):
+        if phase != 'greedy' and JOB['first_height'] is None and height:
+            JOB['first_height'] = height
+        JOB['phase'] = phase
+        JOB['height'] = height
+        JOB['budget'] = budget
+        JOB['time_left'] = None if budget is None else max(0.0, budget - seconds)
+
     def _show_progress(self, context):
-        """Move the parts placed so far into place, so the build fills up as
-        the packer goes (only the new ones; the final layout is applied, and
-        made one undo step, at the end)."""
+        """Move the parts into place as the packer goes: while the first
+        layout fills, the new ones; when a better layout turns up, all of
+        them (at most twice a second).  The final layout is applied, and made
+        one undo step, at the end."""
         res = self._result
         if res is None:
             return
         k = self._k
+        v = getattr(self, '_version', 0)
+        if v != self._shown[0]:
+            if time.perf_counter() - self._shown[1] < 0.5:
+                return
+            self._shown = (v, time.perf_counter())
+            self._applied = 0
         for p in res.placements[self._applied:]:
             o = self._objects[p.part][p.copy]
             M = p.matrix.copy()
@@ -341,6 +380,9 @@ class BUCKETBUILDER_OT_pack(Operator):
         msg = "Packed %d of %d parts in %.1f s: height %.1f mm, density %.1f %%" % (
             len(res.placements), total, time.perf_counter() - self._t0,
             rep.height, 100.0 * (rep.density or 0.0))
+        first = JOB.get('first_height')
+        if first and first > rep.height + 0.05:
+            msg += " (first layout %.1f mm)" % first
         if missing:
             why = sorted({u[2] for u in res.unplaced}) or ['stopped']
             msg += "; %d left beside the volume (%s)" % (missing, ", ".join(why))
@@ -349,8 +391,8 @@ class BUCKETBUILDER_OT_pack(Operator):
         monitor.tag_redraw_all()
 
     def cancel(self, context):
-        if self._g is not None:
-            self._g.cancel = True
+        if self._job is not None:
+            self._job.cancel = True
         self._end(context)
 
 
@@ -487,6 +529,10 @@ def badge_state(now=None):
         if JOB['stopping']:
             return ("Stopping the packer...", "the parts placed so far stay", done / total, ACCENT)
         left = "" if JOB['eta'] is None else "about %s left, " % _duration(JOB['eta'])
+        if JOB.get('phase', 'greedy') != 'greedy':
+            b = JOB.get('budget') or 0.0
+            frac = 1.0 - (JOB['time_left'] or 0.0) / b if b > 0 else None
+            return ("Improving the layout: %.1f mm" % JOB['height'], left + "Esc keeps the best", frac, ACCENT)
         return ("Packing: %d of %d parts" % (done, total), left + "Esc to stop", done / total, ACCENT)
     if TIMING.get('proc') is not None:
         f = TIMING.get('fraction', 0.0)
@@ -562,7 +608,8 @@ _badge_handle = []
 TIMING = {'proc': None, 't0': 0.0, 'fraction': 0.0, 'eta': None, 'done_at': None}
 
 
-JOB = {'running': False, 'done': 0, 'total': 0, 'eta': None, 'elapsed': 0.0, 'stopping': False}
+JOB = {'running': False, 'done': 0, 'total': 0, 'eta': None, 'elapsed': 0.0, 'stopping': False,
+       'phase': 'greedy', 'height': 0.0, 'first_height': None, 'budget': None, 'time_left': None}
 
 
 def _duration(s):

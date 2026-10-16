@@ -447,8 +447,14 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
             left = "" if job['eta'] is None else ", ~%s left" % packing._duration(job['eta'])
             row = layout.row()
             row.scale_y = 1.4
-            row.progress(factor=done / total, type='BAR',
-                         text="Stopping..." if job['stopping'] else "%d of %d placed%s" % (done, total, left))
+            if job['stopping']:
+                row.progress(factor=done / total, type='BAR', text="Stopping...")
+            elif job.get('phase', 'greedy') == 'greedy':
+                row.progress(factor=done / total, type='BAR', text="%d of %d placed%s" % (done, total, left))
+            else:
+                b = job.get('budget') or 0.0
+                frac = 1.0 - (job['time_left'] or 0.0) / b if b > 0 else 0.0
+                row.progress(factor=frac, type='BAR', text="Improving: %.1f mm%s" % (job['height'], left))
             row = layout.row()
             row.operator("bucketbuilder.pack_stop", icon='CANCEL')
         else:
@@ -457,7 +463,14 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
             op = row.operator("bucketbuilder.pack", icon='MOD_ARRAY',
                               text=("Pack %d Selected Parts" % len(sel)) if sel else "Pack All Parts")
             op.selected_only = bool(sel)
+            op.improve = False
+            row = layout.row()
+            op = row.operator("bucketbuilder.pack", icon='FILE_REFRESH', text="Improve Current Layout")
+            op.selected_only = bool(sel)
+            op.improve = True
         col = _split(layout)
+        col.prop(st, "pack_preset")
+        col.prop(st, "pack_time")
         col.prop(st, "pack_mode")
         sub = col.column(align=True)
         sub.active = st.pack_mode == 'Z' or any(o.bucket_builder_pack_mode == 'Z' for o in sel)
@@ -487,8 +500,8 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
             _wrapped(col, st.pack_last, 'INFO')
         col = layout.column(align=True)
         col.active = False
-        _wrapped(col, "First, greedy version. It runs in the background; Esc or Stop ends it, "
-                      "Ctrl+Z puts the parts back.", 'EXPERIMENTAL')
+        _wrapped(col, "It runs in the background: a first layout, then better ones for the time "
+                      "set. Esc or Stop keeps the best so far; Ctrl+Z puts the parts back.", 'EXPERIMENTAL')
 
 
 class BUCKETBUILDER_PT_options(_Base, Panel):

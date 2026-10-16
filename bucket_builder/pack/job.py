@@ -85,7 +85,8 @@ class Layout:
 
 
 class Job:
-    def __init__(self, parts, settings, locked=(), threads=None, seed=None, preset=None, time_budget=None):
+    def __init__(self, parts, settings, locked=(), threads=None, seed=None, preset=None, time_budget=None,
+                 start=None, max_iterations=None):
         self.parts = parts
         self.s = settings
         self.locked = list(locked)
@@ -111,6 +112,8 @@ class Job:
         self._t = None
         self._gen = None
         self.cur = None
+        self.start = start          # {(part, copy): 4 x 4 in mm}: a layout to improve instead of a new one
+        self.max_iterations = max_iterations        # (of ruin and recreate: for tests, which want the same answer)
 
     # ------------------------------------------------------------ driving
     def step(self, budget=0.05):
@@ -219,11 +222,13 @@ class Job:
         return self._best_height() <= self._lb + 0.5 * self.s.h
 
     # ------------------------------------------------------------ building
-    def _build(self, lay, todo, allowed, label=None, count=False):
+    def _build(self, lay, todo, allowed, count=False, stop_above=None):
         """Put the copies in `todo` in, in that order (a generator: yields
-        after every part)."""
+        after every part); stops once the build is higher than `stop_above`."""
         for n, (i, c) in enumerate(todo):
             if self.cancel:
+                return
+            if stop_above is not None and lay.bucket.height > stop_above:
                 return
             if count:
                 self.progress = (n, len(todo))
@@ -250,6 +255,10 @@ class Job:
             if n % 16 == 15:
                 yield
 
+    def _z_extent(self, i, k):
+        z = np.asarray(self.parts[i].mesh.verts, float) @ np.asarray(self.g.orients(i)[k][2], float)
+        return float(z.max() - z.min())
+
     def _fresh(self):
         return Layout(self.g, self.locked)
 
@@ -265,13 +274,50 @@ class Job:
                 out.append(k)
         return out
 
+    def _match(self, i, A):
+        """The orientation of part i whose linear part is A, or None."""
+        A = np.asarray(A, float)
+        tol = 1e-5 * max(1.0, float(np.abs(A).max()))
+        for k, B in enumerate(self.g.orients(i)):
+            if float(np.abs(np.asarray(B) - A).max()) < tol:
+                return k
+        return None
+
+    def _load(self, lay, start):
+        """Put the given placements in, each on the nearest cell, where the
+        grid has room for it; returns the copies that are still to place."""
+        b0 = lay.bucket
+        left = []
+        for q in self.copies:
+            M = start.get(q)
+            k = None if M is None else self._match(q[0], np.asarray(M, float)[:3, :3])
+            if k is None:
+                left.append(q)
+                continue
+            g = self.g.pose(q[0], k).grid
+            cell = np.rint((np.asarray(M, float)[:3, 3] - b0.vlo + g.origin) / b0.h).astype(np.int64) + b0.M
+            if b0.in_range(g, cell) and b0.fits(g, cell):
+                lay.add(q[0], q[1], k, cell)
+            else:
+                left.append(q)
+        return left
+
     # ------------------------------------------------------------ the work
     def _work(self):
         t_first = time.perf_counter()
         self.cur = self._fresh()
         self._lb = self.lower_bound()
-        yield from self._build(self.cur, self.copies, {}, count=True)
-        self._consider(self.cur, 'greedy', {})
+        if self.start:
+            left = self._load(self.cur, self.start)
+            self.log.append('%6.1f s  start      %d parts kept where they are, %d to place'
+                            % (self.elapsed, len(self.cur.recs), len(left)))
+            yield from self._build(self.cur, left, {}, count=True)
+            self._consider(self.cur, 'current', {})
+        else:
+            yield from self._build(self.cur, self.copies, {}, count=True)
+            if self.cancel:
+                return                      # (what is placed so far is the answer; the rest "stopped")
+            self._consider(self.cur, 'greedy', {})
         self.first_seconds = time.perf_counter() - t_first
         self.phase = 'improving'
         if self._at_bound() or self._time_up():
@@ -287,13 +333,22 @@ class Job:
                 if len(ks) < 2:
                     continue
                 ranks = []
+                # tallest first: a layer of parts standing on edge is often
+                # the answer, and once one probe is done the others stop as
+                # soon as they are higher
+                ks.sort(key=lambda k: (-self._z_extent(i, k), k))
+                limit = None
                 for k in ks:
                     if self._time_up():
                         break
                     lay = self._fresh()
-                    yield from self._build(lay, [(i, c) for c in range(part.quantity)], {i: [k]})
+                    yield from self._build(lay, [(i, c) for c in range(part.quantity)], {i: [k]},
+                                           stop_above=limit)
                     left = part.quantity - len(lay.recs)
                     ranks.append(((left, round(lay.bucket.height, 6), k), k))
+                    if left == 0:
+                        h = lay.bucket.height + self.s.h
+                        limit = h if limit is None else min(limit, h)
                 if ranks:
                     self.cands[i] = [k for _, k in sorted(ranks)]
                     self.log.append('%6.1f s  probes     %s: orientations %s, best first'
@@ -344,7 +399,8 @@ class Job:
         opts = self._choices()
         t_start = self.elapsed
         rejects = 0
-        while not self._time_up() and not self._at_bound():
+        while not self._time_up() and not self._at_bound() and \
+                (self.max_iterations is None or self.iterations < self.max_iterations):
             self.iterations += 1
             before = dict(lay.recs)
             trial = dict(choice)
@@ -358,8 +414,12 @@ class Job:
             yield from self._settle(lay)
             k = self.key(lay)
             # threshold accepting on the value, among layouts that place as much
-            frac = 0.0 if self.budget is None else min(1.0, (self.elapsed - t_start) /
-                                                       max(1e-9, self.budget - t_start))
+            if self.max_iterations:
+                frac = self.iterations / self.max_iterations
+            elif self.budget is not None:
+                frac = min(1.0, (self.elapsed - t_start) / max(1e-9, self.budget - t_start))
+            else:
+                frac = 0.0
             thr = 2.0 * self.s.h * (1.0 - frac)
             if k < cur_key or (k[:-1] == cur_key[:-1] and k[-1] < cur_key[-1] + thr):
                 if self._consider(lay, 'improved', trial):
