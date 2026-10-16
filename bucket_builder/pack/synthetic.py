@@ -186,6 +186,12 @@ def keycap(name='keycap'):
     return transformed(m, rot('x', 180), (0, 0, 9.0))
 
 
+def big_keycap(name='big keycap'):
+    """A 34 x 34 x 22 mm square shell, 1.5 mm walls, open at the bottom."""
+    m = cup(17.0, 15.5, 22.0, 1.5, 4, name, square=True)
+    return transformed(m, rot('x', 180), (0, 0, 22.0))
+
+
 def ring(name='ring'):
     R, rr, segs, sides = 22.0, 5.0, 48, 16
     v, f = [], []
@@ -233,6 +239,9 @@ def buckets():
         'sockets': ('6 sockets upright and 24 insoles, which can go inside them', [
             Part('socket', socket(), 6, 'fixed'),
             Part('insole', insole(), 24, 'free'),
+        ], {'gap': 3.0}),
+        'keycaps': ('81 large keycaps, free rotation: flat they need two layers, standing one', [
+            Part('keycap', big_keycap(), 81, 'free'),
         ], {'gap': 3.0}),
         'giant': ('a 200 mm square housing, open at the top, and 30 keycaps (which may go inside)', [
             Part('housing', cup(100.0, 94.0, 180.0, 6.0, 4, 'housing', square=True), 1, 'fixed'),

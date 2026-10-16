@@ -51,6 +51,7 @@ class Greedy:
         self.progress = (0, 0)
         self.cancel = False
         self.on_place = None          # called with the Result so far after every placement
+        self.cap = False              # density limit instead of the settings' (None: none), for trial runs
         n = metrics.default_workers() if threads is None else threads
         self._pool = ThreadPoolExecutor(max_workers=n) if n > 1 else None
 
@@ -93,7 +94,7 @@ class Greedy:
         s = self.s
         vol = self._part_volume(i) * abs(np.linalg.det(A))
         g = voxel.voxelize(part.mesh.verts, part.mesh.tris, A, s.h, s.gap, self._close[i],
-                           cloud=self._cloud(i))
+                           cloud=self._cloud(i), align='min')
         p = _Pose()
         p.A = A
         p.grid = g
@@ -122,7 +123,9 @@ class Greedy:
         # an orientation whose grids are those of an earlier one (a symmetric
         # part turned onto itself) is not searched again
         p.same_as = None
-        sig = (g.shape, g.solid.tobytes(), tuple(np.round(g.origin, 9)))
+        sig = self._shape_sig(i, A)
+        if sig is None:
+            sig = (g.shape, g.solid.tobytes())        # (the origin does not matter to the search)
         seen = self._sigs.setdefault(i, {})
         if sig in seen:
             p.same_as = seen[sig]
@@ -130,6 +133,17 @@ class Greedy:
             seen[sig] = k
         self._poses[key] = p
         return p
+
+    def _shape_sig(self, i, A):
+        """The posed vertex set, rounded and sorted (equal for two turns that
+        map the part onto itself), or None for a large mesh."""
+        V = np.asarray(self.parts[i].mesh.verts, float)
+        if len(V) > 200_000:
+            return None
+        W = V @ np.asarray(A, float).T
+        W = np.round(W - W.min(axis=0), 5) + 0.0               # (+ 0.0: no -0.0)
+        W = W[np.lexsort(W.T[::-1])]
+        return ('verts', W.tobytes())
 
     # ------------------------------------------------------------ one part
     def _top(self, bucket, p, b):
@@ -140,9 +154,10 @@ class Greedy:
 
     def _need(self, bucket, p):
         """Lowest top this part may have (the density limit), mm above the floor."""
-        if not self.s.max_density:
+        cap = self.s.max_density if self.cap is False else self.cap
+        if not cap:
             return -np.inf
-        req = (bucket.volume + p.volume) / (bucket.area * self.s.max_density)
+        req = (bucket.volume + p.volume) / (bucket.area * cap)
         return req if bucket.height < req else -np.inf
 
     def _layer_penalty(self, bucket, p, b):
@@ -250,17 +265,18 @@ class Greedy:
         room = (bucket.ihi - bucket.ilo + 1) * bucket.h
         return bool(np.all(ext <= room + 1e-9))
 
-    def place_one(self, bucket, i):
-        """Best placement of part i over its orientations, or None.  The
-        coarse searches of the orientations run in threads (the FFTs release
-        the GIL); refinement is sequential."""
+    def place_one(self, bucket, i, allowed=None):
+        """Best placement of part i over its orientations (or those in
+        `allowed`), as (score, orientation, cell offset), and why not if
+        None.  The coarse searches of the orientations run in threads (the
+        FFTs release the GIL); refinement is sequential."""
         why = 'too large for the volume'
         todo = []
-        for k in range(len(self.orients(i))):
+        for k in (range(len(self.orients(i))) if allowed is None else allowed):
             if not self._may_fit(bucket, i, k):
                 continue                                    # (decided before voxelising it)
             p = self.pose(i, k)
-            if p.same_as is not None:
+            if p.same_as is not None and (allowed is None or p.same_as in allowed):
                 continue
             g = p.grid
             if np.any(g.s_hi - g.s_lo > bucket.ihi - bucket.ilo + 1):
@@ -276,7 +292,8 @@ class Greedy:
         if not todo:
             return None, why
         for _, p, _ in todo:                                 # (the bucket's spectra, once, before the threads)
-            bucket.spectrum(bucket._dtype(int(p.grid.coarse(bucket.f).sum())))
+            kc = p.grid.coarse(bucket.f)
+            bucket.spectrum(bucket._dtype(int(kc.sum())), bucket.search_shape(kc.shape[2]))
         if self._pool is not None and len(todo) > 1:
             coarse = list(self._pool.map(lambda t: self._coarse(bucket, t[1]), todo))
         else:
@@ -287,6 +304,32 @@ class Greedy:
             if r is not None and (best is None or r[0] < best[0]):
                 best = (r[0], k, r[1])
         return best, why
+
+    def put(self, bucket, i, k, b):
+        """Mark part i in orientation k at cell offset b as taken."""
+        p = self.pose(i, k)
+        bucket.place(p.grid, b, p.profile, p.volume, self._top(bucket, p, b))
+
+    def take(self, bucket, i, k, b):
+        """The inverse of `put` (the caller sets the bucket's height)."""
+        p = self.pose(i, k)
+        bucket.remove(p.grid, b, p.profile, p.volume)
+
+    def placement(self, bucket, i, c, k, b):
+        p = self.pose(i, k)
+        M = np.eye(4)
+        M[:3, :3] = p.A
+        M[:3, 3] = bucket.translation(p.grid, b)
+        return Placement(i, c, M, k, tuple(int(x) for x in b))
+
+    def new_bucket(self, locked=()):
+        s = self.s
+        close = max([2 if (p.close_cells is None) else p.close_cells for p in self.parts] + [0])
+        margin = voxel.gap_cells(s.gap, s.h) + close + 2
+        bucket = Bucket(s.vlo, s.vhi, s.h, s.wall_gap, margin, s.coarse)
+        for mesh, M in locked:
+            self.lock(bucket, mesh, M)
+        return bucket
 
     # ------------------------------------------------------------ the run
     def order(self):
@@ -319,12 +362,11 @@ class Greedy:
         s = self.s
         t0 = time.perf_counter()
         if bucket is None:
-            close = max([2 if (p.close_cells is None) else p.close_cells for p in self.parts] + [0])
-            margin = voxel.gap_cells(s.gap, s.h) + close + 2
-            bucket = Bucket(s.vlo, s.vhi, s.h, s.wall_gap, margin, s.coarse)
+            bucket = self.new_bucket(locked)
+        else:
+            for mesh, M in locked:
+                self.lock(bucket, mesh, M)
         self.bucket = bucket
-        for mesh, M in locked:
-            self.lock(bucket, mesh, M)
         res = Result()
         order = self.order()
         self.progress = (0, len(order))
@@ -341,13 +383,8 @@ class Greedy:
                 res.unplaced.append((i, c, why))
                 continue
             _, k, b = best
-            p = self.pose(i, k)
-            t = bucket.translation(p.grid, b)
-            M = np.eye(4)
-            M[:3, :3] = p.A
-            M[:3, 3] = t
-            bucket.place(p.grid, b, p.profile, p.volume, self._top(bucket, p, b))
-            res.placements.append(Placement(i, c, M, k))
+            self.put(bucket, i, k, b)
+            res.placements.append(self.placement(bucket, i, c, k, b))
             if self.on_place is not None:
                 self.on_place(res)
         self.progress = (len(order), len(order))

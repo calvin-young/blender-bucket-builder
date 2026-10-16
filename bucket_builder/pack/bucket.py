@@ -3,7 +3,8 @@
 (docs/AUTOPACK.md section 8.1).
 
 The fine grid holds the *solid* cells of the parts already placed (and of
-no-build zones).  A candidate fits at a cell offset b when its *dilated*
+no-build zones), as counts, so that a part can be taken out again (the
+improvement loop does that all the time).  A candidate fits at a cell offset b when its *dilated*
 grid, shifted by b, meets no taken cell and its solid lies inside the volume
 less the wall gap.  The fine grid has an empty margin wide enough for any
 dilation, so windows never leave it.
@@ -102,7 +103,7 @@ class Bucket:
         # whole blocks, and a coarse grid of FFT-friendly size (the extra cells are margin)
         dims = np.array([fast_size(int(np.ceil(d / self.f))) * self.f for d in dims])
         self.n = n
-        self.fine = np.zeros(tuple(dims), dtype=bool)
+        self.fine = np.zeros(tuple(dims), dtype=np.uint8)     # (how many solids cover a cell)
         self.count = np.zeros(tuple(dims // self.f), dtype=np.int32)
         # where solid cells may be (inclusive index ranges)
         lo_in = self.vlo + np.array([wall_gap, wall_gap, 0.0])
@@ -114,6 +115,7 @@ class Bucket:
         self.volume = 0.0
         self.height = 0.0                           # highest point above the floor
         self._spec = None
+        self._ztop = None
         self.version = 0
 
     # ------------------------------------------------------------ geometry
@@ -180,13 +182,30 @@ class Bucket:
         return done
 
     # ------------------------------------------------------------ coarse search
-    def spectrum(self, dtype=np.float64):
+    def top_block(self):
+        """1 + the highest coarse layer with anything taken (0: empty)."""
+        if self._ztop is None or self._ztop[0] != self.version:
+            z = np.nonzero(self.count.any(axis=(0, 1)))[0]
+            self._ztop = (self.version, int(z[-1]) + 1 if z.size else 0)
+        return self._ztop[1]
+
+    def search_shape(self, kz):
+        """The coarse grid size the correlation runs at for a kernel kz blocks
+        high: only as high as what is taken plus the kernel (nothing is taken
+        above, so every offset higher up is free), which is most of the
+        cost saved while a build is low."""
+        C = self.count.shape
+        z = fast_size(self.top_block() + kz + 1)
+        return (C[0], C[1], min(C[2], z))
+
+    def spectrum(self, dtype=np.float64, shape=None):
+        shape = self.count.shape if shape is None else tuple(shape)
         if self._spec is None:
             self._spec = {}
-        sp = self._spec.get(dtype)
+        sp = self._spec.get((dtype, shape))
         if sp is None:
-            occ = (self.count > 0).astype(dtype)
-            sp = self._spec[dtype] = rfftn(occ, occ.shape)
+            occ = (self.count[:, :, :shape[2]] > 0).astype(dtype)
+            sp = self._spec[(dtype, shape)] = rfftn(occ, shape)
         return sp
 
     def _dtype(self, n_kernel):
@@ -220,11 +239,18 @@ class Bucket:
             mask = np.ones(tuple(cmax - cmin + 1), dtype=bool)
             return mask, cmin
         dt = self._dtype(int(kc.sum()))
-        ks = SPECTRA.get((key, f, tuple(phase), C, dt),
-                         lambda: np.conj(rfftn(kc.astype(dt), C)))
-        corr = irfftn(self.spectrum(dt) * ks, C)
-        sl = tuple(slice(a, b + 1) for a, b in zip(cmin, cmax))
-        return corr[sl] < 0.5, cmin
+        Cs = self.search_shape(kc.shape[2])
+        ks = SPECTRA.get((key, f, tuple(phase), Cs, dt),
+                         lambda: np.conj(rfftn(kc.astype(dt), Cs)))
+        corr = irfftn(self.spectrum(dt, Cs) * ks, Cs)
+        mask = np.ones(tuple(cmax - cmin + 1), dtype=bool)
+        # offsets whose kernel lies inside the cropped grid are exact; above
+        # them nothing is taken, so they stay free
+        zmax = min(cmax[2], Cs[2] - kc.shape[2])
+        if zmax >= cmin[2]:
+            sl = (slice(cmin[0], cmax[0] + 1), slice(cmin[1], cmax[1] + 1), slice(cmin[2], zmax + 1))
+            mask[:, :, :zmax - cmin[2] + 1] = corr[sl] < 0.5
+        return mask, cmin
 
     # ------------------------------------------------------------ changes
     def place(self, pg, b, profile, volume, top):
@@ -242,9 +268,21 @@ class Bucket:
         self._spec = None
         self.version += 1
 
-    def mark(self, solid, b):
-        """OR a solid grid into the taken cells at fine offset b (clipped to
-        the grid) and bring the block counts of that region up to date."""
+    def remove(self, pg, b, profile, volume):
+        """Take a placed part out again (the inverse of `place`; the caller
+        sets `height`, which only it can know)."""
+        b = [int(x) for x in b]
+        self.mark(pg.solid, b, -1)
+        z0 = b[2] - self.M
+        lo, hi = max(z0, 0), min(z0 + len(profile), len(self.profile))
+        if hi > lo:
+            self.profile[lo:hi] -= profile[lo - z0:hi - z0]
+        self.volume -= volume
+
+    def mark(self, solid, b, sign=1):
+        """Add (sign 1) or take away (-1) a solid grid at fine offset b
+        (clipped to the grid) and bring the block counts of that region up to
+        date."""
         dst, src = [], []
         for x, n, N in zip(b, solid.shape, self.fine.shape):
             lo, hi = max(x, 0), min(x + n, N)
@@ -252,7 +290,11 @@ class Bucket:
                 return
             dst.append(slice(lo, hi))
             src.append(slice(lo - x, hi - x))
-        self.fine[tuple(dst)] |= solid[tuple(src)]
+        win = self.fine[tuple(dst)]
+        if sign > 0:
+            win += solid[tuple(src)]
+        else:
+            win -= solid[tuple(src)]
         f = self.f
         blk = tuple(slice(d.start // f, -(-d.stop // f)) for d in dst)
         fine = self.fine[tuple(slice(c.start * f, c.stop * f) for c in blk)]
@@ -266,7 +308,7 @@ class Bucket:
         b = np.ceil((np.asarray(hi) - self.vlo) / self.h).astype(int) + self.M
         a = np.clip(a, 0, self.fine.shape)
         b = np.clip(b, 0, self.fine.shape)
-        self.fine[a[0]:b[0], a[1]:b[1], a[2]:b[2]] = True
+        self.fine[a[0]:b[0], a[1]:b[1], a[2]:b[2]] += 1
         self.count[...] = pool_sum(self.fine, self.f, (0, 0, 0))[:self.count.shape[0],
                                                                  :self.count.shape[1],
                                                                  :self.count.shape[2]]

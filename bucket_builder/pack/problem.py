@@ -43,7 +43,10 @@ class Settings:
     layer_cap: float = 0.5            # soft per-layer density limit
     layer_weight: float = 100.0       # mm of height one unit of squared excess is worth
     candidates: int = 3               # coarse positions refined per orientation (8 was no better)
-    time_limit: float = None          # seconds (None: no limit)
+    time_limit: float = None          # seconds for one greedy run (None: no limit)
+    time_budget: float = 60.0         # seconds for a whole job, improvement included (None: until done)
+    preset: str = 'overnight'         # weights of the score (pack.score.PRESETS)
+    seed: int = 0                     # of the improvement loop's choices
 
     def __post_init__(self):
         if self.vlo is None or self.vhi is None:
@@ -64,6 +67,7 @@ class Placement:
     copy: int
     matrix: np.ndarray
     orientation: int = 0
+    cell: tuple = None                # fine cell offset in the packer's grid (None: not from it)
 
 
 @dataclass
@@ -104,12 +108,79 @@ def cube_group():
     return out
 
 
-def principal_frame(verts):
-    """Rotation whose rows are the principal axes of the vertices (largest first)."""
+def _canonical_sign(c, e):
+    """e or -e, chosen from the shape (third moment, then the largest
+    component), so that every platform picks the same."""
+    m3 = float(((c @ e) ** 3).sum())
+    scale = float((np.abs(c @ e) ** 3).sum()) or 1.0
+    if abs(m3) > 1e-9 * scale:
+        return e if m3 > 0 else -e
+    j = int(np.argmax(np.abs(e) + np.arange(3) * 1e-12))
+    return e if e[j] > 0 else -e
+
+
+def principal_frame(verts, tol=1e-6):
+    """Rotation whose rows are the principal axes of the vertices (largest
+    first), made definite where the moments leave it open.
+
+    Two equal moments (a disc, a saddle like the pringle) leave the axes in
+    their plane arbitrary, and LAPACK picks them differently on different
+    machines: the same packing came out 66 mm high on one and 109 mm on
+    another.  So: in such a plane the first axis is the one of the smallest
+    bounding rectangle (a square part square to the axes), or for a round
+    outline where the shape bends most towards the third axis (the
+    eigenvector of sum (v.n) v v^T in the plane: a saddle's rising
+    direction), else the given x axis projected into the plane; signs by
+    the third moment.  Three equal moments (a cube, a sphere) keep the
+    given axes."""
     v = np.asarray(verts, float)
     c = v - v.mean(axis=0)
     w, U = np.linalg.eigh(c.T @ c)
-    R = U[:, ::-1].T
+    w, U = w[::-1], U[:, ::-1]                      # largest first
+    big = max(float(w[0]), 1e-300)
+    same01 = (w[0] - w[1]) <= tol * big
+    same12 = (w[1] - w[2]) <= tol * big
+    if same01 and same12:
+        return np.eye(3)
+    if same01 or same12:
+        # the lone axis n and an orthonormal basis (a, b) of the degenerate plane
+        n = U[:, 2] if same01 else U[:, 0]
+        n = _canonical_sign(c, n)
+        a = np.cross(n, [1.0, 0.0, 0.0])
+        if np.linalg.norm(a) < 1e-6:
+            a = np.cross(n, [0.0, 1.0, 0.0])
+        a /= np.linalg.norm(a)
+        b = np.cross(n, a)
+        P = c @ np.stack([a, b], 1)                 # coordinates in the plane
+        d = None
+        # the turn in the plane with the smallest bounding rectangle (what
+        # boxes and grids want: a square part square to the axes) ...
+        Ps = P[::max(1, len(P) // 20000)]
+        th = np.radians(np.arange(0.0, 90.0, 0.25))
+        D = np.stack([np.cos(th), np.sin(th)])
+        u = Ps @ D
+        w2 = Ps @ np.stack([-np.sin(th), np.cos(th)])
+        area = (u.max(0) - u.min(0)) * (w2.max(0) - w2.min(0))
+        if area.max() - area.min() > 1e-3 * area.max():
+            j = int(np.argmin(area + np.arange(len(th)) * 1e-12 * area.max()))
+            d = D[:, j]
+            if (w2[:, j].max() - w2[:, j].min()) > (u[:, j].max() - u[:, j].min()) * (1 + 1e-9):
+                d = np.array([-d[1], d[0]])          # (the longer side first)
+        else:
+            # ... and for a round outline, where it bends most towards the
+            # third axis (a saddle's rising direction)
+            wt = c @ n
+            q, V = np.linalg.eigh((P * wt[:, None]).T @ P)
+            if q[1] - q[0] > tol * (abs(q[0]) + abs(q[1])) and abs(q[1]) + abs(q[0]) > 1e-300:
+                d = V[:, 1]
+        if d is None:
+            d = np.array([1.0, 0.0])
+        e = a * d[0] + b * d[1]
+        e = _canonical_sign(c, e)
+        f = np.cross(n, e)
+        R = np.stack([e, f, n]) if same01 else np.stack([n, e, f])
+    else:
+        R = np.stack([_canonical_sign(c, U[:, j]) for j in range(3)])
     if np.linalg.det(R) < 0:
         R[2] *= -1
     return R
@@ -139,6 +210,15 @@ def orientations(part, z_step=30.0):
         n = max(1, int(round(360.0 / z_step)))
         return [rot_z(k * 360.0 / n) @ base for k in range(n)]
     if part.mode == 'free':
-        P = principal_frame(np.asarray(part.mesh.verts) @ base.T)
-        return [G @ P @ base for G in cube_group()]
+        V = np.asarray(part.mesh.verts, float) @ base.T
+        P = principal_frame(V)
+        out = [G @ P @ base for G in cube_group()]
+        # in an order that depends on the shape only, so that ties go the
+        # same way everywhere: lowest first, then by extent and centre
+        def key(A):
+            W = np.asarray(part.mesh.verts, float) @ A.T
+            lo, hi = W.min(0), W.max(0)
+            cen = W.mean(0) - lo
+            return tuple(np.round(np.concatenate([(hi - lo)[::-1], cen[::-1]]), 6))
+        return sorted(out, key=key)
     raise ValueError('unknown rotation mode: %r' % part.mode)

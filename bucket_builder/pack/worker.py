@@ -28,7 +28,7 @@ from .meshio import Mesh
 from .problem import Part, Settings
 
 SETTINGS = ('gap', 'wall_gap', 'h', 'coarse', 'phases', 'z_step', 'max_density', 'layer_cap',
-            'layer_weight', 'candidates', 'time_limit')
+            'layer_weight', 'candidates', 'time_limit', 'time_budget', 'preset', 'seed')
 
 
 def write_job(folder, parts, settings, locked=()):

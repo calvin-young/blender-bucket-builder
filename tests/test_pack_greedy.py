@@ -58,7 +58,8 @@ def test_cavity():
     ins = S.insole()
     ins = S.transformed(ins, np.diag([0.6, 0.6, 1.0]))     # 54 x 18 x 4 mm
     parts = [Part('socket', sock, 1, 'fixed'), Part('insole', ins, 1, 'free')]
-    s = Settings(vlo=(0, 0, 0), vhi=(66, 66, 110), gap=1.0, wall_gap=0.0, h=1.0, candidates=8,
+    # (62: the corners beside the socket are too narrow for it, standing or lying)
+    s = Settings(vlo=(0, 0, 0), vhi=(62, 62, 110), gap=1.0, wall_gap=0.0, h=1.0, candidates=8,
                  max_density=None)       # (the socket alone is 30 % of this small box)
     res, items = solve_and_referee(parts, s, 'socket in a box just its size')
     ok = len(res.placements) == 2

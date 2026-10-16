@@ -93,14 +93,22 @@ def _mark(grid, P, origin, h):
                 flat[(ix * dims[1] + iy) * dims[2] + iz] = True
 
 
-def surface_grid(verts, tris, A, h, pad):
+def _origin(lo, h, pad, align):
+    if align == 'min':
+        return lo - pad * h            # the lowest corner of the part on a cell corner
+    return (np.floor(lo / h) - pad) * h
+
+
+def surface_grid(verts, tris, A, h, pad, align='grid'):
     """(surface grid, origin): the cells the posed surface A @ v lies in, on a
-    grid with `pad` empty cells on every side; origin is the corner of cell 0
-    (a multiple of h)."""
+    grid with `pad` empty cells on every side; origin is the corner of cell 0:
+    a multiple of h (align 'grid'), or `pad` cells below the part's lowest
+    corner (align 'min': the same part turned onto itself gets the same
+    cells, and its low sides waste nothing)."""
     V = np.asarray(verts, np.float64) @ np.asarray(A, np.float64).T
     lo = V.min(axis=0)
     hi = V.max(axis=0)
-    origin = (np.floor(lo / h) - pad) * h
+    origin = _origin(lo, h, pad, align)
     dims = (np.floor((hi - origin) / h).astype(np.int64) + 1 + pad)
     grid = np.zeros(tuple(int(d) for d in dims), dtype=bool)
     t = np.asarray(tris)
@@ -133,7 +141,7 @@ def cloud_cell(h, sigma):
     return 0.999 * h / (max(sigma, 1e-12) * math.sqrt(3.0))
 
 
-def surface_grid_cloud(cloud, A, h, pad):
+def surface_grid_cloud(cloud, A, h, pad, align='grid'):
     """surface_grid from a Cloud: every point of a local cell lies within
     sigma * hl * sqrt(3) / 2 of the turned centre, so the cells of that
     box around it hold the turned surface (conservative)."""
@@ -145,7 +153,7 @@ def surface_grid_cloud(cloud, A, h, pad):
     C = cloud.centers @ A.T
     lo = C.min(axis=0) - R
     hi = C.max(axis=0) + R
-    origin = (np.floor(lo / h) - pad) * h
+    origin = _origin(lo, h, pad, align)
     dims = (np.floor((hi - origin) / h).astype(np.int64) + 1 + pad)
     grid = np.zeros(tuple(int(d) for d in dims), dtype=bool)
     for s in range(0, C.shape[0], CHUNK):
@@ -358,7 +366,7 @@ def pool(grid, f, phase=(0, 0, 0)):
     return big.reshape(dims[0], f, dims[1], f, dims[2], f).any(axis=(1, 3, 5))
 
 
-def voxelize(verts, tris, A, h, gap, close_cells=0, cloud=None):
+def voxelize(verts, tris, A, h, gap, close_cells=0, cloud=None, align='grid'):
     """PartGrid of a mesh posed by A, at cell size h, for gap `gap`.
 
     close_cells > 0 closes holes up to about twice that many cells wide
@@ -366,9 +374,9 @@ def voxelize(verts, tris, A, h, gap, close_cells=0, cloud=None):
     With a `Cloud` the surface comes from it instead of the triangles."""
     pad = gap_cells(gap, h) + close_cells + 1
     if cloud is not None:
-        surf, origin = surface_grid_cloud(cloud, A, h, pad)
+        surf, origin = surface_grid_cloud(cloud, A, h, pad, align)
     else:
-        surf, origin = surface_grid(verts, tris, A, h, pad)
+        surf, origin = surface_grid(verts, tris, A, h, pad, align)
     if close_cells > 0:
         thick = dilate_cube(surf, close_cells)
         out = outside(thick)
