@@ -59,7 +59,7 @@ owner used in his previous print-prep software. Read `README.md` for the design 
   built on the `autopack` branch (agreed 2026-10-12) and merged in milestones
   behind an experimental preference; keep `main` releasable.
 * `python3 tests/test_private_guard.py` checks that nothing but the README is
-  ever committed from `benchmarks/private/` (the owner's real buckets).
+  ever committed from `benchmarks/private/` (the owner's own buckets).
 * Timing in the sandbox: the first write to a page of memory is about twenty
   times slower than on real hardware and run-to-run noise is around 20 %.
   Compare old and new in the same session (`git worktree add` the old one).
@@ -353,7 +353,7 @@ not `icon_pixels_float`; Blender's Suzanne has 42 boundary edges (the open-mesh
 warning is right about it); `meshes.box` in the tests is centred on the origin.
 
 **Stage 2 is in progress** (Opus 5.5, started 2026-10-13 night; the owner is
-away until morning and will bring non-sensitive benchmark buckets). Plan and
+away until morning and will bring benchmark buckets). Plan and
 decisions so far, in the order of the work:
 
 1. SciPy is NOT in Blender's Python and PyPI is blocked here, so no wheels can
@@ -489,7 +489,7 @@ medium): Job loop, ruin and recreate, compaction to exact gaps (recovers the
 voxel slack), score presets, Pack panel.
 
 
-The owner still owes: Suzanne STLs at several subdivision levels, non-sensitive
+The owner still owes: Suzanne STLs at several subdivision levels,
 benchmark buckets.
 
 **A local machine is being set up (asked 2026-10-14)**: an old desktop of the
