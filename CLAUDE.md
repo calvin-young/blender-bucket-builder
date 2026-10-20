@@ -585,7 +585,29 @@ peg 880 / 1547 / 1860, trapezoid 672 / 627 / 660, half disc 2310 / 2024 /
 2024; L plate 1225 / 2100 and angle iron 480 / 985 are already won by the
 plain lattice (its vectors lean). Referee clean on all. 25 - 55 s per shape
 because it tries 6 orientations x 3 axes x 8 pairings; for the job: best 2
-orientations x 3 axes x 3 pairings, in the worker processes. Not integrated.
+orientations x 3 axes x 3 pairings, in the worker processes (built in 1.4.0).
+**1.4.0 (2026-10-20, autopack)**: double lattices and families built in
+(spec §8.4 as built). `pattern.Envelope` / `cross_free` / `pairings`;
+job: groups of parts (`_group_patterns`, `_Pattern` kinds single and
+double, slots {part: (orientation, shift)}), `_partner` (180 degrees about
+x, y, z), `pack/family.py` (`find`: size, volume, coarse picture overlap
+>= 0.55 under the 24 turns, linked member to member; `Family.matrix` lines
+members up), job `_families`, `_fam_k` (adds member orientations as
+extras), `_fam_env`, `_family_prepare` (before worker tasks so orientation
+indices agree), `_probe_family`. **Lattices first** (`_lattice_first`)
+when lattice parts and families are 90 % of the copies; greedy first
+layout only if parts are left out. Greedy runs skip when `_run_cost`
+says they overrun; recreate is `timed`; lattice layouts keep their
+orientations as choice (`_used`). Greedy score + `overshoot_weight`
+(raising the build: rods stood up in gaps, 200 -> 86 mm). Tried and
+dropped: placing a family's copies at one member's lattice checked one by
+one ("guided"), sorting members so neighbours are alike: no gain. Shape
+library `synthetic.library()` (15 buckets), `tests/bench_pack_library.py`,
+results table and failures in AUTOPACK §8.4. Next ideas, in order of
+value: exact lattice refinement (cups that nest on a gentle taper, boxy
+parts at the array's pitch), partner grids by flipping instead of
+voxelising (doubles twice as cheap), interlocking check (§8.9), a summary
+in the panel of what was recognised (families, patterns).
 Not done in Stage 3: the commercial packer
 comparison (needs the owner's baselines), compaction that makes room for
 parts left out (now it only tidies the final layout), a lattice / pattern

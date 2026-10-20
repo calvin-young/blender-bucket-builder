@@ -553,6 +553,42 @@ and the referee. They are listed in the solver dropdown; `auto` picks one
 > sorting members so that neighbours are alike, were measured and gave
 > nothing.
 >
+> **The shape library** (1.4.0, `synthetic.library()`,
+> `tests/bench_pack_library.py --baseline`): 60 s, 2 cores, one process,
+> no density limit, every layout clean by the referee; "greedy" is one copy
+> at a time as before Stage 4.
+>
+> | bucket | parts | greedy | now | first layout |
+> |---|---|---|---|---|
+> | 50 different chips (a family) | 50 | 69.3 mm | 46.2 mm | 12 s |
+> | wedges (door stops) | 150 | 128.2 | 72.3 | 12 s |
+> | gussets | 300 | 117.7 | 67.0 | 9 s |
+> | flat tees | 200 | 69.0 | 42.0 | 8 s |
+> | knobs | 150 | 57.0 | 45.0 | 6 s |
+> | 40 different knobs (a family) | 40 | 38.7 | 36.0 (bound) | 10 s |
+> | tapered cups | 60 | 146.0 | 115.0 | 21 s |
+> | domes | 60 | 107.0 | 60.0 | 14 s |
+> | hex nuts | 600 | 65.1 | 41.0 | 3 s |
+> | stars | 200 | 77.0 | 33.0 | 5 s |
+> | C clips | 200 | 60.0 | 39.9 | 4 s |
+> | J hooks | 200 | 63.8 | 33.0 | 9 s |
+> | angles + L plates | 200 | 133.1 | 60.0 | 32 s |
+> | keycaps, four sizes | 80 | 26.4 | 26.4 (bound) | 6 s |
+> | mixed day (9 kinds) | 186 | 200 -> 86 | 86 | 22 s |
+>
+> Failures found: (1) the mixed day was 200 mm high because ten 200 mm
+> rods, placed late, stood up in gaps on the floor (greedy took the lowest
+> bottom whatever the top); greedy's score now counts how far a placement
+> raises the build (`Settings.overshoot_weight`). (2) Tapered cups with a
+> gentle taper do not nest: on 1 mm cells the conservative grid needs a
+> step of about 36 mm where 21 mm is enough exactly, so the lattice lays
+> them on their sides. (3) Boxy parts lose to the array (above). (2) and
+> (3) want an exact refinement of the lattice (shrink each lattice vector
+> by conservative advancement on the engine, copies off the grid). Rings
+> (tori) do not come out linked (0 linked pairs in 120), but nothing stops
+> a lattice from threading rings: the interlocking check (§8.9) matters
+> more with patterns.
+>
 > **Lattices first** (1.4.0): when parts with 20 copies or more, and
 > families, are nine tenths of the copies, their lattice probes (with at
 > most 12 turned ones, within a quarter of the time) and a lattice layout
@@ -818,7 +854,7 @@ for the owner to set before asking for the stage.
 | 1 (**done**, 2026-10-13) | `pack/meshio.py` (STL, 3MF), `pack/metrics.py` (volume, layer profile, density, partial-OOB warning), sidebar report and profile plot, `python -m pack report` | exact against analytic shapes (boxes, spheres, tori, rotated) to 1e-9; report on a 60 x 1 M build in seconds | Sonnet 5.5, medium |
 | 2 | Voxel layer (conservative voxelisation, flood fill, dilation), FFT feasibility, coarse to fine, greedy placement; CPU and GPU timing script for the owner | feasible layouts verified by the referee on all synthetic buckets; timing table on the VM and the owner's laptop; a decision on the GPU path | Opus 5.5, high |
 | 3 (**mostly done**, 2026-10-16) | `Job` loop, improvement (ruin and recreate), compaction, rotation modes, locks, tiers, density cap, layer penalty; Pack panel and part list | beats or matches the owner's commercial packer baseline on the synthetic set; first result within the targets of §2 | Sonnet 5.5, medium |
-| 4 (**started**, 2026-10-20) | Pattern solver (lattices, double lattices) | beats the bounding-box array on pringle, figurine and Suzanne copies | Opus 5.5, high |
+| 4 (**mostly done**, 2026-10-20) | Pattern solver (lattices, double lattices, families) | beats the bounding-box array on pringle, figurine and Suzanne copies | Opus 5.5, high |
 | 5 | Planner (goals, ratios, quantities); Buckets panel; World groups; export all | multi-bucket jobs from the synthetic set; bucket workflow tested in a window | Opus to design, Sonnet to build |
 | 6 | Halos (adaptive, thickness), pair warnings, what-if, solver recommendation | what-if suggestions reproducible across seeds | Sonnet 5.5, medium |
 | 7 | Labels | labelled builds pass the referee | Sonnet 5.5, low to medium |
