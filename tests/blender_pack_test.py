@@ -120,6 +120,21 @@ def main():
     print('   (', sum(1 for o in objs[2:] if np.allclose(np.array(o.matrix_world), keep[o.name])),
           'of', len(objs) - 2, 'others did not move)')
 
+    # packing a selection packs it around what is already in the volume
+    keep = {o.name: np.array(o.matrix_world) for o in objs}
+    bpy.ops.mesh.primitive_cube_add(size=25, location=(0, 0, 0))
+    extra = bpy.context.active_object
+    bpy.ops.object.select_all(action='DESELECT')
+    extra.select_set(True)
+    st.pack_time = 3.0
+    r = bpy.ops.bucketbuilder.pack(selected_only=True)
+    mon = settle()
+    s = mon.status()
+    check(r == {'FINISHED'} and st.pack_last.startswith('Packed 1 of 1'), 'a new part packed on its own', st.pack_last)
+    check(all(np.allclose(np.array(o.matrix_world), keep[o.name]) for o in objs), 'the others did not move')
+    check(s['collisions'] == 0 and s['clearance'] == 0, 'and it found room among them, not on them', s)
+    bpy.data.objects.remove(extra)
+
     # a part that cannot fit is put beside the volume, with a warning
     bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0))
     huge = bpy.context.active_object

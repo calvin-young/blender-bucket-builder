@@ -95,13 +95,28 @@ def volume_mm(scene, k):
     return lo, lo + size
 
 
-def candidates(context, selected_only):
-    """The mesh objects to pack and the locked ones."""
+def candidates(context, selected_only, obstacles=False):
+    """The mesh objects to pack and the locked ones.  With `obstacles`, when
+    only the selected parts are packed, every other visible part in the
+    build volume stays where it is too (the selection is packed around the
+    build that is there; parts parked beside the volume do not count)."""
     objs = [o for o in (context.selected_objects if selected_only else context.scene.objects)
             if o.type == 'MESH' and not o.bucket_builder_ignore and o.visible_get()]
     move = [o for o in objs if not o.bucket_builder_pack_lock]
     locked = [o for o in context.scene.objects
               if o.type == 'MESH' and o.bucket_builder_pack_lock and not o.bucket_builder_ignore]
+    if obstacles and selected_only:
+        scene = context.scene
+        k = mm_per_unit(scene, move or locked)
+        vlo, vhi = volume_mm(scene, k)
+        taken = {o.as_pointer() for o in move} | {o.as_pointer() for o in locked}
+        for o in scene.objects:
+            if o.type != 'MESH' or o.bucket_builder_ignore or not o.visible_get() or o.as_pointer() in taken:
+                continue
+            mw = np.array(o.matrix_world, dtype=np.float64)
+            P = np.array([mw @ np.array([*c, 1.0]) for c in o.bound_box])[:, :3] * k
+            if np.all(P.max(0) > vlo) and np.all(P.min(0) < vhi):
+                locked.append(o)
     return move, locked
 
 
@@ -192,7 +207,7 @@ class BUCKETBUILDER_OT_pack(Operator):
     def _prepare(self, context):
         scene = context.scene
         st = props.settings(scene)
-        move, locked = candidates(context, self.selected_only)
+        move, locked = candidates(context, self.selected_only, obstacles=True)
         if not move:
             self.report({'WARNING'}, "No parts to pack: select mesh objects (or untick Selected Only)")
             return False
@@ -392,7 +407,8 @@ class BUCKETBUILDER_OT_pack(Operator):
                 o.matrix_world = _matrix(mw)
                 x += (hi[0] - lo[0]) + 10.0
         context.view_layer.update()
-        rep = metrics.measure(res.items(self._parts), self._vlo, self._vhi)
+        rep = metrics.measure(res.items(self._parts) + [('locked', m, M) for m, M in self._lock],
+                              self._vlo, self._vhi)              # (the whole build: locked parts too)
         total = sum(len(objs) for objs in self._objects)
         msg = "Packed %d of %d parts in %.1f s: height %.1f mm, density %.1f %%" % (
             len(res.placements), total, time.perf_counter() - self._t0,

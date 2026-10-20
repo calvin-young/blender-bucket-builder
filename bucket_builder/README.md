@@ -234,7 +234,10 @@ part names unless `--names` is given.
 
 **Pack** arranges the selected parts (or all visible parts when nothing is
 selected) in the build volume. Parts marked **Locked** stay where they are and
-the others are packed around them. It works in the background: you can go on
+the others are packed around them. When only some parts are selected, every
+other visible part already in the build volume stays where it is too, and the
+selection is packed into the room that is left (parts parked beside the
+volume do not count). It works in the background: you can go on
 working, and the badge at the top of the viewport says how far it is.
 
 1. **The first layout** fills the volume part by part, largest first, each
