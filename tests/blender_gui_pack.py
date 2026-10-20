@@ -80,8 +80,9 @@ def step_setup():
     st.detect_collisions = True
     st.monitor_volume = True
     st.clearance_mm = st.pack_gap - 0.01
-    st.pack_time = 20.0
+    st.pack_time = 45.0             # (greedy alone takes 15 - 25 s here, next to Blender)
     st.pack_mode = 'FREE'          # (Suzanne may lie on her face: room for the improvement phase)
+    st.pack_max_density = 0.0      # (with the limit this build is at its lowest at once)
     sp = area().spaces.active
     sp.show_region_ui = True
     sp.overlay.show_floor = False

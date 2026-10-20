@@ -59,6 +59,20 @@ def main():
     bpy.context.view_layer.update()
     plate_before = np.array(plate.matrix_world)
 
+    # the part list's settings are the mesh's; a part's own setting comes first
+    pk = bc.packing
+    sph = objs[10]
+    sph.data.bucket_builder_pack_mode = 'FIXED'
+    check(pk.pack_mode(sph, st) == 'FIXED' and pk.pack_mode(objs[0], st) == st.pack_mode,
+          "a mesh's rotation applies to its parts")
+    sph.bucket_builder_pack_mode = 'FREE'
+    check(pk.pack_mode(sph, st) == 'FREE', "and a part's own wins")
+    sph.bucket_builder_pack_mode = 'DEFAULT'
+    sph.data.bucket_builder_pack_mode = 'DEFAULT'
+    cube.data.bucket_builder_pack_essential = True
+    check(pk.is_essential(objs[3]) and not pk.is_essential(sph), "a mesh marked essential makes its copies so")
+    cube.data.bucket_builder_pack_essential = False
+
     st.pack_gap = 3.0
     st.pack_wall_gap = 5.0
     st.pack_max_density = 0.0

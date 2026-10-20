@@ -133,6 +133,44 @@ def problem_text(pr):
     return f"{pr['a']}   outside"
 
 
+_PACK_COUNT = {}        # mesh pointer -> (copies to pack, a name to show), filled by filter_items
+
+
+class BUCKETBUILDER_UL_pack_parts(UIList):
+    """The parts the packer will pack, one row per mesh (copies of a mesh are
+    one row): how many, how they may turn, whether they are essential.  The
+    list is bpy.data.meshes, filtered to those of the parts to pack."""
+    bl_idname = "BUCKETBUILDER_UL_pack_parts"
+
+    def filter_items(self, context, data, propname):
+        meshes = getattr(data, propname)
+        sel = [o for o in context.selected_objects if o.type == 'MESH']
+        move, _ = packing.candidates(context, bool(sel))
+        _PACK_COUNT.clear()
+        for o in move:
+            k = o.data.as_pointer()
+            n, name = _PACK_COUNT.get(k, (0, o.name))
+            _PACK_COUNT[k] = (n + 1, min(name, o.name))
+        flags = [self.bitflag_filter_item if m.as_pointer() in _PACK_COUNT else 0 for m in meshes]
+        order = sorted(range(len(meshes)), key=lambda j: (-_PACK_COUNT.get(meshes[j].as_pointer(), (0, ''))[0],
+                                                          meshes[j].name))
+        new = [0] * len(meshes)
+        for pos, j in enumerate(order):
+            new[j] = pos
+        return flags, new
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index=0,
+                  flt_flag=0):
+        n, name = _PACK_COUNT.get(item.as_pointer(), (0, item.name))
+        row = layout.row(align=True)
+        row.label(text="%s  \u00d7 %d" % (name, n), icon='MESH_DATA')
+        m = row.row(align=True)
+        m.ui_units_x = 4.5
+        m.prop(item, "bucket_builder_pack_mode", text="")
+        row.prop(item, "bucket_builder_pack_essential", text="", icon='SOLO_ON' if item.bucket_builder_pack_essential
+                 else 'SOLO_OFF', emboss=False)
+
+
 class BUCKETBUILDER_UL_problems(UIList):
     """The list of problems.  Blender's own list widget: text at the left,
     the row one is at lit, a scroll bar when there are many.  Its rows come
@@ -468,6 +506,8 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
             op = row.operator("bucketbuilder.pack", icon='FILE_REFRESH', text="Improve Current Layout")
             op.selected_only = bool(sel)
             op.improve = True
+        layout.template_list("BUCKETBUILDER_UL_pack_parts", "", bpy.data, "meshes", context.window_manager,
+                             "bucket_builder_pack_part", rows=3, maxrows=6)
         col = _split(layout)
         col.prop(st, "pack_preset")
         col.prop(st, "pack_time")
@@ -646,6 +686,7 @@ class BUCKETBUILDER_PT_export(_Base, Panel):
 
 CLASSES = (
     BUCKETBUILDER_UL_problems,
+    BUCKETBUILDER_UL_pack_parts,
     BUCKETBUILDER_PT_main,
     BUCKETBUILDER_PT_problems,
     BUCKETBUILDER_PT_collisions,

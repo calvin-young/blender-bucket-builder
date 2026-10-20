@@ -88,9 +88,12 @@ class FakeLayout:
         assert prop in data.bl_rna.properties and active_prop in active_data.bl_rna.properties
         rows = getattr(data, prop)
         flags, order = cls.filter_items(ListHolder, CONTEXT[0], data, prop)
-        assert len(flags) == len(rows) and not order
+        assert len(flags) == len(rows) and (not order or sorted(order) == list(range(len(rows))))
         shown = [i for i, f in enumerate(flags) if f & ListHolder.bitflag_filter_item]
-        LOG.append(('list', len(shown)))
+        if order:
+            shown.sort(key=lambda i: order[i])
+        tag = '' if cls_name == 'BUCKETBUILDER_UL_problems' else ':' + cls_name      # (rows of other lists apart)
+        LOG.append(('list' + tag, len(shown)))
         active = getattr(active_data, active_prop)
         for i in shown:
             n0 = len(LOG)
@@ -98,8 +101,8 @@ class FakeLayout:
             cls.draw_item(ListHolder, CONTEXT[0], layout, data, rows[i], 0, active_data, active_prop, i)
             texts = [t for k, t in LOG[n0:] if k == 'label']
             assert len(texts) == 1, ('a row of the list has one line of text', texts)
-            LOG.append(('row', texts[0]))
-            if i == active:
+            LOG.append(('row' + tag, texts[0]))
+            if i == active and not tag:
                 LOG.append(('lit', texts[0]))
 
     def prop(self, data, name, **kw):
@@ -218,6 +221,10 @@ def main():
 
     n0 = len(LOG)
     draw_all(ctx, 'monitoring off')
+    parts = [t for k, t in LOG[n0:] if k == 'row:BUCKETBUILDER_UL_pack_parts']
+    n_mesh = len({o.data.name for o in sc.objects if o.type == 'MESH' and o.visible_get()})
+    assert len(parts) == n_mesh and all('\u00d7' in t for t in parts), ('the part list', parts, n_mesh)
+    print('part list:', parts[:3])
     for name in ('detect_collisions', 'monitor_volume', 'ignore_hidden', 'detect_enclosed', 'unit_mode',
                  'show_labels_clearance', 'show_markers_clearance', 'local_view_mode'):
         assert ('prop', name) in LOG, f'{name} is missing from the sidebar'

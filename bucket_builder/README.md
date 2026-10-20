@@ -267,7 +267,11 @@ row beside the volume, and the panel says why.
 | **Gap**, **Wall Gap** | The distance kept between parts, and from the side walls. |
 | **Max Density** | The packer builds higher rather than exceed this 3D density. |
 
-For the active part: **Pack Rotation** (its own rotation mode), **Locked**
+The list above the settings has one row per mesh among the parts to pack,
+with how many copies of it there are: its rotation and the essential star
+set there apply to every copy of that mesh (linked duplicates share one).
+For the active part: **Pack Rotation** (its own rotation mode, which comes
+before its mesh's), **Locked**
 (it stays where it is), **Essential**: when some parts are marked essential,
 all of them are placed first and the others only where there is room left
 (no number of other parts outweighs one essential part).
