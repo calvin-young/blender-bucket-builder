@@ -148,11 +148,104 @@ def test_chips():
           and v.ok, 'job: %.1f mm, %d placed, referee %s' % (res.height, len(res.placements), 'clean' if v.ok else v))
 
 
+def test_double():
+    print('double lattices: every other copy turned 180 degrees')
+    s = Settings(vlo=(0, 0, 0), vhi=(380, 284, 45), gap=2.0, wall_gap=2.0, max_density=None, time_budget=None)
+    for name, mesh, want in (('gusset', S.gusset(), 1.1), ('peg', S.peg(), 1.1), ('chip', S.pringle(), None)):
+        j = _job([Part(name, mesh, 10 ** 5, 'free')], s)
+        ks = sorted(j._distinct(0), key=lambda k: (j._z_extent(0, k), k))
+        j.cands = {0: ks}
+        pats = []
+        for _ in j._group_patterns((0,), pats):
+            pass
+        todo = [(0, c) for c in range(10 ** 4)]
+        best = {}
+        for pat in pats:
+            lay = j._fresh()
+            got, top, added = j._place_pattern(lay, pat, todo)
+            if len(got) > best.get(pat.kind, (0,))[0]:
+                best[pat.kind] = (len(got), pat, got, lay)
+        n1, n2 = best.get('single', (0,))[0], best.get('double', (0,))[0]
+        if want:
+            check(n2 >= want * n1, '%s: %d copies on a double lattice, %d on a single one' % (name, n2, n1))
+        else:
+            check(n2 <= n1, '%s: the single lattice wins (%d against %d): chips nest without turning'
+                  % (name, n1, n2))
+        if n2:
+            _, pat, got, lay = best['double']
+            for i, c, k, cell in got[:60]:
+                lay.add(i, c, k, cell)
+            items = [('%s#%d' % (name, n), mesh, j.g.placement(lay.bucket, i, c, k, cell).matrix)
+                     for n, (i, c, k, cell) in enumerate(got[:60])]
+            v = referee.check(items, s.vlo, s.vhi, s.gap, s.wall_gap)
+            check(v.ok, '  60 of them, referee %s' % ('clean' if v.ok else v))
+
+
+def _chips(n, seed=5):
+    rng = np.random.default_rng(seed)
+    return [Part('chip%d' % k, S.pringle(float(rng.uniform(27, 33)), float(rng.uniform(36, 44)),
+                                         float(rng.uniform(1.8, 2.4))), 1, 'free') for k in range(n)]
+
+
+def test_family_find():
+    print('families of similar parts')
+    from pack import family, metrics
+    rng = np.random.default_rng(2)
+    chip = S.pringle()
+    turned = []
+    for k in range(6):
+        q, _ = np.linalg.qr(rng.normal(size=(3, 3)))
+        if np.linalg.det(q) < 0:
+            q[:, 0] *= -1
+        turned.append(Part('turned%d' % k, chip, 1, 'free', base=q))
+    parts = _chips(20) + turned + [Part('wedge%d' % k, S.wedge(55 + k, 25), 1, 'free') for k in range(4)] + \
+        [Part('keycap', S.big_keycap(), 1, 'free'), Part('tee', S.tee(), 1, 'free'),
+         Part('fixed chip', S.pringle(), 1, 'fixed')]
+    vols = [abs(metrics.mesh_stats(p.mesh)[0]) for p in parts]
+    fams = family.find(parts, vols, range(len(parts)))
+    names = sorted(sorted(parts[m].name[:4] for m in F.members)[0] + ' x%d' % len(F.members) for F in fams)
+    check(names == ['chip x26', 'wedg x4'], 'found %s' % names)
+    F = next(F for F in fams if len(F.members) == 26)
+    A = np.asarray(J.Job(parts, Settings(time_budget=None), workers=1).g.orients(F.ref)[0], float)
+    ext = [np.ptp(np.asarray(parts[m].mesh.verts) @ F.matrix(A, m).T, axis=0) for m in F.members]
+    E = np.array(ext)
+    same = np.ptp(E[[F.members.index(i) for i in range(20, 26)]], axis=0).max()
+    check(same < 1e-6, 'the six turned copies of one chip line up exactly (extents agree to %.1e mm)' % same)
+    thin = set(np.argmin(E, axis=1).tolist())
+    check(len(thin) == 1, 'every member lies the same way (thinnest along axis %s; extents %s to %s)'
+          % (sorted(thin), E.min(0).round(1), E.max(0).round(1)))
+
+
+def test_family_job():
+    print('a family packed: different chips nest like copies')
+    from pack import family
+    parts = _chips(40)
+    s = Settings(vlo=(0, 0, 0), vhi=(240, 200, 200), gap=2.0, wall_gap=2.0, max_density=None, time_budget=40.0)
+    res = {}
+    find = family.find
+    try:
+        for mode in ('families', 'none'):
+            if mode == 'none':
+                family.find = lambda *a, **k: []
+            jb = J.Job(parts, s, threads=1, workers=1)
+            r = jb.run()
+            jb.close()
+            v = referee.check(r.items(parts), s.vlo, s.vhi, s.gap, s.wall_gap)
+            res[mode] = (r.height, len(r.placements), v.ok, jb.log)
+    finally:
+        family.find = find
+    (h1, n1, ok1, log), (h0, n0, ok0, _) = res['families'], res['none']
+    check(any(' family ' in line for line in log), 'one family of 40')
+    check(ok1 and ok0 and n1 == n0 == 40, 'all placed both ways, referee clean')
+    check(h1 < h0 - 5, '%.1f mm as a family, %.1f mm one by one' % (h1, h0))
+
+
 if __name__ == '__main__':
-    test_free_offsets()
-    test_lattices()
-    test_around_locked()
-    test_chips()
+    only = sys.argv[1:]
+    for t in (test_free_offsets, test_lattices, test_around_locked, test_chips, test_double, test_family_find,
+              test_family_job):
+        if not only or t.__name__ in only:
+            t()
     print()
     if FAILS:
         print('FAILED: %d' % len(FAILS))

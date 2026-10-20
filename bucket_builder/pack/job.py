@@ -159,6 +159,16 @@ class Job:
         self._pins = {}
         self._extra = {}            # part -> orientations added by the turned probes (beyond the mode's)
         self._lattices = {}         # (part, orientation) -> pack.pattern.Lattice or None
+        self._pats = {}             # group of parts -> [_Pattern] (job._group_patterns)
+        self._seeded = {}           # group -> the kind of lattice its last seeding used
+        self._lattice_done = set()  # parts probed before the first layout (job._lattice_first)
+        self._too_large = set()     # parts that fit the volume in no orientation (job.lower_bound)
+        self._fams = None           # families of similar parts (pack.family), found when first wanted
+        self._fcands = {}           # family key -> the reference's orientations, best lattice first
+        self._fk = {}               # (family key, member, reference orientation) -> member orientation
+        self._place_cost = [0.0, 0]  # seconds spent placing copies with greedy, orientations tried
+        self._lattice_skip = set()  # (and those that will be: no probes for them in the processes)
+        self._lattice_wanted = False
         self.small_first = False    # full runs smallest part first (more parts in a bucket that is full)
         self.final = None           # {(part, copy): 4 x 4}: the best layout after exact compaction
         self.final_height = None
@@ -311,17 +321,30 @@ class Job:
         return self._best_height() <= self._lb + self.s.h
 
     # ------------------------------------------------------------ building
-    def _build(self, lay, todo, allowed, count=False, stop_above=None):
+    def _used(self, lay):
+        """{part: the orientations its copies have in lay}: a lattice
+        layout's choice, for the runs and improvements made from it."""
+        out = {}
+        for (i, c), r in lay.recs.items():
+            if r[0] != 'pin':
+                out.setdefault(i, set()).add(r[0])
+        return {i: sorted(v) for i, v in out.items()}
+
+    def _build(self, lay, todo, allowed, count=False, stop_above=None, timed=False):
         """Put the copies in `todo` in, in that order (a generator: yields
         after every part); stops once the build is higher than `stop_above`."""
         for n, (i, c) in enumerate(todo):
-            if self.cancel:
+            if self.cancel or (timed and self._time_up(0.0)):
                 return
             if stop_above is not None and lay.bucket.height > stop_above:
                 return
             if count:
                 self.progress = (n, len(todo))
+            t0 = time.perf_counter()
             best, why = self.g.place_one(lay.bucket, i, allowed.get(i))
+            na = len(self.g.orients(i)) if allowed.get(i) is None else len(allowed[i])
+            self._place_cost[0] += time.perf_counter() - t0
+            self._place_cost[1] += na
             if best is None:
                 self.why[(i, c)] = why
             else:
@@ -352,7 +375,7 @@ class Job:
         shapes flipped)."""
         plan = []
         for i, part in sorted(enumerate(self.parts), key=lambda t: -self._size(t[0]) * t[1].quantity):
-            if part.quantity < 2 or part.mode == 'fixed':
+            if part.quantity < 2 or part.mode == 'fixed' or i in self._lattice_done or i in self._lattice_skip:
                 continue
             ks = self._distinct(i)
             if len(ks) >= 2:
@@ -373,21 +396,23 @@ class Job:
     def _probe(self, i, ks, ranks, limit):
         """Probe orientations ks of part i (a generator); once one has placed
         every copy, the others stop as soon as they are higher."""
+        cheap = self.parts[i].quantity >= self.PATTERN_FROM          # (a lattice: the run after it is cheap too)
         for k in ks:
-            if self._time_up(self._probe_keep()):
+            if self._time_up(self._reserve if cheap else self._probe_keep()):
                 return
             out = []
             yield from self._probe_one(i, k, limit[0], out)
             self._rank(i, k, out[0], out[1], ranks, limit)
 
-    def _probe_one(self, i, k, stop_above, out):
-        """The copies of part i alone, in orientation k, without the density
-        limit: on the best lattice (many copies), else one by one with
-        greedy.  Appends (left out, height) to `out` (a generator)."""
-        q = self.parts[i].quantity
+    def _probe_one(self, i, k, stop_above, out, q=None):
+        """The copies of part i alone (q of them: by default its quantity),
+        in orientation k, without the density limit: on the best lattice
+        (many copies), else one by one with greedy.  Appends (left out,
+        height) to `out` (a generator)."""
+        q = self.parts[i].quantity if q is None else q
         if q >= self.PATTERN_FROM:
             lay = self._fresh()
-            cells, top = self._pattern_cells(i, k, lay)
+            cells, top = self._pattern_cells(i, k, lay, q)
             if cells is not None:
                 yield
                 p = self.g.pose(i, k)
@@ -416,14 +441,231 @@ class Job:
             return None, 0.0
         return pattern.place(lay.bucket, self.g.pose(i, k).grid, L, self.parts[i].quantity if q is None else q)
 
+    def _run_cost(self, choice):
+        """Seconds a greedy run of every copy would take with these
+        orientation choices, from what placing copies has cost so far."""
+        t, n = self._place_cost
+        per = t / n if n else 0.004                 # (per copy and orientation tried)
+        return per * sum(len(choice[i]) if choice.get(i) else len(self.g.orients(i)) for i, c in self.copies)
+
+    def _lattice_parts(self):
+        """Parts whose lattices come before the first greedy layout: those
+        with many copies, when they are most of the build (not for a start
+        layout)."""
+        if self.start:
+            return []
+        big = [i for i, p in enumerate(self.parts)
+               if p.quantity >= self.PATTERN_FROM and i not in self._too_large and i not in self._in_family()]
+        n = sum(p.quantity for p in self.parts)
+        covered = sum(self.parts[i].quantity for i in big) + \
+            sum(self._family_quantity(F) for F in self._families())
+        self._lattice_wanted = covered >= 0.9 * n
+        return big if self._lattice_wanted else []
+
+    # ------------------------------------------------------------ families
+    def _families(self):
+        """Families of similar parts that turn freely, with many copies in
+        all (a part with many copies of its own stays on its own)."""
+        if self._fams is None:
+            from . import family
+            ok = [i for i, p in enumerate(self.parts) if p.mode == 'free' and i not in self._too_large]
+            vols = [self.g._part_volume(i) * abs(np.linalg.det(np.asarray(p.base, float)))
+                    for i, p in enumerate(self.parts)]
+            try:
+                fams = family.find(self.parts, vols, ok)
+            except Exception:
+                fams = []
+            self._fams = [F for F in fams if self._family_quantity(F) >= self.PATTERN_FROM]
+            for F in self._fams:
+                self.log.append('%6.1f s  family     %d parts alike (%d copies), with %s'
+                                % (self.elapsed, len(F.members), self._family_quantity(F),
+                                   self.parts[F.ref].name))
+        return self._fams
+
+    def _in_family(self):
+        return {m for F in self._families() for m in F.members}
+
+    def _family_quantity(self, F):
+        return sum(self.parts[m].quantity for m in F.members)
+
+    def _family(self, grp):
+        return next((F for F in self._families() if F.key() == grp), None)
+
+    def _fam_k(self, F, m, k):
+        """Member m's orientation matching the reference's orientation k
+        (added to the member's orientations if it has none like it)."""
+        key = (F.key(), m, k)
+        if key not in self._fk:
+            if m == F.ref:
+                self._fk[key] = k
+            else:
+                A = F.matrix(np.asarray(self.g.orients(F.ref)[k], float), m)
+                km = next((j for j, B in enumerate(self.g.orients(m)) if np.allclose(A, B, atol=1e-6)), None)
+                if km is None:
+                    extra = list(self._extra.get(m, [])) + [A]
+                    self._extra[m] = extra
+                    km = self.g.add_orientations(m, extra)[-1]
+                self._fk[key] = km
+        return self._fk[key]
+
+    def _fam_env(self, F, k):
+        """The envelope of the members of F in the reference's orientation k:
+        (Envelope, {member: (orientation, shift)}).  Members are lined up by
+        the centres of their bounding boxes."""
+        from . import pattern
+        items, ks = [], []
+        h = self.s.h
+        for m in F.members:
+            km = self._fam_k(F, m, k)
+            p = self.g.pose(m, km)
+            W = np.asarray(self.parts[m].mesh.verts, float) @ np.asarray(p.A, float).T
+            anchor = (W.max(0) + W.min(0)) / 2
+            items.append((p.grid, tuple(int(x) for x in -np.rint((anchor - p.grid.origin) / h))))
+            ks.append(km)
+        env = pattern.Envelope(items)
+        return env, {m: (km, env.shifts[j]) for j, (m, km) in enumerate(zip(F.members, ks))}
+
+    FAMILY_FULL = 24          # members up to which a family also gets double lattices
+
+    def _family_ks(self, F):
+        """(the reference's orientations for single lattices, [(k, partner)]
+        for double ones)."""
+        cands = self._fcands.get(F.key()) or []
+        seen, ks = set(), []
+        for n, k in enumerate(cands):
+            c = self._extents_class(F.ref, k)
+            if n < 2 or c not in seen:
+                ks.append(k)
+            seen.add(c)
+        pairs = []
+        if len(F.members) > self.FAMILY_FULL:
+            return ks[:2], pairs              # (every member is voxelised per orientation: keep it short)
+        if cands:
+            for ax in range(3):
+                kb = self._partner(F.ref, cands[0], ax)
+                if kb is not None and kb != cands[0] and (cands[0], kb) not in pairs:
+                    pairs.append((cands[0], kb))
+        return ks[:3], pairs
+
+    def _family_prepare(self, F):
+        """Every member orientation the family's lattices will use, made now
+        (so that worker processes number them as this one does)."""
+        ks, pairs = self._family_ks(F)
+        for k in set(ks) | {k for p in pairs for k in p}:
+            for m in F.members:
+                self._fam_k(F, m, k)
+
+    def _family_patterns(self, F, out):
+        """Lattices for a family (a generator): single ones on its envelope in
+        the reference's best orientations, and double ones with the
+        partners turned 180 degrees."""
+        from . import pattern
+        ks, pairs = self._family_ks(F)
+        envs = {}
+        for k in ks:
+            if self.cancel or self._time_up(0.0):
+                return
+            envs[k] = self._fam_env(F, k)
+            yield
+            L = pattern.lattice(envs[k][0])
+            yield
+            if L is not None:
+                out.append(_Pattern('single', envs[k][0], L, [envs[k][1]]))
+        for k, kb in pairs:
+            if self.cancel or self._time_up(0.0):
+                return
+            ea, sa = envs[k] if k in envs else self._fam_env(F, k)
+            eb, sb = self._fam_env(F, kb)
+            yield
+            for t in pattern.pairings(ea, eb, self.PAIRINGS):
+                env = pattern.Envelope([(ea, (0, 0, 0)), (eb, tuple(int(x) for x in t))])
+                L = pattern.lattice(env)
+                yield
+                if L is None:
+                    continue
+                add = lambda sh, d: tuple(int(a) + int(b) for a, b in zip(sh, d))
+                out.append(_Pattern('double', env, L,
+                                    [{m: (km, add(sh, env.shifts[0])) for m, (km, sh) in sa.items()},
+                                     {m: (km, add(sh, env.shifts[1])) for m, (km, sh) in sb.items()}]))
+
+    def _probe_family(self, F):
+        """Lattice probes of a family: its reference in each of its
+        orientations, as many copies as the family has (a generator)."""
+        q = self._family_quantity(F)
+        ks = sorted(self._distinct(F.ref), key=lambda k: (-self._z_extent(F.ref, k), k))
+        ranks = []
+        for k in ks:
+            if self._time_up(self._reserve) or self.cancel:
+                break
+            out = []
+            yield from self._probe_one(F.ref, k, None, out, q)
+            if len(out) == 2:
+                ranks.append(((out[0], round(out[1], 6), k), k))
+        if ranks:
+            self._fcands[F.key()] = [k for _, k in sorted(ranks)]
+            self.log.append('%6.1f s  lattices   family of %s: orientations %s, best first'
+                            % (self.elapsed, self.parts[F.ref].name, self._fcands[F.key()][:4]))
+
+    FIRST_TURNS = 12          # turned lattice probes before the first layout (the rest come later)
+    FIRST_SHARE = 0.25        # of the time: the most the lattices before the first layout may take
+
+    def _first_time_up(self):
+        return self._time_up(self._reserve) or (self.budget is not None and
+                                                self.elapsed > self.FIRST_SHARE * self.budget)
+
+    def _lattice_first(self, lay):
+        """Lattice probes of the parts with many copies (with the turned
+        ones), then those parts seeded on their best lattices and the rest
+        put in around them with a few orientations each: the first layout
+        (a generator)."""
+        big = self._lattice_parts()
+        cap0 = self.g.cap
+        self.g.cap = None
+        try:
+            for n, i in enumerate(big):
+                self.progress = (n, len(big) + 1)
+                ks = sorted(self._distinct(i), key=lambda k: (-self._z_extent(i, k), k))
+                ranks, limit = [], [None]
+                yield from self._probe(i, ks, ranks, limit)
+                turned = self._turns(i, ranks) if not self._first_time_up() else []
+                turned = turned[:self.FIRST_TURNS]
+                if turned:
+                    yield from self._probe(i, turned, ranks, limit)
+                if ranks:
+                    self.cands[i] = [k for _, k in sorted(ranks)]
+                    self._lattice_done.add(i)
+                    self.log.append('%6.1f s  lattices   %s: orientations %s, best first'
+                                    % (self.elapsed, self.parts[i].name, self.cands[i][:4]))
+        finally:
+            self.g.cap = cap0
+        for F in self._families():
+            if not self._first_time_up():
+                yield from self._probe_family(F)
+        groups = [(i,) for i in sorted(self._lattice_done, key=lambda i: (self.parts[i].tier,
+                                                                         -self._size(i) * self.parts[i].quantity, i))]
+        groups += [F.key() for F in self._families() if self._fcands.get(F.key())]
+        for F in self._families():
+            self._family_prepare(F)
+        choice = dict(self._first_allowed())
+        choice.update({i: v[:1] for i, v in self.cands.items()})
+        self.progress = (len(big), len(big) + 1)
+        yield from self._pattern_run(lay, groups, choice)
+
     def _pattern_types(self):
-        """Parts whose probes were lattices, by tier, largest share first."""
-        return [i for i in sorted(range(len(self.parts)),
-                                  key=lambda i: (self.parts[i].tier, -self._size(i) * self.parts[i].quantity, i))
-                if self.parts[i].quantity >= self.PATTERN_FROM and self.cands.get(i)]
+        """Groups of parts to seed as lattices, by tier, largest share first:
+        each part with many copies (and whose probes were lattices) alone."""
+        fam = self._in_family()
+        ts = [i for i in sorted(range(len(self.parts)),
+                                key=lambda i: (self.parts[i].tier, -self._size(i) * self.parts[i].quantity, i))
+              if self.parts[i].quantity >= self.PATTERN_FROM and self.cands.get(i) and i not in fam]
+        groups = [(i,) for i in ts]
+        fs = [F for F in self._families() if self._fcands.get(F.key())]
+        fs.sort(key=lambda F: (min(self.parts[m].tier for m in F.members),
+                               -sum(self._size(m) * self.parts[m].quantity for m in F.members)))
+        return [F.key() for F in fs] + groups
 
     def _pattern_runs(self):
-        """[(label, parts seeded as lattices)]: the largest share alone, and
+        """[(label, groups seeded as lattices)]: the largest share alone, and
         every one in turn when there are several."""
         ts = self._pattern_types()
         if not ts:
@@ -434,7 +676,7 @@ class Job:
         return runs
 
     def _best_runs(self):
-        """[(label, orientation choice, parts seeded as lattices or None)]:
+        """[(label, orientation choice, groups seeded as lattices or None)]:
         greedy with the best 1, 2, 3 orientations of each part, the lattice
         runs after the first."""
         if not self.cands:
@@ -460,28 +702,129 @@ class Job:
             seen.add(c)
         return ks[:5]
 
-    def _pattern_run(self, lay, types, choice):
-        """Seed lay with the copies of `types` on their lattices (each in the
-        best of its three best orientations, around what is there), then put
-        the rest in with greedy (a generator)."""
-        for i in types:
-            best = None
+    DOUBLE_FROM = 2           # the best this many orientations get a partner turned 180 degrees
+    PAIRINGS = 3              # offsets tried per partner (the most compact pairs)
+
+    def _partner(self, i, k, ax):
+        """The orientation of part i that is k turned 180 degrees about the
+        world axis ax, if the part may turn so (None otherwise)."""
+        R = np.diag([1.0 if a == ax else -1.0 for a in range(3)])
+        B = R @ np.asarray(self.g.orients(i)[k], float)
+        for kb, A in enumerate(self.g.orients(i)):
+            if np.allclose(A, B, atol=1e-6):
+                return kb
+        return None
+
+    def _group_patterns(self, grp, out):
+        """The lattices a group of parts may be seeded on, into `out` (a
+        generator: they are computed once, as needed): for a part, its
+        single lattices in the orientations `_pattern_ks` gives, then
+        double lattices of its best orientations with their partners turned
+        180 degrees, paired in the most compact ways."""
+        from . import pattern
+        pats = self._pats.get(grp)
+        F = self._family(grp) if pats is None and len(grp) > 1 else None
+        if F is not None:
+            pats = []
+            yield from self._family_patterns(F, pats)
+            self._pats[grp] = pats
+        if pats is None:
+            pats = []
+            (i,) = grp
             for k in self._pattern_ks(i):
+                pg = self.g.pose(i, k).grid
+                key = (i, k)
+                if key not in self._lattices:
+                    self._lattices[key] = pattern.lattice(pg)
+                    yield
+                if self._lattices[key] is not None:
+                    pats.append(_Pattern('single', pg, self._lattices[key], [{i: (k, (0, 0, 0))}]))
+            done = set()
+            for k in self.cands[i][:self.DOUBLE_FROM]:
+                for ax in range(3):
+                    if self.cancel or self._time_up(0.0):
+                        break
+                    kb = self._partner(i, k, ax)
+                    if kb is None or (k, kb) in done or (kb, k) in done:
+                        continue
+                    done.add((k, kb))
+                    ga, gb = self.g.pose(i, k).grid, self.g.pose(i, kb).grid
+                    for t in pattern.pairings(ga, gb, self.PAIRINGS):
+                        env = pattern.Envelope([(ga, (0, 0, 0)), (gb, tuple(int(x) for x in t))])
+                        L = pattern.lattice(env)
+                        yield
+                        if L is not None:
+                            pats.append(_Pattern('double', env, L, [{i: (k, env.shifts[0])},
+                                                                    {i: (kb, env.shifts[1])}]))
+            self._pats[grp] = pats
+        out.extend(pats)
+
+    def _pattern_choice(self, lay, groups, choice):
+        """The choice to keep with a lattice layout: the orientations its
+        seeded parts have in it (a double lattice has two)."""
+        seeded = {i for g in groups for i in g}
+        out = dict(choice)
+        out.update({i: v for i, v in self._used(lay).items() if i in seeded})
+        return out
+
+    def _pattern_label(self, label, groups):
+        kinds = {self._seeded.get(g) for g in groups}
+        if 'double' in kinds:
+            return label + ' x2'
+        return label
+
+    def _place_pattern(self, lay, pat, todo):
+        """The copies in `todo` (in that order) on lattice pattern `pat` in
+        lay's bucket, around what is there: ([(part, copy, orientation,
+        cell)], highest top)."""
+        from . import pattern
+        n_slots = len(pat.slots)
+        n_pts = -(-len(todo) // n_slots)
+        cells, _ = pattern.place(lay.bucket, pat.env, pat.L, n_pts)
+        got, queue, top = [], list(todo), 0.0
+        for b in cells:
+            for slot in pat.slots:
+                j = next((j for j, q in enumerate(queue) if q[0] in slot), None)
+                if j is None:
+                    continue
+                i, c = queue.pop(j)
+                k, sh = slot[i]
+                cell = tuple(int(x) for x in np.asarray(b) + sh)
+                got.append((i, c, k, cell))
+                top = max(top, float(self.g._top(lay.bucket, self.g.pose(i, k), cell)))
+        return got, top, False
+
+    def _pattern_run(self, lay, groups, choice):
+        """Seed lay with the copies of each group on the best of its lattices
+        (around what is there), then put the rest in with greedy (a
+        generator)."""
+        for grp in groups:
+            pats = []
+            yield from self._group_patterns(grp, pats)
+            todo = [q for q in self._order() if q[0] in grp and q not in lay.recs]
+            best = None
+            for n, pat in enumerate(pats):
                 if self.cancel:
                     return
-                cells, top = self._pattern_cells(i, k, lay)
+                got, top, added = self._place_pattern(lay, pat, todo)
+                if added:
+                    for i, c, k, b in got:
+                        lay.remove(i, c)
                 yield
-                if cells:
+                if got:
                     # (a lattice denser than the limit allows cannot be
                     # lifted apart later: its copies nest)
-                    dense = bool(self._cap_late) and \
-                        len(cells) * self.g.pose(i, k).volume > self.s.area * self.s.max_density * top
-                    key = (dense, -len(cells), top, k)
+                    vol = sum(self.g.pose(i, k).volume for i, c, k, b in got)
+                    dense = bool(self.s.max_density) and vol > self.s.area * self.s.max_density * top
+                    if dense and not self._cap_late:
+                        continue            # (the limit is kept while packing: never seed above it)
+                    key = (dense, -len(got), top, n)
                     if best is None or key < best[0]:
-                        best = (key, k, cells)
+                        best = (key, got, pat.kind)
             if best is not None:
-                for c, cell in enumerate(best[2]):
-                    lay.add(i, c, best[1], cell)
+                for i, c, k, b in best[1]:
+                    lay.add(i, c, k, b)
+                self._seeded[grp] = best[2]
         yield from self._build(lay, [q for q in self._order() if q not in lay.recs], choice)
 
     def _probe_keep(self):
@@ -625,10 +968,29 @@ class Job:
             yield from self._build(self.cur, left, self._first_allowed(), count=True)
             self._consider(self.cur, 'current', {})
         else:
-            yield from self._build(self.cur, self.copies, self._first_allowed(), count=True)
-            if self.cancel:
-                return                      # (what is placed so far is the answer; the rest "stopped")
-            self._consider(self.cur, 'greedy', {})
+            done = False
+            self._lattice_parts()
+            if self._lattice_wanted:
+                # most copies are of parts with many: their lattices first
+                # (a few seconds), then the rest around them; greedy one
+                # copy at a time only if that leaves parts out
+                lay = self._fresh()
+                yield from self._lattice_first(lay)
+                if self.cancel:
+                    return
+                self._consider(lay, self._pattern_label('pattern', [(i,) for i in self._lattice_done]), self._used(lay))
+                self.cur = lay
+                done = not self._some_left()
+            if not done:
+                cur = self._fresh()
+                yield from self._build(cur, self.copies, self._first_allowed(), count=True)
+                if self.cancel and self.best is None:
+                    self.cur = cur
+                    return                  # (what is placed so far is the answer; the rest "stopped")
+                if self._consider(cur, 'greedy', {}) or self.best is None:
+                    self.cur = cur
+                if self.cancel:
+                    return
         self.first_seconds = time.perf_counter() - t_first
         self.phase = 'improving'
         self._reserve = self._compact_reserve()
@@ -664,16 +1026,22 @@ class Job:
         # of these runs and the lattice runs are cheap and often the big
         # step: they may use the time kept for compaction)
         for n, (label, choice, types) in enumerate(self._best_runs()):
-            if self._time_up(0.0 if n == 0 or types else None) or self._at_bound():
+            if self._at_bound() or self._time_up(0.0):
                 break
+            est = 0.0 if types else self._run_cost(choice)
+            if self._time_up((0.0 if n == 0 or types else self._reserve) + est):
+                continue                    # (no time for this one; a lattice run may still fit)
             lay = self._fresh()
             if types:
                 yield from self._pattern_run(lay, types, choice)
+                label = self._pattern_label(label, types)
+                choice = self._pattern_choice(lay, types, choice)
             else:
                 yield from self._build(lay, self._order(), choice)
             if self._consider(lay, label, choice):
                 self.cur = lay
-        if self._first_allowed() and not self._time_up() and not self._at_bound():
+        if self._first_allowed() and not self._time_up(self._reserve + self.first_seconds) \
+                and not self._at_bound():
             # greedy with every orientation (the first layout had a few of each shape)
             lay = self._fresh()
             yield from self._build(lay, self._order(), {})
@@ -724,7 +1092,7 @@ class Job:
             removed = self._ruin(lay)
             todo = removed + [q for q in self.copies if q not in lay.recs and q not in removed]
             todo = self._shuffle(todo)
-            yield from self._build(lay, todo, trial)
+            yield from self._build(lay, todo, trial, timed=True)
             yield from self._settle(lay)
             k = self.key(lay)
             # threshold accepting on the value, among layouts that place as much
@@ -766,9 +1134,10 @@ class Job:
         later."""
         if getattr(self, '_first', None) is None:
             self._first = {}
+            fam = self._in_family()
             for i, part in enumerate(self.parts):
-                if part.mode != 'free' or i in self._too_large:
-                    continue
+                if part.mode != 'free' or i in self._too_large or i in fam:
+                    continue                    # (a family's members go in on its lattices)
                 ks = sorted(self._distinct(i), key=lambda k: (-self._z_extent(i, k), k))
                 per = {}
                 for k in ks:
@@ -1069,6 +1438,8 @@ class Job:
         inflight = {}
         self.cur = self._fresh()
         self._lb = self.lower_bound()
+        self._lattice_skip = set(self._lattice_parts())
+        lattice_first = self._lattice_wanted
         # what the probes will be: each part with copies, tallest orientations first
         pending = collections.deque()
         limit = {}
@@ -1135,13 +1506,31 @@ class Job:
             todo, label = left, 'current'
         else:
             todo, label = self.copies, 'greedy'
-        for _ in self._build(self.cur, todo, self._first_allowed(), count=True):
-            pump()
-            collect()
-            yield
-        if self.cancel and not self.start:
-            return
-        self._consider(self.cur, label, {})
+        done = False
+        if lattice_first:
+            # the lattices of the parts with many copies first, here (as in _work)
+            lay = self._fresh()
+            for _ in self._lattice_first(lay):
+                pump()
+                collect()
+                yield
+            if self.cancel:
+                return
+            self._consider(lay, self._pattern_label('pattern', [(i,) for i in self._lattice_done]), self._used(lay))
+            self.cur = lay
+            done = not self._some_left()
+        if not done:
+            cur = self._fresh() if lattice_first else self.cur
+            for _ in self._build(cur, todo, self._first_allowed(), count=True):
+                pump()
+                collect()
+                yield
+            if self.cancel and not self.start:
+                if self.best is None:
+                    self.cur = cur
+                return
+            if self._consider(cur, label, {}) or self.best is None:
+                self.cur = cur
         self.phase = 'improving'
         self._reserve = self._compact_reserve()
         if self._at_bound():
@@ -1165,10 +1554,12 @@ class Job:
                 self.cands[i] = [k for _, k in sorted(ranks[i])]
         # 3. greedy with the best few orientations, one run per process
         if self.cands and not self._time_up(0.0) and not self._at_bound():
+            for F in self._families():
+                self._family_prepare(F)
             for label, choice, types in self._best_runs():
                 if types:
                     f = self._pool.submit(_task_pattern, types, choice, label, self._extra, self.cands,
-                                          self.small_first)
+                                          self.small_first, self._families(), self._fcands)
                 else:
                     f = self._pool.submit(_task_run, choice, label, self._extra, self.small_first)
                 inflight[f] = ('run',)
@@ -1215,6 +1606,16 @@ class Job:
                         % (self.elapsed, label, self._best_height(), sum(self._left(recs).values()),
                            '' if old is None else ' (better)'))
         return True
+
+
+class _Pattern:
+    """A lattice to seed: `env` the grid it was found for (a part's, or an
+    envelope), `slots` per point of the lattice {part: (orientation, cell
+    shift)} (one slot, or two for a double lattice)."""
+    __slots__ = ('kind', 'env', 'L', 'slots')
+
+    def __init__(self, kind, env, L, slots):
+        self.kind, self.env, self.L, self.slots = kind, env, L, slots
 
 
 MESH_BYTES_FOR_WORKERS = 4e9      # every worker process holds its own copy of the meshes
@@ -1298,16 +1699,20 @@ def _task_run(choice, label, extra, small=False):
     return label, choice, dict(lay.recs), job.key(lay), dict(job.why)
 
 
-def _task_pattern(types, choice, label, extra, cands, small=False):
+def _task_pattern(types, choice, label, extra, cands, small=False, fams=(), fcands=None):
     job = _CHILD['job']
     _sync(job, extra)
     job.small_first = small
     job.cands = dict(cands)
+    job._fams = list(fams)
+    job._fcands = dict(fcands or {})
     job.why = {}
     lay = job._fresh()
     _child_run(job, job._pattern_run(lay, types, choice))
     if job.cancel:
         return label, choice, None, None, {}
+    label = job._pattern_label(label, types)
+    choice = job._pattern_choice(lay, types, choice)
     return label, choice, dict(lay.recs), job.key(lay), dict(job.why)
 
 

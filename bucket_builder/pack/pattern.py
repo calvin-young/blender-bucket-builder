@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pattern solver: copies of one part, all in one orientation, on a lattice
+"""Pattern solver: copies of one part on a lattice, all in one orientation
+or in pairs with the second copy turned 180 degrees ("double lattices"),
+and families of similar parts on the lattice of their envelope
 (docs/AUTOPACK.md §8.4).
 
 Where a second copy may sit next to a first is one correlation of the
@@ -36,6 +38,76 @@ from .bucket import fast_size, irfftn, rfftn
 
 N_DIRECTIONS = 90
 PHASES = 4                # per plane vector: 4 x 4 shifts of the lattice are tried
+
+
+class Envelope:
+    """Several part grids at fixed cell offsets from each other, as one grid
+    (solid and kernel the union of theirs): a motif of copies (a part and
+    its partner turned 180 degrees), or the members of a family of similar
+    parts at one place (the lattice of the envelope is valid whichever
+    member stands in it).  `shifts[j]`: where item j's grid starts."""
+
+    def __init__(self, items):
+        sh = np.array([s for _, s in items], np.int64).reshape(-1, 3)
+        sh -= sh.min(0)
+        hi = np.max(sh + np.array([g.solid.shape for g, _ in items]), axis=0)
+        S = np.zeros(tuple(hi), bool)
+        K = np.zeros(tuple(hi), bool)
+        for (g, _), d in zip(items, sh):
+            sl = tuple(slice(int(a), int(a) + n) for a, n in zip(d, g.solid.shape))
+            S[sl] |= g.solid
+            K[sl] |= g.kernel
+        self.solid, self.kernel = S, K
+        self.shifts = [tuple(int(x) for x in d) for d in sh]
+        idx = [np.nonzero(S.any(axis=tuple(a for a in range(3) if a != ax)))[0] for ax in range(3)]
+        self.s_lo = np.array([i[0] for i in idx])
+        self.s_hi = np.array([i[-1] + 1 for i in idx])
+
+
+def cross_free(ga, gb):
+    """(free, off): free[t + off] is True where grid gb at cell offset t is
+    clear of grid ga at 0."""
+    S = ga.solid.astype(np.float64)
+    K = gb.kernel[::-1, ::-1, ::-1].astype(np.float64)
+    full = [a + b - 1 for a, b in zip(S.shape, K.shape)]
+    s = [fast_size(n) for n in full]
+    conv = irfftn(rfftn(S, s) * rfftn(K, s), s)[:full[0], :full[1], :full[2]]
+    return conv < 0.5, np.array(K.shape) - 1
+
+
+def _sphere(n):
+    i = np.arange(n) + 0.5
+    phi = np.arccos(1 - 2 * i / n)
+    th = math.pi * (1 + 5 ** 0.5) * i
+    return np.stack([np.cos(th) * np.sin(phi), np.sin(th) * np.sin(phi), np.cos(phi)], 1)
+
+
+def contacts(free, off, n_dir=400):
+    """The nearest free offset along each of n_dir directions over the
+    sphere (where a second grid touches the first, at the gap)."""
+    D = _sphere(n_dir)
+    R = int(max(free.shape)) + 2
+    r = np.arange(0, 2 * R) * 0.5
+    P = np.rint(r[None, :, None] * D[:, None, :]).astype(np.int64)        # (dirs, steps, 3)
+    ok = _free_at(free, off, P.reshape(-1, 3)).reshape(P.shape[:2])
+    hit = ok.any(1)
+    first = np.argmax(ok, axis=1)
+    out = P[np.nonzero(hit)[0], first[hit]]
+    return np.unique(out, axis=0)
+
+
+def pairings(ga, gb, n=3, n_dir=400):
+    """The n offsets t at which gb sits next to ga most compactly (smallest
+    bounding box of the two), each clear of the other: candidates for the
+    second copy of a motif."""
+    free, off = cross_free(ga, gb)
+    T = contacts(free, off, n_dir)
+    if not len(T):
+        return []
+    lo = np.minimum(ga.s_lo, gb.s_lo + T)
+    hi = np.maximum(ga.s_hi, gb.s_hi + T)
+    vol = np.prod(hi - lo, axis=1)
+    return [T[j] for j in np.argsort(vol, kind='stable')[:n]]
 
 
 class Lattice:

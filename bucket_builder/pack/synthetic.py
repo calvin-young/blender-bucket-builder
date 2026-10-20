@@ -215,6 +215,212 @@ def bracket(name='bracket'):
     return merge([a, b], name)
 
 
+def prism(poly, depth, name='prism'):
+    """A convex polygon in the x-z plane (counter-clockwise or not),
+    extruded along y from 0 to depth."""
+    P = np.asarray(poly, float)
+    n = len(P)
+    v = [(x, 0.0, z) for x, z in P] + [(x, depth, z) for x, z in P]
+    f = []
+    for i in range(1, n - 1):
+        f += [(0, i + 1, i), (n, n + i, n + i + 1)]
+    for i in range(n):
+        j = (i + 1) % n
+        f += [(i, j, n + j), (i, n + j, n + i)]
+    v = np.asarray(v)
+    f = np.asarray(f)
+    c = v.mean(0)                                     # (convex: outward is away from the centre)
+    T = v[f]
+    nrm = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
+    inward = ((T.mean(1) - c) * nrm).sum(1) < 0
+    f[inward] = f[inward][:, ::-1]
+    return _mesh(v, f, name)
+
+
+def box_at(lo, hi, name='box'):
+    lo, hi = np.asarray(lo, float), np.asarray(hi, float)
+    return transformed(box(*(hi - lo), name=name), t=(lo + hi) / 2)
+
+
+def wedge(length=60.0, height=25.0, width=30.0, name='wedge'):
+    """A door stop: a right-angled triangle extruded (pairs of them, one
+    turned over, make a block)."""
+    return prism([(0, 0), (length, 0), (0, height)], width, name)
+
+
+def gusset(leg=50.0, thick=6.0, name='gusset'):
+    """A right-angled triangular plate."""
+    return transformed(prism([(0, 0), (leg, 0), (0, leg)], thick, name), rot('x', 90))
+
+
+def trapezoid(name='trapezoid'):
+    return prism([(0, 0), (60, 0), (45, 25), (15, 25)], 30, name)
+
+
+def half_disc(r=30.0, thick=6.0, name='half disc'):
+    pts = [(r * math.cos(a), r * math.sin(a)) for a in np.linspace(0, math.pi, 25)]
+    return transformed(prism(pts, thick, name), rot('x', 90))
+
+
+def tee(name='tee'):
+    """A flat T, 60 x 50 mm, 6 mm thick."""
+    return merge([box_at((0, 0, 0), (60, 12, 6)), box_at((24, 12, 0), (36, 50, 6))], name)
+
+
+def l_plate(name='L plate'):
+    """A flat L, 50 x 50 mm, arms 12 mm wide, 6 mm thick."""
+    return merge([box_at((0, 0, 0), (50, 12, 6)), box_at((0, 12, 0), (12, 50, 6))], name)
+
+
+def angle(name='angle'):
+    """A length of angle: two 30 mm legs, 4 mm thick, 60 mm long."""
+    return merge([box_at((0, 0, 0), (30, 60, 4)), box_at((0, 0, 4), (4, 60, 30))], name)
+
+
+def peg(head=16.0, shank=5.0, length=30.0, name='peg'):
+    """A knob: a 32 mm disc, 4 mm thick, on a 10 mm stem."""
+    return merge([cylinder(head, 4.0, 32),
+                  transformed(cylinder(shank, length, 24), t=(0, 0, 2.0 + length / 2))], name)
+
+
+def _ear_clip(P):
+    """Triangles of a simple polygon (n x 2, counter-clockwise), by ear
+    clipping: indices into P."""
+    idx = list(range(len(P)))
+    tris = []
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    guard = 0
+    while len(idx) > 3 and guard < 10000:
+        guard += 1
+        n = len(idx)
+        for j in range(n):
+            i0, i1, i2 = idx[j - 1], idx[j], idx[(j + 1) % n]
+            a, b, c = P[i0], P[i1], P[i2]
+            if cross(a, b, c) <= 1e-12:
+                continue                                  # (reflex or flat)
+            inside = False
+            for k in idx:
+                if k in (i0, i1, i2):
+                    continue
+                q = P[k]
+                if cross(a, b, q) >= -1e-12 and cross(b, c, q) >= -1e-12 and cross(c, a, q) >= -1e-12:
+                    inside = True
+                    break
+            if not inside:
+                tris.append((i0, i1, i2))
+                idx.pop(j)
+                break
+        else:
+            break
+    if len(idx) == 3:
+        tris.append(tuple(idx))
+    return tris
+
+
+def extrude(poly, depth, name='extrusion'):
+    """Any simple polygon in the x-y plane extruded along z from 0 to depth."""
+    P = np.asarray(poly, float)
+    area = 0.5 * float(np.sum(P[:, 0] * np.roll(P[:, 1], -1) - np.roll(P[:, 0], -1) * P[:, 1]))
+    if area < 0:
+        P = P[::-1]
+    n = len(P)
+    v = np.concatenate([np.c_[P, np.zeros(n)], np.c_[P, np.full(n, depth)]])
+    f = []
+    for a, b, c in _ear_clip(P):
+        f += [(a, c, b), (n + a, n + b, n + c)]
+    for i in range(n):
+        j = (i + 1) % n
+        f += [(i, j, n + j), (i, n + j, n + i)]
+    return _mesh(v, f, name)
+
+
+def lathe(profile, segs=48, name='lathe'):
+    """A closed profile [(r, z)] (counter-clockwise in the r-z plane) turned
+    about the z axis; points with r = 0 lie on the axis."""
+    Q = np.asarray(profile, float)
+    ang = np.linspace(0, 2 * np.pi, segs, endpoint=False)
+    v, rings = [], []
+    for r, z in Q:
+        if r <= 1e-12:
+            rings.append([len(v)] * segs)
+            v.append((0.0, 0.0, z))
+        else:
+            rings.append(list(range(len(v), len(v) + segs)))
+            v += [(r * math.cos(a), r * math.sin(a), z) for a in ang]
+    f = []
+    m = len(Q)
+    for p in range(m):
+        A, B = rings[p], rings[(p + 1) % m]
+        for i in range(segs):
+            j = (i + 1) % segs
+            for t in ((A[i], B[i], B[j]), (A[i], B[j], A[j])):
+                if len(set(t)) == 3:
+                    f.append(t)
+    V, F = np.asarray(v, float), np.asarray(f, np.int64)
+    if np.einsum('ij,ij->i', V[F[:, 0]], np.cross(V[F[:, 1]], V[F[:, 2]])).sum() < 0:
+        F = F[:, ::-1]                                    # (outward, whichever way the profile ran)
+    return _mesh(V, F, name)
+
+
+def tapered_cup(r_top=30.0, r_bottom=22.0, height=40.0, wall=2.0, name='tapered cup'):
+    """A cup that is wider at the top: copies nest inside each other."""
+    return lathe([(0, 0), (r_bottom, 0), (r_top, height), (r_top - wall, height),
+                  (r_bottom - wall, wall), (0, wall)], 48, name)
+
+
+def dome(r=30.0, wall=2.5, name='dome'):
+    """A hemispherical shell, open at the bottom."""
+    out = [(r * math.cos(a), r * math.sin(a)) for a in np.linspace(0, math.pi / 2, 12)]
+    inn = [((r - wall) * math.cos(a), (r - wall) * math.sin(a)) for a in np.linspace(math.pi / 2, 0, 12)]
+    return lathe(out + inn, 48, name)
+
+
+def hex_nut(across=20.0, hole=6.0, thick=8.0, name='hex nut'):
+    R = across / math.sqrt(3.0)
+    return lathe([(hole, 0), (R, 0), (R, thick), (hole, thick)], 6, name)
+
+
+def star(points=6, r_out=25.0, r_in=11.0, thick=6.0, name='star'):
+    P = [((r_out if i % 2 == 0 else r_in) * math.cos(math.pi * i / points),
+          (r_out if i % 2 == 0 else r_in) * math.sin(math.pi * i / points)) for i in range(2 * points)]
+    return extrude(P, thick, name)
+
+
+def c_clip(R=20.0, r=14.0, opening=70.0, thick=8.0, name='C clip'):
+    a0 = math.radians(opening / 2)
+    angs = np.linspace(a0, 2 * math.pi - a0, 28)
+    P = [(R * math.cos(a), R * math.sin(a)) for a in angs] + [(r * math.cos(a), r * math.sin(a)) for a in angs[::-1]]
+    return extrude(P, thick, name)
+
+
+def hook(name='hook'):
+    """A flat J, 6 mm thick."""
+    P = [(0, 0), (8, 0), (8, 50), (22, 50), (22, 38), (30, 38), (30, 58), (0, 58)]
+    return extrude(P, 6.0, name)
+
+
+def rod(length=200.0, r=4.0, name='rod'):
+    return cylinder(r, length, 16, name)
+
+
+def plate(sx=150.0, sy=100.0, t=3.0, name='plate'):
+    return box(sx, sy, t, name)
+
+
+def varied(make, n, seed, **ranges):
+    """n meshes from make(**kw) with each keyword drawn from its (lo, hi)
+    range: a family of parts that are alike but not the same."""
+    rng = np.random.default_rng(seed)
+    out = []
+    for k in range(n):
+        kw = {key: float(rng.uniform(lo, hi)) for key, (lo, hi) in ranges.items()}
+        out.append(make(**kw))
+    return out
+
+
 # ------------------------------------------------------------------ buckets
 
 def buckets():
@@ -247,6 +453,41 @@ def buckets():
             Part('housing', cup(100.0, 94.0, 180.0, 6.0, 4, 'housing', square=True), 1, 'fixed'),
             Part('keycap', keycap(), 30, 'z'),
         ], {'gap': 3.0}),
+    }
+
+
+def library():
+    """More buckets, for experiments (not in the speed measurement): shapes
+    chosen for how they pack.  name -> (description, [Part], settings)."""
+    chips = varied(lambda radius, curve, thick: pringle(radius, curve, thick), 50, 5,
+                   radius=(27, 33), curve=(36, 44), thick=(1.8, 2.4))
+    knobs = varied(lambda head, shank, length: peg(head, shank, length), 40, 7,
+                   head=(14, 18), shank=(4, 6), length=(25, 35))
+    caps = [transformed(big_keycap(), np.eye(3) * f) for f in (0.6, 0.75, 1.0, 1.2)]
+    P = lambda name, m, q, mode='free': Part(name, m, q, mode)
+    return {
+        'varied-chips': ('50 chips, each a little different (radius, bend, thickness)',
+                         [P('chip-%02d' % k, m, 1) for k, m in enumerate(chips)], {'gap': 2.0}),
+        'door-stops': ('150 wedges: pairs, one turned over, make blocks', [P('wedge', wedge(), 150)], {'gap': 2.0}),
+        'gussets': ('300 triangular plates: pairs make squares', [P('gusset', gusset(), 300)], {'gap': 2.0}),
+        'tees': ('200 flat tees: they interlock turned', [P('tee', tee(), 200)], {'gap': 2.0}),
+        'knobs': ('150 knobs (a disc on a stem): heads beside stems', [P('knob', peg(), 150)], {'gap': 2.0}),
+        'varied-knobs': ('40 knobs, each a little different', [P('knob-%02d' % k, m, 1) for k, m in enumerate(knobs)],
+                         {'gap': 2.0}),
+        'cups': ('60 tapered cups: they nest inside each other', [P('cup', tapered_cup(), 60)], {'gap': 2.0}),
+        'domes': ('60 hemispherical shells', [P('dome', dome(), 60)], {'gap': 2.0}),
+        'nuts': ('600 hex nuts: many small parts', [P('nut', hex_nut(), 600)], {'gap': 1.5}),
+        'stars': ('200 six-pointed stars', [P('star', star(), 200)], {'gap': 2.0}),
+        'clips': ('200 C clips', [P('clip', c_clip(), 200)], {'gap': 2.0}),
+        'hooks': ('200 flat J hooks', [P('hook', hook(), 200)], {'gap': 2.0}),
+        'angles': ('100 lengths of angle and 100 flat L plates: they nest along a diagonal',
+                   [P('angle', angle(), 100), P('L plate', l_plate(), 100)], {'gap': 2.0}),
+        'keycap-sizes': ('four sizes of keycap, 20 of each', [P('keycap-%d' % k, m, 20) for k, m in enumerate(caps)],
+                         {'gap': 2.0}),
+        'workshop': ('a mixed day: brackets, keycaps, knobs, cups, chips, hooks, nuts, plates, rods', [
+            P('bracket', bracket(), 12), P('keycap', keycap(), 40, 'z'), P('knob', peg(), 30),
+            P('cup', tapered_cup(), 6), P('chip', pringle(), 40), P('hook', hook(), 20),
+            P('nut', hex_nut(), 24), P('plate', plate(), 4, 'z'), P('rod', rod(), 10)], {'gap': 2.0}),
     }
 
 
