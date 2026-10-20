@@ -229,6 +229,11 @@ def test_status_and_report():
     close(rep.layer_volume.sum(), 3000.0, 1e-9, 'layer volumes add up')
     close(rep.layer_density[:10], 3 * 100 / (100 * 100 * 1.0) * np.ones(10) / 3 * 1, 1e-12,
           'layer density of the bottom cube: 100 mm^2 of 10000')
+    # a cube floating in the middle is as dense as one on the floor
+    floor = metrics.measure([('c', b, pose(t=(50, 50, 5)))], vlo, vhi)
+    mid = metrics.measure([('c', b, pose(t=(50, 50, 55)))], vlo, vhi)
+    close(mid.bottom, 50.0, 1e-9, 'bottom is the lowest point above the floor')
+    close(mid.density, floor.density, 1e-12, 'density counts only the height the parts fill, from bottom to top')
     clean = metrics.measure(parts[:2], vlo, vhi)
     check(not clean.warnings, 'no warnings for a clean build')
     # an empty-ish build

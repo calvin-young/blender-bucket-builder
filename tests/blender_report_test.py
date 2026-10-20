@@ -34,9 +34,10 @@ def update():
 
 
 def reference(objs, vlo, vhi):
-    """(volume counted, packed height, density) by bmesh and the vertices."""
+    """(volume counted, packed height, density) by bmesh and the vertices:
+    density over the height the parts fill, lowest point to highest."""
     dg = bpy.context.evaluated_depsgraph_get()
-    vol, top = 0.0, 0.0
+    vol, top, low = 0.0, 0.0, None
     for o in objs:
         e = o.evaluated_get(dg)
         me = e.to_mesh()
@@ -50,10 +51,12 @@ def reference(objs, vlo, vhi):
             continue
         vol += bm.calc_volume(signed=False)
         top = max(top, P[:, 2].max() - vlo[2])
+        low = P[:, 2].min() - vlo[2] if low is None else min(low, P[:, 2].min() - vlo[2])
         bm.free()
         e.to_mesh_clear()
     area = (vhi[0] - vlo[0]) * (vhi[1] - vlo[1])
-    return vol, top, (vol / (area * top) if top > 0 else None)
+    fill = top - max(0.0, low if low is not None else 0.0)
+    return vol, top, (vol / (area * fill) if fill > 0 else None)
 
 
 def wait(mon, st):

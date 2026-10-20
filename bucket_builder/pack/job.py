@@ -233,7 +233,8 @@ class Job:
 
     def _cap_height(self, volume):
         """The height the density limit wants for that much volume (0 when
-        it is met during packing)."""
+        it is met during packing): the parts must fill at least that much,
+        from the lowest to the highest (they stand on the floor)."""
         if not self._cap_late:
             return 0.0
         return volume / (self.s.area * self.s.max_density)
@@ -506,7 +507,7 @@ class Job:
         if self._at_bound() or self._time_up():
             yield from self._finish()
             return
-        if self._some_left():
+        if self._some_left() and self.preset == 'count':
             # a full bucket: smallest first places more parts
             lay = self._fresh()
             yield from self._build(lay, self._order(True), {})
@@ -720,7 +721,10 @@ class Job:
             # (the numbers of the best layout, not of whatever is in the bucket now)
             res.height = self._best_height()
             res.volume = sum(self._volume(q, r) for q, r in recs.items())
-            res.density = res.volume / (b.area * res.height) if res.height > 0 else None
+            low = min([float(((np.asarray(self.parts[p.part].mesh.verts, float) @ p.matrix[:3, :3].T)[:, 2]
+                              + p.matrix[2, 3]).min()) - self.s.vlo[2] for p in res.placements] + [res.height])
+            fill = res.height - max(0.0, low)
+            res.density = res.volume / (b.area * fill) if fill > 0 else None
         res.log = list(self.log)
         return res
 
@@ -830,10 +834,9 @@ class Job:
                     moved += 1
                     break
         if need and b.height < need - 1e-9:
-            # no part can go up on its own (they nest): the whole build goes up
-            moved += self._lift_all(lay, int(np.ceil((need - b.height) / h - 1e-9)))
-        if need and b.height < need - 1e-9:
-            # (locked parts in the way: pack again, lifting parts as they go in)
+            # no part can go up on its own (they nest; raising the whole build
+            # would not make it less dense): pack again, lifting parts as they
+            # go in
             self.g.cap = False
             lay2 = self._fresh()
             yield from self._build(lay2, self._order(), self.best_choice)
@@ -852,36 +855,6 @@ class Job:
             self.version += 1
             self.log.append('%6.1f s  spread     %d lifts, layer spread %.2f -> %.2f'
                             % (self.elapsed, moved, before, after))
-
-    def _lift_all(self, lay, d):
-        """Every part that is not pinned d cells up, if they all fit there
-        (locked parts may be in the way).  Returns how many moved."""
-        b = lay.bucket
-        qs = [q for q, r in lay.recs.items() if r[0] != 'pin']
-        if not qs or d <= 0:
-            return 0
-        old = {q: lay.recs[q] for q in qs}
-        for q in qs:
-            lay.remove(*q)
-        ok = True
-        done = []
-        for q in qs:
-            k, cell = old[q]
-            p = self.g.pose(q[0], k)
-            new = (cell[0], cell[1], cell[2] + d)
-            if not (b.in_range(p.grid, new) and b.fits(p.grid, new)):
-                ok = False
-                break
-            lay.add(q[0], q[1], k, new)
-            done.append(q)
-        if not ok:
-            for q in done:
-                lay.remove(*q)
-            for q in qs:
-                lay.add(q[0], q[1], *old[q])
-            return 0
-        self.log.append('%6.1f s  density    the whole build %d mm up, for the density limit' % (self.elapsed, d * b.h))
-        return len(qs)
 
     def _compact_phase(self):
         """Move every part of the best layout to the exact gap: down, back,
@@ -1039,7 +1012,7 @@ class Job:
         if self._at_bound():
             yield from self._finish()
             return
-        if self._some_left():
+        if self._some_left() and self.preset == 'count':
             inflight[self._pool.submit(_task_run, {}, 'small first', self._extra, True)] = ('run',)
         if self._first_allowed():
             inflight[self._pool.submit(_task_run, {}, 'all turns', self._extra, False)] = ('run',)

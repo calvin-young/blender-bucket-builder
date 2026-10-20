@@ -268,12 +268,15 @@ class BucketBuilderSettings(PropertyGroup):
                     "(it stops sooner when the build cannot get lower). 0: the first layout only")
     pack_preset: EnumProperty(
         name="Goal", default='OVERNIGHT',
-        items=(('OVERNIGHT', "Most Parts", "Fit as many parts as possible, then build as low as possible"),
-               ('VOLUME', "Fullest Bucket", "As much part volume as fits (a few large parts may win over "
-                "many small ones), then build as low as possible"),
-               ('RUSH', "Lowest Build", "As many parts, then the lowest build, ignoring how even the layers are"),
-               ('QUALITY', "Even Layers", "As many parts, then the most even density from layer to layer")),
-        description="What the packer looks for once every part has a place")
+        items=(('OVERNIGHT', "Big Parts First", "Fit as much as possible, big parts first: when not "
+                "everything fits, what is left over is small parts, which are easier to fit into the next "
+                "build (and a big part that fails is reprinted sooner). Then build as low as possible"),
+               ('COUNT', "Most Parts", "Fit as many parts as possible: when not everything fits, small "
+                "parts first, and big ones may be left over. Then build as low as possible"),
+               ('RUSH', "Lowest Build", "Big parts first, then the lowest build, ignoring how even the "
+                "layers are"),
+               ('QUALITY', "Even Layers", "Big parts first, then the most even density from layer to layer")),
+        description="What the packer looks for")
     pack_keep_low: BoolProperty(
         name="Keep Parts Low", default=False,
         description="Leave every part as low as it goes, even if the layers end up uneven "

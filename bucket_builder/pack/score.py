@@ -4,13 +4,16 @@
 A layout's score is a tuple, smaller is better, compared element by
 element:
 
+    (parts left out of tier 1, ..., of the tier before last,
+     -volume placed, parts left out of the last tier, value)
+
+so no number of lower-tier parts outweighs one tier-1 part, and within the
+last tier the placed volume comes first: big parts first, and what is
+left over is small parts (they fit into the next build more easily, and a
+big part that fails is reprinted sooner: the owner's rule).  With the
+preset 'count' (Most Parts) the number of parts comes first instead:
+
     (parts left out of tier 1, of tier 2, ..., -volume placed, value)
-
-so no number of lower-tier parts outweighs one tier-1 part, and among
-layouts that place the same parts the value decides.  With the preset
-'volume' (Fullest Bucket) the last tier counts by volume instead:
-
-    (..., left out of the tier before last, -volume placed, left out of the last tier, value)
 
 where
 
@@ -30,7 +33,7 @@ PRESETS = {
     'overnight': (1.0, 5.0),     # count first, then height; spread as a tie-breaker
     'rush': (1.0, 0.0),          # height only
     'quality': (0.3, 60.0),      # even layers first
-    'volume': (1.0, 5.0),        # as 'overnight', but the most part volume rather than the most parts
+    'count': (1.0, 5.0),         # as 'overnight', but the most parts rather than the most part volume
 }
 DEFAULT = 'overnight'
 SMOOTH_MM = 5.0
@@ -70,6 +73,6 @@ def key(left_by_tier, volume, height, profile, settings, preset=None):
     """left_by_tier: {tier: number of parts not placed}."""
     tiers = sorted(left_by_tier)
     v = value(height, profile, settings, preset)
-    if preset == 'volume' and tiers:
-        return tuple(left_by_tier[t] for t in tiers[:-1]) + (-round(volume, 3), left_by_tier[tiers[-1]], v)
-    return tuple(left_by_tier[t] for t in tiers) + (-round(volume, 3), v)
+    if preset == 'count' or not tiers:
+        return tuple(left_by_tier[t] for t in tiers) + (-round(volume, 3), v)
+    return tuple(left_by_tier[t] for t in tiers[:-1]) + (-round(volume, 3), left_by_tier[tiers[-1]], v)

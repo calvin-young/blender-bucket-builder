@@ -530,11 +530,19 @@ compaction leaves z alone. **The density limit is met late**
 (`Job._cap_late`): pack with `g.cap = None`, score heights as at least
 V / (area x limit), spread up to that height, lift one part or the whole
 build (`_lift_all`: nested chips cannot rise alone), else pack again with
-greedy's lifting. Keep Parts Low (`pack_keep_low`, Pack > Advanced,
+greedy's lifting. **Corrected 2026-10-20 by the owner**: density is over the
+height the parts fill, lowest point to highest (`Report.bottom`), so lifting
+the whole build means nothing; `_lift_all` is gone and the fallback is
+greedy's lifting (pringles: 111 mm, uneven). Nested parts that are too
+dense in one layer are an open question (his idea: re-nest them farther
+apart). **Goals corrected the same day**: default *Big Parts First* (score
+counts placed volume before parts in the last tier: leftovers should be
+small parts, easier to fit tomorrow, and a big part that fails is reprinted
+sooner); *Most Parts* (`preset 'count'`) is the count goal and the only one
+that tries smallest first. Keep Parts Low (`pack_keep_low`, Pack > Advanced,
 `--keep-low`) turns all of that off. A full bucket (parts left out) is not
 spread, and also packed smallest first (`small_first`: 129 -> 195 parts on
-a 1200-size volume); goal Fullest Bucket (`preset 'volume'`) counts part
-volume instead of parts. The first layout uses two orientations per
+a 1200-size volume, now only with Most Parts). The first layout uses two orientations per
 bounding-box shape for free parts (`_first_allowed`; pringles 8 s / 118 mm
 instead of 21 s / 144 mm); 'all turns' runs later. Part list in the Pack
 panel (`BUCKETBUILDER_UL_pack_parts` over `bpy.data.meshes`, settings on the

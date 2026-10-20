@@ -303,16 +303,21 @@ def test_spread():
 
 
 def test_full_bucket():
-    print('a bucket too small for everything')
+    print('a bucket too small for everything: big parts first, or the most parts')
     parts = [Part('big', S.box(40, 40, 40), 6, 'fixed'), Part('small', S.box(12, 12, 12), 30, 'fixed')]
     s = Settings(vlo=(0, 0, 0), vhi=(100, 100, 45), gap=2.0, wall_gap=2.0, max_density=None, time_budget=None)
+    jb, res = _job(parts, s, max_iterations=4)
+    nb = sum(1 for p in res.placements if p.part == 0)
+    v = referee.check(res.items(parts), s.vlo, s.vhi, s.gap, s.wall_gap)
+    check(v.ok and nb == 4, 'big parts first: all 4 that fit are placed (%d), small ones are what is left' % nb)
+    check(not any('spread' in line for line in jb.log), 'no lifting in a full bucket')
+    s.preset = 'count'
     g0 = greedy.solve(parts, s, threads=1)
     jb, res = _job(parts, s, max_iterations=4)
     v = referee.check(res.items(parts), s.vlo, s.vhi, s.gap, s.wall_gap)
     check(v.ok and len(res.placements) > len(g0.placements),
-          'more parts placed than greedy, largest first (%d against %d), referee clean' % (
-              len(res.placements), len(g0.placements)))
-    check(not any('spread' in line for line in jb.log), 'no lifting in a full bucket')
+          'Most Parts: more parts than greedy, largest first (%d against %d)' % (len(res.placements),
+                                                                                 len(g0.placements)))
 
 
 def test_density_limit():

@@ -674,7 +674,11 @@ minimal exporter in `pack/meshio.py` is decided at Stage 5.
 1. **Density reference**: the commercial packer reports both full bucket height and max
    part height; the latter is the useful one, "almost nobody cares about" the
    former. **Decision: report density against build area x packed height
-   only.** The 12 % limit applies to it. (§6.1 mentioned both; the full-volume
+   only.** The 12 % limit applies to it. **Refined (2026-10-20):** the height
+   is the one the parts fill, from their lowest point to their highest: a
+   single cube in the middle of the bucket is as dense as one on the floor
+   (the commercial packer's "with object height" ignores only the empty space above).
+   Raising a whole build off the floor changes nothing. (§6.1 mentioned both; the full-volume
    figure is dropped.)
 2. **Layer spread**: smoothing window **5 mm**. A per-layer *cap* is not the
    right way to think about it: the goal is to spread density across layers

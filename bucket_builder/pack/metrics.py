@@ -374,8 +374,9 @@ class Report:
     volume: float = 0.0               # of the parts counted (inside and partial)
     volume_outside: float = 0.0       # of parts wholly outside, not counted
     height: float = 0.0               # highest point of the counted parts above the floor
+    bottom: float = 0.0               # lowest point of the counted parts above the floor (0 if below)
     area: float = 0.0                 # build area
-    density: float = None             # volume / (area * height)
+    density: float = None             # volume / (area * (height - bottom)): only the height the parts fill
     band: float = 1.0
     z_mid: np.ndarray = None          # band centres, relative to the floor
     layer_volume: np.ndarray = None   # per band
@@ -413,6 +414,7 @@ def measure(parts, vlo, vhi, band=1.0, smooth_mm=5.0, workers=None, cache=None):
     rep.n_parts = len(res)
     rep.area = float((vhi[0] - vlo[0]) * (vhi[1] - vlo[1]))
     nb = None
+    low = None
     for r in res:
         if r.status == OUTSIDE:
             rep.n_outside += 1
@@ -425,7 +427,9 @@ def measure(parts, vlo, vhi, band=1.0, smooth_mm=5.0, workers=None, cache=None):
             rep.partial_parts.append(r.name)
         rep.volume += r.volume
         rep.height = max(rep.height, float(r.hi[2] - vlo[2]))
+        low = float(r.lo[2] - vlo[2]) if low is None else min(low, float(r.lo[2] - vlo[2]))
         nb = r.bounds.size - 1 if nb is None else nb
+    rep.bottom = max(0.0, low) if low is not None else 0.0
     for r in res:
         if r.is_open:
             rep.open_parts.append(r.name)
@@ -440,13 +444,16 @@ def measure(parts, vlo, vhi, band=1.0, smooth_mm=5.0, workers=None, cache=None):
         rep.z_mid = (np.arange(nb) + 0.5) * band
         rep.layer_density = lay / (rep.area * band) if rep.area > 0 else lay * 0
         rep.peak_layer = float(rep.layer_density.max()) if nb else 0.0
-        if rep.height > 0:
+        if rep.height > rep.bottom:
             used = max(1, int(np.ceil(rep.height / band - 1e-9)))
-            sm = smooth(rep.layer_density[:used], smooth_mm / band)
+            first = min(int(np.floor(rep.bottom / band + 1e-9)), used - 1)
+            sm = smooth(rep.layer_density[first:used], smooth_mm / band)
             m = float(sm.mean())
             rep.spread_cv = float(sm.std() / m) if m > 0 else None
-    if rep.height > 0 and rep.area > 0:
-        rep.density = rep.volume / (rep.area * rep.height)
+    # (the density of the height the parts fill: a cube in the middle of the
+    # bucket is as dense as on the floor, whatever is empty above or below)
+    if rep.height > rep.bottom and rep.area > 0:
+        rep.density = rep.volume / (rep.area * (rep.height - rep.bottom))
     # warnings, in the order the reader needs them
     if rep.n_partial:
         rep.warnings.append(

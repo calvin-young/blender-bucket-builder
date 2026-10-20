@@ -62,8 +62,8 @@ def build_parser():
     k.add_argument('--z-step', type=float, default=30.0, help='degrees between turns about z (30)')
     k.add_argument('--time', type=float, default=60.0,
                    help='seconds to look for better layouts after the first (60; 0: the first only)')
-    k.add_argument('--goal', choices=('overnight', 'volume', 'rush', 'quality'), default='overnight',
-                   help='most parts then lowest (overnight), most volume (volume), lowest (rush), '
+    k.add_argument('--goal', choices=('overnight', 'count', 'rush', 'quality'), default='overnight',
+                   help='big parts first then lowest (overnight), most parts (count), lowest (rush), '
                         'even layers (quality)')
     k.add_argument('--seed', type=int, default=0, help='of the improvement loop (0)')
     k.add_argument('--workers', type=int, default=None, help='processes (default: up to 8, two cores left)')
@@ -182,7 +182,7 @@ def report_one(path, label, args, out):
       % (rep.n_inside, rep.n_partial, rep.n_outside))
     p('  volume         %.1f cm3  (%.1f cm3 outside, not counted)'
       % (rep.volume / 1e3, rep.volume_outside / 1e3))
-    p('  packed height  %.1f mm' % rep.height)
+    p('  packed height  %.1f mm%s' % (rep.height, ' (from %.1f mm)' % rep.bottom if rep.bottom > 0.05 else ''))
     if rep.density is None:
         p('  3D density     n/a')
     else:

@@ -207,7 +207,10 @@ operator asks first of a build:
 * **Volume**, the total of the parts' exact volumes (a closed mesh; the
   evaluated mesh, so modifiers count), and the **packed height**, the
   highest point above the floor of the volume.
-* **3D Density**, volume divided by build area times packed height. A part
+* **3D Density**, volume divided by build area times the height the parts
+  fill, from their lowest point to their highest (a part in the middle of
+  the bucket is as dense as one on the floor; the packed height shows
+  where the parts start when that is above the floor). A part
   that is only partly inside the volume is counted in full, and the density
   line carries a warning saying so; a part wholly outside is listed and left
   out.
@@ -261,7 +264,7 @@ row beside the volume, and the panel says why.
 
 | Setting | What it does |
 | --- | --- |
-| **Goal** | *Most Parts*: as many parts as fit, then as low as possible (when not all fit, small parts first: more of them fit). *Fullest Bucket*: as much part volume as fits (a few large parts may win over many small ones), then as low as possible. *Lowest Build*: as many parts, then the lowest build, whatever the layers look like. *Even Layers*: as many parts, then the most even density from layer to layer. |
+| **Goal** | *Big Parts First*: as much as fits, big parts first, so that when not everything fits what is left over is small parts (easier to fit into the next build; and a big part that fails is reprinted sooner); then as low as possible. *Most Parts*: as many parts as fit (small parts first when not all fit, so big ones may be left over). *Lowest Build*: as many parts, then the lowest build, whatever the layers look like. *Even Layers*: as many parts, then the most even density from layer to layer. |
 | **Time** | How long to look for better layouts after the first one (0: the first layout only). |
 | **Rotation** | *Fixed*: parts keep their rotation. *About Z*: they turn about the vertical, in steps of **Turn Step**. *Free*: any of the 24 ways a part's main axes can line up with the volume's. A part's own setting (below the settings, for the active part) overrides this. |
 | **Gap**, **Wall Gap** | The distance kept between parts, and from the side walls. |

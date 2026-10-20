@@ -244,7 +244,10 @@ def rows(rep):
     if rep.n_outside:
         out.append(('Outside', '%d' % rep.n_outside, ''))
     out.append(('Volume', '%.1f cm\u00b3' % (rep.volume / 1e3), ''))
-    out.append(('Packed Height', '%.1f mm' % rep.height, ''))
+    if rep.bottom > 0.05:
+        out.append(('Packed Height', '%.1f mm (from %.1f)' % (rep.height, rep.bottom), ''))
+    else:
+        out.append(('Packed Height', '%.1f mm' % rep.height, ''))
     if rep.density is None:
         out.append(('3D Density', 'n/a', ''))
     else:
