@@ -78,8 +78,13 @@ def _mark(grid, P, origin, h):
     """Mark the bounding-box cells of small triangles P (edges <= h)."""
     if not P.shape[0]:
         return
-    lo = np.floor((P.min(axis=1) - origin) / h).astype(np.int64)
-    hi = np.floor((P.max(axis=1) - origin) / h).astype(np.int64)
+    if P.shape[1] == 3:
+        a, b, c = P[:, 0], P[:, 1], P[:, 2]        # (three minimums: a reduction over axis 1 is slow)
+        pmin, pmax = np.minimum(np.minimum(a, b), c), np.maximum(np.maximum(a, b), c)
+    else:
+        pmin, pmax = P.min(axis=1), P.max(axis=1)
+    lo = np.floor((pmin - origin) / h).astype(np.int64)
+    hi = np.floor((pmax - origin) / h).astype(np.int64)
     dims = np.array(grid.shape)
     lo = np.clip(lo, 0, dims - 1)
     hi = np.clip(hi, 0, dims - 1)
@@ -116,6 +121,55 @@ def surface_grid(verts, tris, A, h, pad, align='grid'):
         P = V[t[s:s + CHUNK]]
         for piece in _subdivide(P, h):
             _mark(grid, piece, origin, h)
+    return grid, origin
+
+
+class Soup:
+    """A part's triangles cut until no edge is longer than h, once, in the
+    frame of its base matrix: every orientation of a part is a rotation of
+    that frame, which keeps the edges as short, so turning the pieces is all
+    an orientation needs (cutting them was most of the time of voxelising).
+    None of it for meshes whose pieces would take too much memory."""
+    MAX_PIECES = 1_500_000
+
+    def __init__(self, verts, tris, base, h):
+        self.base = np.asarray(base, np.float64)
+        self.inv = np.linalg.inv(self.base)
+        V = np.asarray(verts, np.float64) @ self.base.T
+        t = np.asarray(tris)
+        parts, n = [], 0
+        self.ok = True
+        for s in range(0, t.shape[0], CHUNK):
+            for piece in _subdivide(V[t[s:s + CHUNK]], h):
+                parts.append(piece)
+                n += piece.shape[0]
+                if n > self.MAX_PIECES:
+                    self.ok = False
+                    parts = []
+                    break
+            if not self.ok:
+                break
+        self.pieces = np.concatenate(parts) if parts else np.zeros((0, 3, 3))
+        self.lo = V.min(axis=0) if len(V) else np.zeros(3)
+
+    def rotation(self, A):
+        """A as a rotation of the base frame (A = R base), or None."""
+        R = np.asarray(A, np.float64) @ self.inv
+        if np.abs(R @ R.T - np.eye(3)).max() > 1e-9:
+            return None
+        return R
+
+
+def surface_grid_soup(soup, R, h, pad, align='grid'):
+    """surface_grid from a Soup turned by R (the pieces are already short)."""
+    P = soup.pieces @ R.T
+    lo = np.minimum(np.minimum(P[:, 0], P[:, 1]), P[:, 2]).min(axis=0)
+    hi = np.maximum(np.maximum(P[:, 0], P[:, 1]), P[:, 2]).max(axis=0)
+    origin = _origin(lo, h, pad, align)
+    dims = (np.floor((hi - origin) / h).astype(np.int64) + 1 + pad)
+    grid = np.zeros(tuple(int(d) for d in dims), dtype=bool)
+    for s in range(0, P.shape[0], CHUNK):
+        _mark(grid, P[s:s + CHUNK], origin, h)
     return grid, origin
 
 
@@ -366,15 +420,18 @@ def pool(grid, f, phase=(0, 0, 0)):
     return big.reshape(dims[0], f, dims[1], f, dims[2], f).any(axis=(1, 3, 5))
 
 
-def voxelize(verts, tris, A, h, gap, close_cells=0, cloud=None, align='grid'):
+def voxelize(verts, tris, A, h, gap, close_cells=0, cloud=None, align='grid', soup=None):
     """PartGrid of a mesh posed by A, at cell size h, for gap `gap`.
 
     close_cells > 0 closes holes up to about twice that many cells wide
     before the flood fill (for open meshes; costs concavities that narrow).
     With a `Cloud` the surface comes from it instead of the triangles."""
     pad = gap_cells(gap, h) + close_cells + 1
+    R = soup.rotation(A) if (soup is not None and soup.ok) else None
     if cloud is not None:
         surf, origin = surface_grid_cloud(cloud, A, h, pad, align)
+    elif R is not None:
+        surf, origin = surface_grid_soup(soup, R, h, pad, align)
     else:
         surf, origin = surface_grid(verts, tris, A, h, pad, align)
     if close_cells > 0:

@@ -137,6 +137,26 @@ def test_cloud():
                   % (h, scale, g.n_solid, ref.n_solid))
 
 
+def test_soup():
+    print('turned pieces cut once (a Soup) cover the part as well')
+    for kind, vf in (('sphere', meshes.uv_sphere(10.0, 32, 16)), ('box', meshes.box((12.0, 7.0, 5.0)))):
+        v, f = np.asarray(vf[0], float), np.asarray(vf[1])
+        base = rotation(RNG) * RNG.uniform(0.7, 1.4)
+        for h in (1.0, 0.7):
+            soup = voxel.Soup(v, f, base, h)
+            ok = soup.ok
+            for _ in range(3):
+                A = rotation(RNG) @ base
+                g = voxel.voxelize(v, f, A, h, 0.0, align='min', soup=soup)
+                ref = voxel.voxelize(v, f, A, h, 0.0, align='min')
+                P = inside_points(kind, 3000, RNG) * (0.985 if kind == 'sphere' else 1.0)
+                for pts in (P, surface_points(v, f, 3000, RNG)):
+                    c = cells_of(pts @ A.T, g.origin, h)
+                    ok &= bool(g.solid[c[:, 0], c[:, 1], c[:, 2]].all())
+                ok &= abs(g.n_solid - ref.n_solid) <= 0.01 * ref.n_solid + 4
+            check(ok, '%s at h=%.1f: every point covered, as many cells as cutting each time' % (kind, h))
+
+
 def test_cavities():
     print('open cavities stay empty, sealed voids are solid')
     v, f = cup()
@@ -260,6 +280,7 @@ def test_timing():
 if __name__ == '__main__':
     test_conservative()
     test_cloud()
+    test_soup()
     test_cavities()
     test_dilation_brute_force()
     test_numpy_matches_scipy()

@@ -47,6 +47,7 @@ class Greedy:
         self._close = {}
         self._sigs = {}
         self._clouds = {}
+        self._soups = {}
         self._extent = {}
         self.progress = (0, 0)
         self.cancel = False
@@ -79,6 +80,17 @@ class Greedy:
                 voxel.Cloud(part.mesh.verts, part.mesh.tris, hl)
         return self._clouds[i]
 
+    def _soup(self, i):
+        """The part's triangles cut short once, for all its orientations
+        (voxel.Soup), or None for a part with one orientation."""
+        if i not in self._soups:
+            part = self.parts[i]
+            self._soups[i] = None
+            if len(self.orients(i)) > 1:
+                sp = voxel.Soup(part.mesh.verts, part.mesh.tris, part.base, self.s.h)
+                self._soups[i] = sp if sp.ok else None
+        return self._soups[i]
+
     def orients(self, i):
         if i not in self._orients:
             self._orients[i] = orientations(self.parts[i], self.s.z_step)
@@ -105,8 +117,9 @@ class Greedy:
         A = self.orients(i)[k]
         s = self.s
         vol = self._part_volume(i) * abs(np.linalg.det(A))
+        cloud = self._cloud(i)
         g = voxel.voxelize(part.mesh.verts, part.mesh.tris, A, s.h, s.gap, self._close[i],
-                           cloud=self._cloud(i), align='min')
+                           cloud=cloud, align='min', soup=None if cloud is not None else self._soup(i))
         p = _Pose()
         p.A = A
         p.grid = g
