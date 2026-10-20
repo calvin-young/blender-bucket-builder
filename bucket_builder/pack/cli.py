@@ -62,8 +62,9 @@ def build_parser():
     k.add_argument('--z-step', type=float, default=30.0, help='degrees between turns about z (30)')
     k.add_argument('--time', type=float, default=60.0,
                    help='seconds to look for better layouts after the first (60; 0: the first only)')
-    k.add_argument('--goal', choices=('overnight', 'rush', 'quality'), default='overnight',
-                   help='most parts then lowest (overnight), lowest (rush), even layers (quality)')
+    k.add_argument('--goal', choices=('overnight', 'volume', 'rush', 'quality'), default='overnight',
+                   help='most parts then lowest (overnight), most volume (volume), lowest (rush), '
+                        'even layers (quality)')
     k.add_argument('--seed', type=int, default=0, help='of the improvement loop (0)')
     k.add_argument('--workers', type=int, default=None, help='processes (default: up to 8, two cores left)')
     k.add_argument('--no-compact', action='store_true', help='skip the final move to the exact gaps')

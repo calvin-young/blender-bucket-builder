@@ -143,6 +143,7 @@ class Job:
         self.start = start          # {(part, copy): 4 x 4 in mm}: a layout to improve instead of a new one
         self._pins = {}
         self._extra = {}            # part -> orientations added by the turned probes (beyond the mode's)
+        self.small_first = False    # full runs smallest part first (more parts in a bucket that is full)
         self.final = None           # {(part, copy): 4 x 4}: the best layout after exact compaction
         self.final_height = None
         self._reserve = 0.0         # seconds kept for compaction at the end
@@ -483,6 +484,13 @@ class Job:
         if self._at_bound() or self._time_up():
             yield from self._finish()
             return
+        if self._some_left():
+            # a full bucket: smallest first places more parts
+            lay = self._fresh()
+            yield from self._build(lay, self._order(True), {})
+            if self._consider(lay, 'small first', {}):
+                self.cur = lay
+                self.small_first = True
         # probes: each part alone, one orientation at a time, no density limit
         cap0 = self.g.cap
         self.g.cap = None
@@ -510,7 +518,7 @@ class Job:
                 break
             choice = {i: v[:m] for i, v in self.cands.items()}
             lay = self._fresh()
-            yield from self._build(lay, self.copies, choice)
+            yield from self._build(lay, self._order(), choice)
             if self._consider(lay, 'best %d' % m, choice):
                 self.cur = lay
         yield from self._improve()
@@ -590,13 +598,27 @@ class Job:
         V = np.asarray(self.parts[i].mesh.verts, float) @ np.asarray(self.parts[i].base, float).T
         return float(np.prod(V.max(0) - V.min(0)))
 
+    def _order(self, small=None):
+        """Every copy in the order a full run places them: by tier, then
+        largest first (or smallest first)."""
+        small = self.small_first if small is None else small
+        if not small:
+            return self.copies
+        return sorted(self.copies, key=lambda q: (self.parts[q[0]].tier, self._size(q[0]), q))
+
+    def _some_left(self):
+        """Whether the best layout leaves out parts that would fit the volume."""
+        return self.best is not None and any(q not in self.best and q[0] not in self._too_large
+                                             for q in self.copies)
+
     def _shuffle(self, todo):
         r = self.rng
         if r.random() < 0.25:
             todo = list(todo)
             r.shuffle(todo)
             return sorted(todo, key=lambda q: self.parts[q[0]].tier)
-        return sorted(todo, key=lambda q: (self.parts[q[0]].tier, -self._size(q[0]) * r.uniform(0.6, 1.4), q))
+        sign = 1.0 if self.small_first else -1.0
+        return sorted(todo, key=lambda q: (self.parts[q[0]].tier, sign * self._size(q[0]) * r.uniform(0.6, 1.4), q))
 
     def _ruin(self, lay):
         """Take some parts out; returns them."""
@@ -701,8 +723,8 @@ class Job:
         layers more even (one layer of 49 keycaps with one more on top
         becomes a staggered build).  Off with Settings.spread_z (Keep Parts
         Low: for builds the user fills by hand afterwards).  A generator."""
-        if not self.s.spread_z:
-            return
+        if not self.s.spread_z or self._some_left():
+            return                          # (a full bucket: lifting parts only takes room)
         lay = self.cur
         lay.restore(self.best)
         g, b = self.g, lay.bucket
@@ -874,7 +896,8 @@ class Job:
                 elif what[0] == 'run':
                     label, choice, recs, key, why = r
                     self.why.update(why)
-                    self._adopt(recs, key, label, choice)
+                    if self._adopt(recs, key, label, choice) and label == 'small first':
+                        self.small_first = True
                 elif what[0] == 'rr':
                     recs, key, choice, iters = r
                     self.iterations += iters
@@ -905,6 +928,8 @@ class Job:
         if self._at_bound():
             yield from self._finish()
             return
+        if self._some_left():
+            inflight[self._pool.submit(_task_run, {}, 'small first', self._extra, True)] = ('run',)
         # 2. the rest of the probes
         while (pending or inflight) and not self._time_up(self._probe_keep()):
             pump()
@@ -923,7 +948,8 @@ class Job:
                 if m > 1 and all(len(v) < m for v in self.cands.values()):
                     break
                 choice = {i: v[:m] for i, v in self.cands.items()}
-                inflight[self._pool.submit(_task_run, choice, 'best %d' % m, self._extra)] = ('run',)
+                inflight[self._pool.submit(_task_run, choice, 'best %d' % m, self._extra, self.small_first)] = \
+                    ('run',)
             while any(w[0] == 'run' for w in inflight.values()) and not self._time_up(0.0):
                 idle()
                 yield
@@ -935,7 +961,7 @@ class Job:
                 left = self.time_left()
                 sl = 8.0 if left is None else max(1.0, min(8.0, left))
                 inflight[self._pool.submit(_task_rr, self.best, self.best_key, self.best_choice, self.cands,
-                                           next(seeds), sl, self._lb, self._extra)] = ('rr',)
+                                           next(seeds), sl, self._lb, self._extra, self.small_first)] = ('rr',)
             idle()
             yield
         # (what is still running is told to stop and gives its best so far)
@@ -1036,20 +1062,22 @@ def _task_probe(i, k, stop_above, extra):
     return i, k, q - len(lay.recs), float(lay.bucket.height)
 
 
-def _task_run(choice, label, extra):
+def _task_run(choice, label, extra, small=False):
     job = _CHILD['job']
     _sync(job, extra)
+    job.small_first = small
     job.why = {}
     lay = job._fresh()
-    _child_run(job, job._build(lay, job.copies, choice))
+    _child_run(job, job._build(lay, job._order(), choice))
     if job.cancel:
         return label, choice, None, None, {}
     return label, choice, dict(lay.recs), job.key(lay), dict(job.why)
 
 
-def _task_rr(best, best_key, choice, cands, seed, seconds, lb, extra):
+def _task_rr(best, best_key, choice, cands, seed, seconds, lb, extra, small=False):
     job = _CHILD['job']
     _sync(job, extra)
+    job.small_first = small
     job.rng = random.Random(seed)
     job.cands = dict(cands)
     job.best, job.best_key, job.best_choice = dict(best), best_key, dict(choice)

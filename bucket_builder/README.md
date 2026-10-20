@@ -261,7 +261,7 @@ row beside the volume, and the panel says why.
 
 | Setting | What it does |
 | --- | --- |
-| **Goal** | *Most Parts*: as many parts as fit, then as low as possible. *Lowest Build*: as many parts, then the lowest build, whatever the layers look like. *Even Layers*: as many parts, then the most even density from layer to layer. |
+| **Goal** | *Most Parts*: as many parts as fit, then as low as possible (when not all fit, small parts first: more of them fit). *Fullest Bucket*: as much part volume as fits (a few large parts may win over many small ones), then as low as possible. *Lowest Build*: as many parts, then the lowest build, whatever the layers look like. *Even Layers*: as many parts, then the most even density from layer to layer. |
 | **Time** | How long to look for better layouts after the first one (0: the first layout only). |
 | **Rotation** | *Fixed*: parts keep their rotation. *About Z*: they turn about the vertical, in steps of **Turn Step**. *Free*: any of the 24 ways a part's main axes can line up with the volume's. A part's own setting (below the settings, for the active part) overrides this. |
 | **Gap**, **Wall Gap** | The distance kept between parts, and from the side walls. |

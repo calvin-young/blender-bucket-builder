@@ -269,6 +269,8 @@ class BucketBuilderSettings(PropertyGroup):
     pack_preset: EnumProperty(
         name="Goal", default='OVERNIGHT',
         items=(('OVERNIGHT', "Most Parts", "Fit as many parts as possible, then build as low as possible"),
+               ('VOLUME', "Fullest Bucket", "As much part volume as fits (a few large parts may win over "
+                "many small ones), then build as low as possible"),
                ('RUSH', "Lowest Build", "As many parts, then the lowest build, ignoring how even the layers are"),
                ('QUALITY', "Even Layers", "As many parts, then the most even density from layer to layer")),
         description="What the packer looks for once every part has a place")

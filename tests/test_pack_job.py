@@ -302,6 +302,19 @@ def test_spread():
           'lifting evens the layers (spread %.2f -> %.2f) without a higher build (%.1f, %.1f mm)' % (cv0, cv1, h0, h1))
 
 
+def test_full_bucket():
+    print('a bucket too small for everything')
+    parts = [Part('big', S.box(40, 40, 40), 6, 'fixed'), Part('small', S.box(12, 12, 12), 30, 'fixed')]
+    s = Settings(vlo=(0, 0, 0), vhi=(100, 100, 45), gap=2.0, wall_gap=2.0, max_density=None, time_budget=None)
+    g0 = greedy.solve(parts, s, threads=1)
+    jb, res = _job(parts, s, max_iterations=4)
+    v = referee.check(res.items(parts), s.vlo, s.vhi, s.gap, s.wall_gap)
+    check(v.ok and len(res.placements) > len(g0.placements),
+          'more parts placed than greedy, largest first (%d against %d), referee clean' % (
+              len(res.placements), len(g0.placements)))
+    check(not any('spread' in line for line in jb.log), 'no lifting in a full bucket')
+
+
 def test_worker():
     print('the worker process')
     import subprocess
@@ -349,6 +362,7 @@ if __name__ == '__main__':
     test_start_off_grid()
     test_tiers()
     test_spread()
+    test_full_bucket()
     test_worker()
     print()
     if FAILS:

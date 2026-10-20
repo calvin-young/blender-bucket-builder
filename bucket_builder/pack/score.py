@@ -7,7 +7,12 @@ element:
     (parts left out of tier 1, of tier 2, ..., -volume placed, value)
 
 so no number of lower-tier parts outweighs one tier-1 part, and among
-layouts that place the same parts the value decides:
+layouts that place the same parts the value decides.  With the preset
+'volume' (Fullest Bucket) the last tier counts by volume instead:
+
+    (..., left out of the tier before last, -volume placed, left out of the last tier, value)
+
+where
 
     value = height_weight * packed height (mm)
             + spread_weight * spread (the coefficient of variation of the
@@ -25,6 +30,7 @@ PRESETS = {
     'overnight': (1.0, 5.0),     # count first, then height; spread as a tie-breaker
     'rush': (1.0, 0.0),          # height only
     'quality': (0.3, 60.0),      # even layers first
+    'volume': (1.0, 5.0),        # as 'overnight', but the most part volume rather than the most parts
 }
 DEFAULT = 'overnight'
 SMOOTH_MM = 5.0
@@ -63,4 +69,7 @@ def value(height, profile, settings, preset=None):
 def key(left_by_tier, volume, height, profile, settings, preset=None):
     """left_by_tier: {tier: number of parts not placed}."""
     tiers = sorted(left_by_tier)
-    return tuple(left_by_tier[t] for t in tiers) + (-round(volume, 3), value(height, profile, settings, preset))
+    v = value(height, profile, settings, preset)
+    if preset == 'volume' and tiers:
+        return tuple(left_by_tier[t] for t in tiers[:-1]) + (-round(volume, 3), left_by_tier[tiers[-1]], v)
+    return tuple(left_by_tier[t] for t in tiers) + (-round(volume, 3), v)
