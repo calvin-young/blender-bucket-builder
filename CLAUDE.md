@@ -284,7 +284,7 @@ limit but their scripts are in `scratchpad/review_*`):
 
 ## State
 
-Last updated: 2026-10-16 (session 3).
+Last updated: 2026-10-20 (session 3).
 
 * `main` is **1.3.0** (2026-10-13): 1.2.0 plus the Build Report (Stage 1 of the
   auto packer, merged from `autopack` by fast-forward). Zip sent to the owner.
@@ -520,7 +520,34 @@ phase; 48 linked copies, every part free). Learned: a probe costs about
 12 ms per copy here (FFTs a third, the rest bookkeeping), so probes are most
 of the time on two cores; the window test's scene was at its lower bound
 right after greedy until the parts were allowed to lie down.
-Not done in Stage 3: the part list (UIList) in the Pack panel, the commercial packer
+**1.3.97 (2026-10-19/20)**, from the owner's answer on layer density ("49
+keycaps in one layer and 1 on top" is bad; jitter them across z; but a
+less prominent toggle for "I'm okay with that", because users sometimes
+auto-pack and then fill gaps by hand): `Job._spread` lifts parts on the
+grid at the end where the overlap of their profile with the bucket's is
+smaller (`Bucket.slide(sign=1)`), never above the build's height; then
+compaction leaves z alone. **The density limit is met late**
+(`Job._cap_late`): pack with `g.cap = None`, score heights as at least
+V / (area x limit), spread up to that height, lift one part or the whole
+build (`_lift_all`: nested chips cannot rise alone), else pack again with
+greedy's lifting. Keep Parts Low (`pack_keep_low`, Pack > Advanced,
+`--keep-low`) turns all of that off. A full bucket (parts left out) is not
+spread, and also packed smallest first (`small_first`: 129 -> 195 parts on
+a 1200-size volume); goal Fullest Bucket (`preset 'volume'`) counts part
+volume instead of parts. The first layout uses two orientations per
+bounding-box shape for free parts (`_first_allowed`; pringles 8 s / 118 mm
+instead of 21 s / 144 mm); 'all turns' runs later. Part list in the Pack
+panel (`BUCKETBUILDER_UL_pack_parts` over `bpy.data.meshes`, settings on the
+mesh: `Mesh.bucket_builder_pack_mode` / `_essential`; the object's own mode
+wins: `packing.pack_mode`). Speed: block counts added per part from a
+per-phase cache (`Bucket.mark(cache=)`), taken-block count kept up to date,
+`voxel.Soup` cuts a part's triangles once for all orientations, refinement
+skips candidates two blocks above the best so far (`Greedy.PRUNE`).
+Measured and dropped: refilling after compaction (0 more parts: the freed
+room is in slivers); NumPy float32 FFTs (no faster than float64 here).
+Results (60 s, 2 cores): pringles 66 mm / 11.9 % (bound 65.3), keycaps 36,
+bureau-day at its bound with layer spread 0.93 -> 0.14.
+Not done in Stage 3: the commercial packer
 comparison (needs the owner's baselines), compaction that makes room for
 parts left out (now it only tidies the final layout), a lattice / pattern
 solver (Stage 4) that would make the probes far cheaper.
