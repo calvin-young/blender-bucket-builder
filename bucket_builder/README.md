@@ -247,7 +247,11 @@ working, and the badge at the top of the viewport says how far it is.
    copies of each part on their own, one orientation at a time, to find the
    ways they pack best together (81 keycaps standing on edge fit in one layer
    where lying flat they need two), packs again with those, then takes parts
-   out and puts them back differently. It stops sooner when the build cannot
+   out and puts them back differently. A part with many copies (20 or more)
+   is also tried as a regular pattern, every copy turned alike and the same
+   step from its neighbours, which is how curved parts nest: 150 chips in one
+   standing layer, or in nested stacks when that one layer would be denser
+   than **Max Density** allows. It stops sooner when the build cannot
    get any lower.
 3. **Even layers**: parts are lifted, straight up and never above the top of
    the build, where that evens out the density from layer to layer: a layer

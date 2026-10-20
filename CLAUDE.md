@@ -555,6 +555,23 @@ Measured and dropped: refilling after compaction (0 more parts: the freed
 room is in slivers); NumPy float32 FFTs (no faster than float64 here).
 Results (60 s, 2 cores): pringles 66 mm / 11.9 % (bound 65.3), keycaps 36,
 bureau-day at its bound with layer spread 0.93 -> 0.14.
+**1.3.99 (2026-10-20), Stage 4 started**: `pack/pattern.py` (lattices of
+copies in one orientation: free offsets by one FFT, plane lattice from the
+nearest free offset along 90 rays, stacking vector, 16 phases into the
+bucket; spec §8.4 as built). In the job: probes of parts with
+`PATTERN_FROM` (20) copies or more are lattices (0.2 - 0.5 s each; below 20
+greedy probes stop early and are cheaper: with 6, bureau-day lost its bound
+for lack of time); lattice runs after "best 1" (`_best_runs`,
+`_pattern_run`, child `_task_pattern`). With the density limit met late a
+lattice denser than the limit is passed over, and `best_ok` keeps the best
+layout that meets the limit as it is, the fallback when lifting fails
+(pringles with the limit 111 -> 87.5 mm, nested flat stacks). Without the
+limit pringles 60 mm at 30 s. Lattices lose 3 - 18 % to the bounding-box
+array on boxy parts (1 mm grid slack; the array off the grid would need
+pinned copies). Tests `tests/test_pack_pattern.py`; bench
+`tests/bench_pack_pattern.py`. The owner's "re-nest farther apart" for
+nested parts over the limit (a lattice with a two-point motif, alternate
+rows raised) is NOT built: he asked to review density first.
 Not done in Stage 3: the commercial packer
 comparison (needs the owner's baselines), compaction that makes room for
 parts left out (now it only tidies the final layout), a lattice / pattern

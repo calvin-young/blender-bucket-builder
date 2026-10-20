@@ -469,6 +469,54 @@ and the referee. They are listed in the solver dropdown; `auto` picks one
 
 ### 8.4 Pattern solver (copies of one part)
 
+> **As built (Stage 4, `pack/pattern.py`, 1.3.99).** Single lattices in one
+> orientation; double lattices are not built yet. Free offsets: one FFT
+> correlation of the part's solid with its flipped kernel (`free_offsets`;
+> agrees with the bucket's own test). Plane lattice: the nearest free offset
+> along each of 90 directions, pairs of them smallest area first (a cheap
+> test of a few combinations for all pairs at once), Gauss-reduced, the
+> first whose every vector within reach is free. Stacking vector: the lowest
+> dz over the plane cell that keeps every vector free (chips stack 9 mm
+> apart though 11 mm thick). Into the bucket: 16 phases of the plane
+> lattice, ordered by what they would give empty, so that only the promising
+> ones are checked against what is there; the q lowest lattice points. Valid
+> on the grid by construction; the referee checks the layout as always.
+> In the job: a probe of a part with 20 copies or more is a lattice (0.2 -
+> 0.5 s against about 2 s for greedy with 150 copies; below 20, greedy,
+> which stops early, is cheaper); after "best 1" come the **lattice runs**:
+> the part with the largest share on its lattice, then (if several) every
+> such part in turn, each in the best of its two best orientations and the
+> best of each other bounding-box shape, the rest by greedy around them.
+> With the density limit met late, a lattice denser than the limit is
+> passed over (its copies nest and cannot be lifted apart), and the job
+> keeps the best layout that meets the limit as it is, to fall back on when
+> lifting fails. Results (60 s, 2 cores): 150 chips without the limit at
+> 60 mm after 30 s (standing in one layer; before, only the turned probes
+> found it, near the end of the time); with the 12 % limit 111 -> 87.5 mm
+> (nested flat stacks, 9 %: the one-layer layout is 13 %); bureau-day,
+> keycaps and the rest as before. Against the bounding-box array (the commercial packer's
+> array), copies in a 5600 volume with a 2 mm gap
+> (`tests/bench_pack_pattern.py`):
+>
+> | shape | lattice | array | |
+> |---|---|---|---|
+> | chip | 885 | 360 | +146 % |
+> | figurine (z only) | 2021 | 924 | +119 % |
+> | bracket | 592 | 270 | +119 % |
+> | big keycap | 1070 | 1100 | -3 % |
+> | ring | 832 | 930 | -11 % |
+> | small keycap (z only) | 7006 | 8568 | -18 % |
+> | cube 20 mm | 2928 | 3468 | -16 % |
+> | insole | 1740 | 2079 | -16 % |
+>
+> Parts that nest gain a lot; boxy ones lose to the array because a 1 mm
+> grid is conservative (a 20 mm cube with a 2 mm gap needs a step of 23
+> cells, the array 22 mm). Not built yet: the array itself as a pattern
+> (it needs copies off the grid, as pinned parts are), double lattices.
+> `tests/test_pack_pattern.py` checks the free offsets against the bucket,
+> every lattice with the referee, a lattice around a locked part, and the
+> chips (lattice probes 0.5 s and 60 mm, greedy probes 5.8 s and 106.5 mm).
+
 For "one part, make 20" and for groups of identical copies:
 
 * The **feasible offset set** of a copy relative to another, in one
@@ -728,7 +776,7 @@ for the owner to set before asking for the stage.
 | 1 (**done**, 2026-10-13) | `pack/meshio.py` (STL, 3MF), `pack/metrics.py` (volume, layer profile, density, partial-OOB warning), sidebar report and profile plot, `python -m pack report` | exact against analytic shapes (boxes, spheres, tori, rotated) to 1e-9; report on a 60 x 1 M build in seconds | Sonnet 5.5, medium |
 | 2 | Voxel layer (conservative voxelisation, flood fill, dilation), FFT feasibility, coarse to fine, greedy placement; CPU and GPU timing script for the owner | feasible layouts verified by the referee on all synthetic buckets; timing table on the VM and the owner's laptop; a decision on the GPU path | Opus 5.5, high |
 | 3 (**mostly done**, 2026-10-16) | `Job` loop, improvement (ruin and recreate), compaction, rotation modes, locks, tiers, density cap, layer penalty; Pack panel and part list | beats or matches the owner's commercial packer baseline on the synthetic set; first result within the targets of §2 | Sonnet 5.5, medium |
-| 4 | Pattern solver (lattices, double lattices) | beats the bounding-box array on pringle, figurine and Suzanne copies | Opus 5.5, high |
+| 4 (**started**, 2026-10-20) | Pattern solver (lattices, double lattices) | beats the bounding-box array on pringle, figurine and Suzanne copies | Opus 5.5, high |
 | 5 | Planner (goals, ratios, quantities); Buckets panel; World groups; export all | multi-bucket jobs from the synthetic set; bucket workflow tested in a window | Opus to design, Sonnet to build |
 | 6 | Halos (adaptive, thickness), pair warnings, what-if, solver recommendation | what-if suggestions reproducible across seeds | Sonnet 5.5, medium |
 | 7 | Labels | labelled builds pass the referee | Sonnet 5.5, low to medium |

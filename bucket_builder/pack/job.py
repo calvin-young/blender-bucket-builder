@@ -124,6 +124,7 @@ class Job:
         # one crowded layer and a nearly empty one).  Not when parts are to
         # stay low, nor when even the whole volume would be too dense.
         self._cap_late = False
+        self.best_ok = self.best_ok_key = self.best_ok_choice = None
         if settings.max_density and settings.spread_z:
             vol = sum(abs(metrics.mesh_stats(p.mesh)[0] * np.linalg.det(np.asarray(p.base, float))) * p.quantity
                       for p in parts)
@@ -157,6 +158,7 @@ class Job:
         self.start = start          # {(part, copy): 4 x 4 in mm}: a layout to improve instead of a new one
         self._pins = {}
         self._extra = {}            # part -> orientations added by the turned probes (beyond the mode's)
+        self._lattices = {}         # (part, orientation) -> pack.pattern.Lattice or None
         self.small_first = False    # full runs smallest part first (more parts in a bucket that is full)
         self.final = None           # {(part, copy): 4 x 4}: the best layout after exact compaction
         self.final_height = None
@@ -244,8 +246,28 @@ class Job:
         h = max(b.height, self._cap_height(b.volume))       # (lower is not better: it will be lifted)
         return S.key(self._left(lay.recs), b.volume, h, b.profile, self.s, self.preset)
 
+    def _meets_cap(self, b):
+        """Whether bucket b is within the density limit as it is, over the
+        height its parts fill."""
+        nz = np.nonzero(b.profile > 1e-9)[0]
+        if not len(nz):
+            return True
+        return b.volume <= self.s.area * self.s.max_density * (b.height - nz[0] * b.h) + 1e-6
+
+    def _keep_honest(self, lay, choice):
+        """With the density limit met late, the best layout that meets it as
+        it is (scored at its own height): what to fall back on when the best
+        one's parts nest and cannot be lifted apart."""
+        if not self._cap_late or not self._meets_cap(lay.bucket):
+            return
+        b = lay.bucket
+        k = S.key(self._left(lay.recs), b.volume, b.height, b.profile, self.s, self.preset)
+        if self.best_ok_key is None or k < self.best_ok_key:
+            self.best_ok_key, self.best_ok, self.best_ok_choice = k, dict(lay.recs), dict(choice or {})
+
     def _consider(self, lay, label, choice=None):
         """Keep lay's layout if it is the best so far."""
+        self._keep_honest(lay, choice)
         k = self.key(lay)
         if self.best_key is None or k < self.best_key:
             old = self.best_key
@@ -345,16 +367,122 @@ class Job:
                 plan.append((i, first, rest))
         return plan
 
+    PATTERN_FROM = 20         # copies: from this many on, a probe is a lattice (pack.pattern; below,
+                              # greedy, which stops early, is cheaper: about 12 ms a copy against 0.2 - 0.5 s)
+
     def _probe(self, i, ks, ranks, limit):
         """Probe orientations ks of part i (a generator); once one has placed
         every copy, the others stop as soon as they are higher."""
-        q = self.parts[i].quantity
         for k in ks:
             if self._time_up(self._probe_keep()):
                 return
+            out = []
+            yield from self._probe_one(i, k, limit[0], out)
+            self._rank(i, k, out[0], out[1], ranks, limit)
+
+    def _probe_one(self, i, k, stop_above, out):
+        """The copies of part i alone, in orientation k, without the density
+        limit: on the best lattice (many copies), else one by one with
+        greedy.  Appends (left out, height) to `out` (a generator)."""
+        q = self.parts[i].quantity
+        if q >= self.PATTERN_FROM:
             lay = self._fresh()
-            yield from self._build(lay, [(i, c) for c in range(q)], {i: [k]}, stop_above=limit[0])
-            self._rank(i, k, q - len(lay.recs), lay.bucket.height, ranks, limit)
+            cells, top = self._pattern_cells(i, k, lay)
+            if cells is not None:
+                yield
+                p = self.g.pose(i, k)
+                top = self.g._top(lay.bucket, p, cells[-1]) if cells else 0.0   # (the highest: all alike, by z)
+                out += [q - len(cells), max(float(top), float(lay.bucket.height))]
+                return
+        cap0 = self.g.cap
+        self.g.cap = None
+        try:
+            lay = self._fresh()
+            yield from self._build(lay, [(i, c) for c in range(q)], {i: [k]}, stop_above=stop_above)
+        finally:
+            self.g.cap = cap0
+        out += [q - len(lay.recs), float(lay.bucket.height)]
+
+    def _pattern_cells(self, i, k, lay, q=None):
+        """(cells, top) of up to q copies of part i in orientation k on its
+        lattice in lay's bucket (around what is there); (None, 0) if it has
+        no lattice."""
+        from . import pattern
+        key = (i, k)
+        if key not in self._lattices:
+            self._lattices[key] = pattern.lattice(self.g.pose(i, k).grid)
+        L = self._lattices[key]
+        if L is None:
+            return None, 0.0
+        return pattern.place(lay.bucket, self.g.pose(i, k).grid, L, self.parts[i].quantity if q is None else q)
+
+    def _pattern_types(self):
+        """Parts whose probes were lattices, by tier, largest share first."""
+        return [i for i in sorted(range(len(self.parts)),
+                                  key=lambda i: (self.parts[i].tier, -self._size(i) * self.parts[i].quantity, i))
+                if self.parts[i].quantity >= self.PATTERN_FROM and self.cands.get(i)]
+
+    def _pattern_runs(self):
+        """[(label, parts seeded as lattices)]: the largest share alone, and
+        every one in turn when there are several."""
+        ts = self._pattern_types()
+        if not ts:
+            return []
+        runs = [('pattern', ts[:1])]
+        if len(ts) > 1:
+            runs.append(('patterns', ts))
+        return runs
+
+    def _best_runs(self):
+        """[(label, orientation choice, parts seeded as lattices or None)]:
+        greedy with the best 1, 2, 3 orientations of each part, the lattice
+        runs after the first."""
+        if not self.cands:
+            return []
+        runs = []
+        for m in (1, 2, 3):
+            if m > 1 and all(len(v) < m for v in self.cands.values()):
+                break
+            runs.append(('best %d' % m, {i: v[:m] for i, v in self.cands.items()}, None))
+        one = {i: v[:1] for i, v in self.cands.items()}
+        runs[1:1] = [(label, one, types) for label, types in self._pattern_runs()]
+        return runs
+
+    def _pattern_ks(self, i):
+        """Orientations a lattice run tries for part i: its two best, then the
+        best of each other shape of bounding box (a flat stack may meet the
+        density limit where copies standing in one layer do not)."""
+        ks, seen = [], set()
+        for n, k in enumerate(self.cands[i]):
+            c = self._extents_class(i, k)
+            if n < 2 or c not in seen:
+                ks.append(k)
+            seen.add(c)
+        return ks[:5]
+
+    def _pattern_run(self, lay, types, choice):
+        """Seed lay with the copies of `types` on their lattices (each in the
+        best of its three best orientations, around what is there), then put
+        the rest in with greedy (a generator)."""
+        for i in types:
+            best = None
+            for k in self._pattern_ks(i):
+                if self.cancel:
+                    return
+                cells, top = self._pattern_cells(i, k, lay)
+                yield
+                if cells:
+                    # (a lattice denser than the limit allows cannot be
+                    # lifted apart later: its copies nest)
+                    dense = bool(self._cap_late) and \
+                        len(cells) * self.g.pose(i, k).volume > self.s.area * self.s.max_density * top
+                    key = (dense, -len(cells), top, k)
+                    if best is None or key < best[0]:
+                        best = (key, k, cells)
+            if best is not None:
+                for c, cell in enumerate(best[2]):
+                    lay.add(i, c, best[1], cell)
+        yield from self._build(lay, [q for q in self._order() if q not in lay.recs], choice)
 
     def _probe_keep(self):
         """Seconds the probes leave: those kept for compaction and enough
@@ -531,18 +659,19 @@ class Job:
                                     % (self.elapsed, self.parts[i].name, self.cands[i][:4]))
         finally:
             self.g.cap = cap0
-        # greedy with the best few orientations of each part (the first of
-        # these runs is cheap and often the big step: it may use the time
-        # kept for compaction)
-        for m in (1, 2, 3):
-            if not self.cands or self._time_up(0.0 if m == 1 else None) or self._at_bound():
+        # greedy with the best few orientations of each part, and the parts
+        # with many copies on lattices with the rest around them (the first
+        # of these runs and the lattice runs are cheap and often the big
+        # step: they may use the time kept for compaction)
+        for n, (label, choice, types) in enumerate(self._best_runs()):
+            if self._time_up(0.0 if n == 0 or types else None) or self._at_bound():
                 break
-            if m > 1 and all(len(v) < m for v in self.cands.values()):
-                break
-            choice = {i: v[:m] for i, v in self.cands.items()}
             lay = self._fresh()
-            yield from self._build(lay, self._order(), choice)
-            if self._consider(lay, 'best %d' % m, choice):
+            if types:
+                yield from self._pattern_run(lay, types, choice)
+            else:
+                yield from self._build(lay, self._order(), choice)
+            if self._consider(lay, label, choice):
                 self.cur = lay
         if self._first_allowed() and not self._time_up() and not self._at_bound():
             # greedy with every orientation (the first layout had a few of each shape)
@@ -842,11 +971,17 @@ class Job:
             yield from self._build(lay2, self._order(), self.best_choice)
             self.g.cap = None
             self._cap_late = False
+            label = 'packed again, the limit met during packing'
+            if self.best_ok is not None and self.best_ok_key < self.key(lay2):
+                # an earlier layout met the limit as it was, and is better
+                lay2.restore(self.best_ok)
+                self.best_choice = dict(self.best_ok_choice)
+                label = 'took the best layout that met the limit as it was'
             if len(lay2.recs) >= len(lay.recs):
                 self.cur = lay2
                 lay, b = lay2, lay2.bucket
                 moved += 1
-                self.log.append('%6.1f s  density    packed again, the limit met during packing' % self.elapsed)
+                self.log.append('%6.1f s  density    %s' % (self.elapsed, label))
         if moved:
             after = S.spread(b.profile, H, h)
             self.best = dict(lay.recs)
@@ -1030,12 +1165,13 @@ class Job:
                 self.cands[i] = [k for _, k in sorted(ranks[i])]
         # 3. greedy with the best few orientations, one run per process
         if self.cands and not self._time_up(0.0) and not self._at_bound():
-            for m in (1, 2, 3):
-                if m > 1 and all(len(v) < m for v in self.cands.values()):
-                    break
-                choice = {i: v[:m] for i, v in self.cands.items()}
-                inflight[self._pool.submit(_task_run, choice, 'best %d' % m, self._extra, self.small_first)] = \
-                    ('run',)
+            for label, choice, types in self._best_runs():
+                if types:
+                    f = self._pool.submit(_task_pattern, types, choice, label, self._extra, self.cands,
+                                          self.small_first)
+                else:
+                    f = self._pool.submit(_task_run, choice, label, self._extra, self.small_first)
+                inflight[f] = ('run',)
             while any(w[0] == 'run' for w in inflight.values()) and not self._time_up(0.0):
                 idle()
                 yield
@@ -1061,7 +1197,13 @@ class Job:
 
     def _adopt(self, recs, key, label, choice):
         """A layout from a worker process, if it is the best so far."""
-        if recs is None or (self.best_key is not None and not key < self.best_key):
+        if recs is None:
+            return False
+        if self._cap_late:
+            tmp = self._fresh()
+            tmp.restore(recs)
+            self._keep_honest(tmp, choice)
+        if self.best_key is not None and not key < self.best_key:
             return False
         old = self.best_key
         self.best_key = key
@@ -1137,15 +1279,11 @@ def _sync(job, extra):
 def _task_probe(i, k, stop_above, extra):
     job = _CHILD['job']
     _sync(job, {i: extra} if extra else {})
-    lay = job._fresh()
-    q = job.parts[i].quantity
-    cap0 = job.g.cap
-    job.g.cap = None
-    try:
-        _child_run(job, job._build(lay, [(i, c) for c in range(q)], {i: [k]}, stop_above=stop_above))
-    finally:
-        job.g.cap = cap0
-    return i, k, q - len(lay.recs), float(lay.bucket.height)
+    out = []
+    _child_run(job, job._probe_one(i, k, stop_above, out))
+    if len(out) < 2:                          # (told to stop)
+        return i, k, job.parts[i].quantity, float('inf')
+    return i, k, out[0], out[1]
 
 
 def _task_run(choice, label, extra, small=False):
@@ -1155,6 +1293,19 @@ def _task_run(choice, label, extra, small=False):
     job.why = {}
     lay = job._fresh()
     _child_run(job, job._build(lay, job._order(), choice))
+    if job.cancel:
+        return label, choice, None, None, {}
+    return label, choice, dict(lay.recs), job.key(lay), dict(job.why)
+
+
+def _task_pattern(types, choice, label, extra, cands, small=False):
+    job = _CHILD['job']
+    _sync(job, extra)
+    job.small_first = small
+    job.cands = dict(cands)
+    job.why = {}
+    lay = job._fresh()
+    _child_run(job, job._pattern_run(lay, types, choice))
     if job.cancel:
         return label, choice, None, None, {}
     return label, choice, dict(lay.recs), job.key(lay), dict(job.why)
