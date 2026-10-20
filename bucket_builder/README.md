@@ -265,7 +265,7 @@ row beside the volume, and the panel says why.
 | **Time** | How long to look for better layouts after the first one (0: the first layout only). |
 | **Rotation** | *Fixed*: parts keep their rotation. *About Z*: they turn about the vertical, in steps of **Turn Step**. *Free*: any of the 24 ways a part's main axes can line up with the volume's. A part's own setting (below the settings, for the active part) overrides this. |
 | **Gap**, **Wall Gap** | The distance kept between parts, and from the side walls. |
-| **Max Density** | The packer builds higher rather than exceed this 3D density. |
+| **Max Density** | The packer builds higher rather than exceed this 3D density: it packs as low as the parts go, then lifts them, evenly, until the build is high enough (with Keep Parts Low it lifts only the parts that go in last). If the parts nest so that none can rise on its own, the whole build is raised a little off the floor. |
 
 The list above the settings has one row per mesh among the parts to pack,
 with how many copies of it there are: its rotation and the essential star

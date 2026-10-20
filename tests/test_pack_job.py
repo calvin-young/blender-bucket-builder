@@ -315,6 +315,28 @@ def test_full_bucket():
     check(not any('spread' in line for line in jb.log), 'no lifting in a full bucket')
 
 
+def test_density_limit():
+    print('the density limit, met by lifting parts evenly')
+    from pack import metrics
+    parts = [Part('cube', S.box(20, 20, 20), 40, 'fixed')]
+    s = Settings(vlo=(0, 0, 0), vhi=(200, 200, 200), gap=2.0, wall_gap=0.0, max_density=0.05,
+                 time_budget=None)
+    g0 = greedy.solve(parts, s, threads=1)
+    jb, res = _job(parts, s, max_iterations=2)
+    items = res.items(parts)
+    rep = metrics.measure(items, s.vlo, s.vhi)
+    rep0 = metrics.measure(g0.items(parts), s.vlo, s.vhi)
+    v = referee.check(items, s.vlo, s.vhi, s.gap, s.wall_gap)
+    check(v.ok and len(res.placements) == 40 and rep.density <= 0.05 + 1e-9,
+          'all 40 placed, density %.2f %% <= 5 %%, referee clean' % (100 * rep.density))
+    check(rep.spread_cv < rep0.spread_cv - 0.1,
+          'layers more even than greedy, which lifts a few (spread %.2f against %.2f)' % (rep.spread_cv, rep0.spread_cv))
+    s.spread_z = False
+    jb, res = _job(parts, s, max_iterations=2)
+    rep = metrics.measure(res.items(parts), s.vlo, s.vhi)
+    check(rep.density <= 0.05 + 1e-9, 'Keep Parts Low still keeps the limit (%.2f %%)' % (100 * rep.density))
+
+
 def test_worker():
     print('the worker process')
     import subprocess
@@ -363,6 +385,7 @@ if __name__ == '__main__':
     test_tiers()
     test_spread()
     test_full_bucket()
+    test_density_limit()
     test_worker()
     print()
     if FAILS:

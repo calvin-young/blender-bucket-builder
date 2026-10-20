@@ -38,7 +38,7 @@ import time
 
 import numpy as np
 
-from . import score as S
+from . import metrics, score as S
 from .greedy import Greedy
 from .problem import Placement, Result
 
@@ -118,6 +118,20 @@ class Job:
         if self.workers > 1 and threads is None:
             threads = max(1, min(4, (os.cpu_count() or 1) - self.workers))
         self.g = Greedy(parts, settings, threads)
+        # The density limit, met at the end: pack as low as the parts go,
+        # then lift them, evenly, until the build is as high as the limit
+        # wants (lifting a few parts during packing, as greedy does, gives
+        # one crowded layer and a nearly empty one).  Not when parts are to
+        # stay low, nor when even the whole volume would be too dense.
+        self._cap_late = False
+        if settings.max_density and settings.spread_z:
+            vol = sum(abs(metrics.mesh_stats(p.mesh)[0] * np.linalg.det(np.asarray(p.base, float))) * p.quantity
+                      for p in parts)
+            vol += sum(abs(metrics.mesh_stats(m)[0] * np.linalg.det(np.asarray(M, float)[:3, :3]))
+                       for m, M in locked)
+            if vol / (settings.area * settings.max_density) <= settings.vhi[2] - settings.vlo[2]:
+                self._cap_late = True
+                self.g.cap = None
         self._pool = None
         self._event = None
         self.copies = self.g.order()
@@ -217,9 +231,17 @@ class Job:
                 left[self.parts[i].tier] += 1
         return left
 
+    def _cap_height(self, volume):
+        """The height the density limit wants for that much volume (0 when
+        it is met during packing)."""
+        if not self._cap_late:
+            return 0.0
+        return volume / (self.s.area * self.s.max_density)
+
     def key(self, lay):
         b = lay.bucket
-        return S.key(self._left(lay.recs), b.volume, b.height, b.profile, self.s, self.preset)
+        h = max(b.height, self._cap_height(b.volume))       # (lower is not better: it will be lifted)
+        return S.key(self._left(lay.recs), b.volume, h, b.profile, self.s, self.preset)
 
     def _consider(self, lay, label, choice=None):
         """Keep lay's layout if it is the best so far."""
@@ -471,10 +493,10 @@ class Job:
             left = self._load(self.cur, self.start)
             self.log.append('%6.1f s  start      %d parts kept where they are, %d to place'
                             % (self.elapsed, len(self.cur.recs), len(left)))
-            yield from self._build(self.cur, left, {}, count=True)
+            yield from self._build(self.cur, left, self._first_allowed(), count=True)
             self._consider(self.cur, 'current', {})
         else:
-            yield from self._build(self.cur, self.copies, {}, count=True)
+            yield from self._build(self.cur, self.copies, self._first_allowed(), count=True)
             if self.cancel:
                 return                      # (what is placed so far is the answer; the rest "stopped")
             self._consider(self.cur, 'greedy', {})
@@ -520,6 +542,12 @@ class Job:
             lay = self._fresh()
             yield from self._build(lay, self._order(), choice)
             if self._consider(lay, 'best %d' % m, choice):
+                self.cur = lay
+        if self._first_allowed() and not self._time_up() and not self._at_bound():
+            # greedy with every orientation (the first layout had a few of each shape)
+            lay = self._fresh()
+            yield from self._build(lay, self._order(), {})
+            if self._consider(lay, 'all turns', {}):
                 self.cur = lay
         yield from self._improve()
         yield from self._finish()
@@ -597,6 +625,30 @@ class Job:
     def _size(self, i):
         V = np.asarray(self.parts[i].mesh.verts, float) @ np.asarray(self.parts[i].base, float).T
         return float(np.prod(V.max(0) - V.min(0)))
+
+    FIRST_PER_SHAPE = 2
+
+    def _first_allowed(self):
+        """Orientations for the first layout: of a part that turns freely, two
+        of each shape of bounding box (tallest first), not all 24.  It comes
+        four times sooner for 150 chips, and is often better: copies that
+        all lie alike nest, a mix does not.  The job tries every orientation
+        later."""
+        if getattr(self, '_first', None) is None:
+            self._first = {}
+            for i, part in enumerate(self.parts):
+                if part.mode != 'free' or i in self._too_large:
+                    continue
+                ks = sorted(self._distinct(i), key=lambda k: (-self._z_extent(i, k), k))
+                per = {}
+                for k in ks:
+                    v = per.setdefault(self._extents_class(i, k), [])
+                    if len(v) < self.FIRST_PER_SHAPE:
+                        v.append(k)
+                pick = [k for v in per.values() for k in v]
+                if len(pick) < len(ks):
+                    self._first[i] = pick
+        return self._first
 
     def _order(self, small=None):
         """Every copy in the order a full run places them: by tier, then
@@ -723,16 +775,17 @@ class Job:
         layers more even (one layer of 49 keycaps with one more on top
         becomes a staggered build).  Off with Settings.spread_z (Keep Parts
         Low: for builds the user fills by hand afterwards).  A generator."""
-        if not self.s.spread_z or self._some_left():
-            return                          # (a full bucket: lifting parts only takes room)
+        if not self.s.spread_z:
+            return
+        even = not self._some_left()        # (a full bucket: lifting parts only takes room)
         lay = self.cur
         lay.restore(self.best)
         g, b = self.g, lay.bucket
         h = b.h
-        H = self._best_height()
+        H = max(self._best_height(), self._cap_height(b.volume))
         before = S.spread(b.profile, H, h)
         moved = 0
-        for rnd in range(3):
+        for rnd in range(3 if even else 0):
             order = sorted((q for q, r in lay.recs.items() if r[0] != 'pin'), key=lambda q: (-lay.tops[q], q))
             n_moved = 0
             for n, q in enumerate(order):
@@ -763,6 +816,34 @@ class Job:
             moved += n_moved
             if not n_moved or self.cancel:
                 break
+        # the density limit: the build must reach H (lift a part with room)
+        need = self._cap_height(b.volume)
+        if need and b.height < need - 1e-9:
+            for q in sorted((q for q, r in lay.recs.items() if r[0] != 'pin'), key=lambda q: (-lay.tops[q], q)):
+                i, c = q
+                k, cell = lay.remove(i, c)
+                p = g.pose(i, k)
+                want = int(np.ceil((need - g._top(b, p, cell)) / h - 1e-9))
+                up = b.slide(p.grid, cell, 2, want, sign=1)
+                lay.add(i, c, k, (cell[0], cell[1], cell[2] + (want if up >= want else 0)))
+                if up >= want:
+                    moved += 1
+                    break
+        if need and b.height < need - 1e-9:
+            # no part can go up on its own (they nest): the whole build goes up
+            moved += self._lift_all(lay, int(np.ceil((need - b.height) / h - 1e-9)))
+        if need and b.height < need - 1e-9:
+            # (locked parts in the way: pack again, lifting parts as they go in)
+            self.g.cap = False
+            lay2 = self._fresh()
+            yield from self._build(lay2, self._order(), self.best_choice)
+            self.g.cap = None
+            self._cap_late = False
+            if len(lay2.recs) >= len(lay.recs):
+                self.cur = lay2
+                lay, b = lay2, lay2.bucket
+                moved += 1
+                self.log.append('%6.1f s  density    packed again, the limit met during packing' % self.elapsed)
         if moved:
             after = S.spread(b.profile, H, h)
             self.best = dict(lay.recs)
@@ -771,6 +852,36 @@ class Job:
             self.version += 1
             self.log.append('%6.1f s  spread     %d lifts, layer spread %.2f -> %.2f'
                             % (self.elapsed, moved, before, after))
+
+    def _lift_all(self, lay, d):
+        """Every part that is not pinned d cells up, if they all fit there
+        (locked parts may be in the way).  Returns how many moved."""
+        b = lay.bucket
+        qs = [q for q, r in lay.recs.items() if r[0] != 'pin']
+        if not qs or d <= 0:
+            return 0
+        old = {q: lay.recs[q] for q in qs}
+        for q in qs:
+            lay.remove(*q)
+        ok = True
+        done = []
+        for q in qs:
+            k, cell = old[q]
+            p = self.g.pose(q[0], k)
+            new = (cell[0], cell[1], cell[2] + d)
+            if not (b.in_range(p.grid, new) and b.fits(p.grid, new)):
+                ok = False
+                break
+            lay.add(q[0], q[1], k, new)
+            done.append(q)
+        if not ok:
+            for q in done:
+                lay.remove(*q)
+            for q in qs:
+                lay.add(q[0], q[1], *old[q])
+            return 0
+        self.log.append('%6.1f s  density    the whole build %d mm up, for the density limit' % (self.elapsed, d * b.h))
+        return len(qs)
 
     def _compact_phase(self):
         """Move every part of the best layout to the exact gap: down, back,
@@ -916,7 +1027,7 @@ class Job:
             todo, label = left, 'current'
         else:
             todo, label = self.copies, 'greedy'
-        for _ in self._build(self.cur, todo, {}, count=True):
+        for _ in self._build(self.cur, todo, self._first_allowed(), count=True):
             pump()
             collect()
             yield
@@ -930,6 +1041,8 @@ class Job:
             return
         if self._some_left():
             inflight[self._pool.submit(_task_run, {}, 'small first', self._extra, True)] = ('run',)
+        if self._first_allowed():
+            inflight[self._pool.submit(_task_run, {}, 'all turns', self._extra, False)] = ('run',)
         # 2. the rest of the probes
         while (pending or inflight) and not self._time_up(self._probe_keep()):
             pump()
