@@ -572,6 +572,20 @@ pinned copies). Tests `tests/test_pack_pattern.py`; bench
 `tests/bench_pack_pattern.py`. The owner's "re-nest farther apart" for
 nested parts over the limit (a lattice with a two-point motif, alternate
 rows raised) is NOT built: he asked to review density first.
+**Double lattices, prototype only** (`tools/pack_motif_proto.py`, the owner
+asked 2026-10-20 which shapes need them and for an algorithm): partner B =
+A turned 180 degrees about x, y or z (already among the 24 free
+orientations); one FFT of A's solid with B's kernel gives where B may sit;
+pairing offsets t = nearest free offset along 400 directions, ranked by
+the union's bounding box; A and B glued at t into one grid ("dimer") whose
+own free table covers A-A, B-B, A-B, B-A, then the existing `lattice` /
+`place`. Copies in a 5600 (array / lattice / double): wedge 616 / 663 /
+880, gusset triangle 1750 / 1644 / 2440, tee 1470 / 1710 / 1932, flanged
+peg 880 / 1547 / 1860, trapezoid 672 / 627 / 660, half disc 2310 / 2024 /
+2024; L plate 1225 / 2100 and angle iron 480 / 985 are already won by the
+plain lattice (its vectors lean). Referee clean on all. 25 - 55 s per shape
+because it tries 6 orientations x 3 axes x 8 pairings; for the job: best 2
+orientations x 3 axes x 3 pairings, in the worker processes. Not integrated.
 Not done in Stage 3: the commercial packer
 comparison (needs the owner's baselines), compaction that makes room for
 parts left out (now it only tidies the final layout), a lattice / pattern
