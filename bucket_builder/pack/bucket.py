@@ -244,7 +244,7 @@ class Bucket:
         if not self.count.any():
             mask = np.ones(tuple(cmax - cmin + 1), dtype=bool)
             return mask, cmin
-        dt = self._dtype(int(kc.sum()))
+        dt = self._dtype(pg.coarse_count(f, phase))
         Cs = self.search_shape(kc.shape[2])
         ks = SPECTRA.get((key, f, tuple(phase), Cs, dt),
                          lambda: np.conj(rfftn(kc.astype(dt), Cs)))

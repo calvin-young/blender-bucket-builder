@@ -399,6 +399,14 @@ class PartGrid:
     def shape(self):
         return self.solid.shape
 
+    def coarse_count(self, f, phase=(0, 0, 0)):
+        """Number of set blocks of `coarse(f, phase)` (kept)."""
+        key = ('n', f, tuple(int(p) for p in phase))
+        n = self._coarse.get(key)
+        if n is None:
+            n = self._coarse[key] = int(np.count_nonzero(self.coarse(f, phase)))
+        return n
+
     def coarse(self, f, phase=(0, 0, 0)):
         """The kernel max-pooled by f with the part's cell 0 at fine offset
         `phase` inside block 0 (a conservative stand-in at coarse level)."""

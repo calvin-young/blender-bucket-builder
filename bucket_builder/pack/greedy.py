@@ -234,10 +234,29 @@ class Greedy:
     def _coarse(self, bucket, p):
         return [(ph,) + tuple(bucket.coarse_feasible(p.grid, p.key, ph)) for ph in self._phases(bucket.f)]
 
-    def _best_for_pose(self, bucket, p, need, coarse=None):
+    PRUNE = 2           # coarse blocks: a candidate this much above the best so far is not refined
+
+    def _lowest(self, bucket, p, coarse):
+        """The bottom (mm) of the lowest coarse candidate of a pose, or None."""
+        f = bucket.f
+        low = None
+        for phase, mask, c0 in coarse:
+            if mask is None:
+                continue
+            zs = np.nonzero(mask.any(axis=(0, 1)))[0]
+            if zs.size:
+                z = ((zs[0] + c0[2]) * f + phase[2] - bucket.M) * bucket.h + p.z_lo
+                low = z if low is None else min(low, z)
+        return low
+
+    def _best_for_pose(self, bucket, p, need, coarse=None, cutoff=None):
+        """Best (score, cell) of a pose; candidates whose bottom is more than
+        PRUNE blocks above `cutoff` (the best score of other poses) are not
+        refined: refining moves a part a few cells, not blocks."""
         s = self.s
         f = bucket.f
         best = None
+        margin = self.PRUNE * f * bucket.h
         for phase, mask, c0 in (coarse if coarse is not None else self._coarse(bucket, p)):
             if mask is None or not mask.any():
                 continue
@@ -264,6 +283,9 @@ class Greedy:
             pick = np.argpartition(key, k - 1)[:k]
             for j in pick[np.argsort(key[pick])]:
                 cand = b[j]
+                lim = cutoff if best is None else (best[0] if cutoff is None else min(cutoff, best[0]))
+                if lim is not None and self._bottom(bucket, p, cand) - margin > lim:
+                    break                                    # (the others are higher still)
                 if not self._ok(bucket, p, cand, need):
                     # the density limit may hold it up: lift it until it is met
                     lifted = cand.copy()
@@ -317,14 +339,21 @@ class Greedy:
             return None, why
         for _, p, _ in todo:                                 # (the bucket's spectra, once, before the threads)
             kc = p.grid.coarse(bucket.f)
-            bucket.spectrum(bucket._dtype(int(kc.sum())), bucket.search_shape(kc.shape[2]))
+            bucket.spectrum(bucket._dtype(p.grid.coarse_count(bucket.f)), bucket.search_shape(kc.shape[2]))
         if self._pool is not None and len(todo) > 1:
             coarse = list(self._pool.map(lambda t: self._coarse(bucket, t[1]), todo))
         else:
             coarse = [self._coarse(bucket, t[1]) for t in todo]
         best = None
-        for (k, p, need), co in zip(todo, coarse):
-            r = self._best_for_pose(bucket, p, need, co)
+        # the lowest-looking orientations first, so that the others can be
+        # cut short (their candidates are not refined when they are higher)
+        lows = [self._lowest(bucket, t[1], co) for t, co in zip(todo, coarse)]
+        order = sorted(range(len(todo)), key=lambda j: (np.inf if lows[j] is None else lows[j], j))
+        for j in order:
+            (k, p, need), co = todo[j], coarse[j]
+            if lows[j] is None:
+                continue
+            r = self._best_for_pose(bucket, p, need, co, None if best is None else best[0])
             if r is not None and (best is None or r[0] < best[0]):
                 best = (r[0], k, r[1])
         return best, why
