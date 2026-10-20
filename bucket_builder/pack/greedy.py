@@ -200,7 +200,12 @@ class Greedy:
         return float((ex_a * ex_a).sum() - (ex_b * ex_b).sum())
 
     def _score(self, bucket, p, b):
-        return self._bottom(bucket, p, b) + self.s.layer_weight * self._layer_penalty(bucket, p, b)
+        """Lowest bottom first; but raising the build costs too (a rod placed
+        late would stand up in a gap on the floor rather than lie on top)."""
+        sc = self._bottom(bucket, p, b) + self.s.layer_weight * self._layer_penalty(bucket, p, b)
+        if self.s.overshoot_weight:
+            sc += self.s.overshoot_weight * max(0.0, self._top(bucket, p, b) - bucket.height)
+        return sc
 
     def _ok(self, bucket, p, b, need):
         return (bucket.in_range(p.grid, b) and self._top(bucket, p, b) >= need - 1e-9

@@ -512,10 +512,52 @@ and the referee. They are listed in the solver dropdown; `auto` picks one
 > Parts that nest gain a lot; boxy ones lose to the array because a 1 mm
 > grid is conservative (a 20 mm cube with a 2 mm gap needs a step of 23
 > cells, the array 22 mm). Not built yet: the array itself as a pattern
-> (it needs copies off the grid, as pinned parts are), double lattices.
+> (it needs copies off the grid, as pinned parts are).
 > `tests/test_pack_pattern.py` checks the free offsets against the bucket,
 > every lattice with the referee, a lattice around a locked part, and the
 > chips (lattice probes 0.5 s and 60 mm, greedy probes 5.8 s and 106.5 mm).
+>
+> **Double lattices** (1.4.0): a copy A and its partner B, A turned 180
+> degrees about x, y or z (with free rotation these are among the 24
+> orientations; in z mode only the turn about z, if the step allows it).
+> One FFT of A's solid with B's kernel gives every offset where B clears A
+> (`pattern.cross_free`); the nearest such offset along each of 400
+> directions over the sphere is a candidate pairing, ranked by the
+> bounding box of the pair (`pairings`, three kept). A and B glued at the
+> pairing make one grid (`Envelope`) whose own free table covers A-A, B-B,
+> A-B and B-A, so the existing lattice search applies unchanged and a
+> lattice of pairs is valid copy by copy. Tried for the two best
+> orientations; the run keeps whichever lattice places most copies lowest.
+> Gains in a 5600 volume against the single lattice: gusset +48 %, wedge
+> +33 %, knob +20 %, tee +13 %; chips, L plates and angles keep the single
+> lattice (its steps may lean: L shapes nest along a diagonal by
+> translation alone).
+>
+> **Families** (1.4.0, `pack/family.py`): parts that turn freely and are
+> basically the same shape: size and volume within a factor 1.5 along each
+> principal axis, and a coarse picture (16 cells along the longest side)
+> whose overlap with an already accepted member's is at least 0.55 under
+> one of the 24 turns of the principal frame. Members are compared with the
+> four most alike in size of each family, so a chain of small differences
+> is one family. The turn found lines the member up, so the reference's
+> orientation k means the same for every member (`Family.matrix`). A
+> family is probed as its reference with as many copies as the family has,
+> then patterned on the **envelope** of its members in the best
+> orientations, lined up by the centres of their bounding boxes: valid
+> whichever member stands in a place. Families of up to 24 members also
+> get double lattices. Cost: every member is voxelised per orientation
+> tried (about 40 ms per chip here). What it does not do: chips that
+> differ in bend stack as far apart as the deepest needs (150 different
+> chips 108 mm against 87.5 mm for 150 identical ones in flat stacks);
+> placing each copy at the lattice point but checked as itself, and
+> sorting members so that neighbours are alike, were measured and gave
+> nothing.
+>
+> **Lattices first** (1.4.0): when parts with 20 copies or more, and
+> families, are nine tenths of the copies, their lattice probes (with at
+> most 12 turned ones, within a quarter of the time) and a lattice layout
+> come before anything else, and greedy's layout of every copy one at a
+> time only if that leaves parts out.
 
 For "one part, make 20" and for groups of identical copies:
 

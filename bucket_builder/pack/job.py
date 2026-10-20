@@ -441,12 +441,14 @@ class Job:
             return None, 0.0
         return pattern.place(lay.bucket, self.g.pose(i, k).grid, L, self.parts[i].quantity if q is None else q)
 
-    def _run_cost(self, choice):
-        """Seconds a greedy run of every copy would take with these
-        orientation choices, from what placing copies has cost so far."""
+    def _run_cost(self, choice, skip=()):
+        """Seconds a greedy run of every copy (but those of the parts in
+        `skip`, which go on lattices) would take with these orientation
+        choices, from what placing copies has cost so far."""
         t, n = self._place_cost
         per = t / n if n else 0.004                 # (per copy and orientation tried)
-        return per * sum(len(choice[i]) if choice.get(i) else len(self.g.orients(i)) for i, c in self.copies)
+        return per * sum(len(choice[i]) if choice.get(i) else len(self.g.orients(i))
+                         for i, c in self.copies if i not in skip)
 
     def _lattice_parts(self):
         """Parts whose lattices come before the first greedy layout: those
@@ -1028,7 +1030,7 @@ class Job:
         for n, (label, choice, types) in enumerate(self._best_runs()):
             if self._at_bound() or self._time_up(0.0):
                 break
-            est = 0.0 if types else self._run_cost(choice)
+            est = self._run_cost(choice, {i for g in (types or ()) for i in g})
             if self._time_up((0.0 if n == 0 or types else self._reserve) + est):
                 continue                    # (no time for this one; a lattice run may still fit)
             lay = self._fresh()

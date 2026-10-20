@@ -251,7 +251,14 @@ working, and the badge at the top of the viewport says how far it is.
    is also tried as a regular pattern, every copy turned alike and the same
    step from its neighbours, which is how curved parts nest: 150 chips in one
    standing layer, or in nested stacks when that one layer would be denser
-   than **Max Density** allows. It stops sooner when the build cannot
+   than **Max Density** allows. Patterns of pairs, every other copy turned
+   over, are tried too: wedges, triangles, tees and knobs pack much closer
+   that way. Parts that are different meshes but basically the same shape
+   (50 chips that each differ a little, a set of knobs) are recognised as a
+   family when they turn freely: they are turned alike and patterned
+   together, spaced as the largest of them needs. When such parts are
+   most of the build, the patterns come first and the build is ready
+   sooner. It stops sooner when the build cannot
    get any lower.
 3. **Even layers**: parts are lifted, straight up and never above the top of
    the build, where that evens out the density from layer to layer: a layer

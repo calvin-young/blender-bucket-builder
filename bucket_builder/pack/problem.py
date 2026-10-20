@@ -41,6 +41,7 @@ class Settings:
     z_step: float = 30.0              # degrees, for mode 'z'
     max_density: float = 0.12         # 3D density limit (None: no limit)
     layer_cap: float = 0.5            # soft per-layer density limit
+    overshoot_weight: float = 1.0     # greedy: mm of bottom one mm of build height raised is worth
     layer_weight: float = 100.0       # mm of height one unit of squared excess is worth
     candidates: int = 3               # coarse positions refined per orientation (8 was no better)
     time_limit: float = None          # seconds for one greedy run (None: no limit)
