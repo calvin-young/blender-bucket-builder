@@ -243,10 +243,16 @@ working, and the badge at the top of the viewport says how far it is.
    where lying flat they need two), packs again with those, then takes parts
    out and puts them back differently. It stops sooner when the build cannot
    get any lower.
-3. **The exact gaps**: at the end every part moves down, back and left until
-   it is exactly the **Gap** from its neighbours, measured on the meshes (the
-   packer itself works on a grid of small cells, which leaves up to about two
-   cells of extra room between parts).
+3. **Even layers**: parts are lifted, straight up and never above the top of
+   the build, where that evens out the density from layer to layer: a layer
+   of 49 parts with one more on top becomes a staggered build. The heat of
+   a build is then spread over its height instead of crowded into a few
+   layers. **Keep Parts Low** (under Advanced) leaves every part as low as it
+   goes instead, for a build you mean to fill up by hand afterwards.
+4. **The exact gaps**: at the end every part moves back and left (and down,
+   with Keep Parts Low) until it is exactly the **Gap** from its neighbours,
+   measured on the meshes (the packer itself works on a grid of small cells,
+   which leaves up to about two cells of extra room between parts).
 
 **Stop** (or Esc) keeps the best layout found so far; during the first layout
 it keeps what has been placed and puts the rest in a row beside the volume.

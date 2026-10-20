@@ -67,6 +67,8 @@ def build_parser():
     k.add_argument('--seed', type=int, default=0, help='of the improvement loop (0)')
     k.add_argument('--workers', type=int, default=None, help='processes (default: up to 8, two cores left)')
     k.add_argument('--no-compact', action='store_true', help='skip the final move to the exact gaps')
+    k.add_argument('--keep-low', action='store_true',
+                   help='leave parts as low as they go, even if the layers end up uneven')
     k.add_argument('--referee', action='store_true', help='check the result with the exact engine')
     k.add_argument('--names', action='store_true', help='print file and part names')
     return ap
@@ -97,7 +99,7 @@ def pack_one(args, out):
     parts = parts_of(scene, args.mode, args.copies)
     s = Settings(vlo=vlo, vhi=vhi, gap=args.gap, wall_gap=args.wall_gap, h=args.cell,
                  z_step=args.z_step, max_density=(args.max_density / 100.0) or None,
-                 time_budget=args.time, preset=args.goal, seed=args.seed, compact=not args.no_compact)
+                 time_budget=args.time, preset=args.goal, seed=args.seed, compact=not args.no_compact, spread_z=not args.keep_low)
     t_read = time.perf_counter() - t0
     first = []
 

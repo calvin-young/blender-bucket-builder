@@ -116,6 +116,7 @@ class Bucket:
         self.height = 0.0                           # highest point above the floor
         self._spec = None
         self._ztop = None
+        self._ntaken = None
         self.version = 0
 
     # ------------------------------------------------------------ geometry
@@ -141,18 +142,21 @@ class Bucket:
         win = self.fine[tuple(dst)]
         return not np.logical_and(win, k[tuple(src)]).any()
 
-    def _faces(self, pg, axis):
+    def _faces(self, pg, axis, sign=-1):
         """Flat offsets (in this grid) of the kernel cells that lead when the
-        part moves towards -axis: set, with the cell before them not set."""
-        key = ('faces', axis, self.fine.shape)
+        part moves towards -axis (sign -1) or +axis (sign 1): set, with the
+        cell behind them not set."""
+        key = ('faces', axis, sign, self.fine.shape)
         off = pg._coarse.get(key)
         if off is None:
             k = pg.kernel
             prev = np.zeros_like(k)
             sl_dst = [slice(None)] * 3
             sl_src = [slice(None)] * 3
-            sl_dst[axis] = slice(1, None)
-            sl_src[axis] = slice(0, -1)
+            if sign < 0:
+                sl_dst[axis], sl_src[axis] = slice(1, None), slice(0, -1)
+            else:
+                sl_dst[axis], sl_src[axis] = slice(0, -1), slice(1, None)
             prev[tuple(sl_dst)] = k[tuple(sl_src)]
             u = np.argwhere(k & ~prev)
             st = np.array(self.fine.strides) // self.fine.itemsize
@@ -160,22 +164,22 @@ class Bucket:
             pg._coarse[key] = off
         return off
 
-    def slide(self, pg, b, axis, limit):
+    def slide(self, pg, b, axis, limit, sign=-1):
         """How many cells (0 .. limit) a part that fits at b can move towards
-        -axis and still fit.  Only the leading cells of its kernel can meet
-        something new at each step."""
+        -axis (sign -1) or +axis (1) and still fit.  Only the leading cells of
+        its kernel can meet something new at each step."""
         if limit <= 0:
             return 0
         st = np.array(self.fine.strides) // self.fine.itemsize
         base = int(np.dot(np.asarray(b, np.int64), st))
-        off = self._faces(pg, axis)
+        off = self._faces(pg, axis, sign)
         flat = self.fine.reshape(-1)
-        step = int(st[axis])
+        step = int(st[axis]) * (1 if sign > 0 else -1)
         done = 0
         while done < limit:
             n = min(8, limit - done)
             js = np.arange(done + 1, done + n + 1, dtype=np.int64)
-            hit = flat[base - js[:, None] * step + off[None, :]].any(axis=1)
+            hit = flat[base + js[:, None] * step + off[None, :]].any(axis=1)
             if hit.any():
                 return done + int(np.argmax(hit))
             done += n
@@ -215,7 +219,9 @@ class Bucket:
         "no overlap" from one cell of overlap.  NumPy's FFT is double only."""
         if _fft is np.fft:
             return np.float64
-        n_taken = int(np.count_nonzero(self.count))
+        if self._ntaken is None or self._ntaken[0] != self.version:
+            self._ntaken = (self.version, int(np.count_nonzero(self.count)))
+        n_taken = self._ntaken[1]
         bound = 1.2e-7 * math.log2(self.count.size) * math.sqrt(max(n_taken, 1) * max(n_kernel, 1))
         return np.float32 if bound < 0.05 else np.float64
 
@@ -258,7 +264,7 @@ class Bucket:
         of h from its cell 0; volume: its exact volume; top: its highest
         point above the floor once placed."""
         b = [int(x) for x in b]
-        self.mark(pg.solid, b)
+        self.mark(pg.solid, b, 1, pg._coarse)
         z0 = b[2] - self.M
         lo, hi = max(z0, 0), min(z0 + len(profile), len(self.profile))
         if hi > lo:
@@ -272,17 +278,43 @@ class Bucket:
         """Take a placed part out again (the inverse of `place`; the caller
         sets `height`, which only it can know)."""
         b = [int(x) for x in b]
-        self.mark(pg.solid, b, -1)
+        self.mark(pg.solid, b, -1, pg._coarse)
         z0 = b[2] - self.M
         lo, hi = max(z0, 0), min(z0 + len(profile), len(self.profile))
         if hi > lo:
             self.profile[lo:hi] -= profile[lo - z0:hi - z0]
         self.volume -= volume
 
-    def mark(self, solid, b, sign=1):
+    def mark(self, solid, b, sign=1, cache=None):
         """Add (sign 1) or take away (-1) a solid grid at fine offset b
         (clipped to the grid) and bring the block counts of that region up to
-        date."""
+        date.  With a `cache` (the part grid's), the solid's own block counts
+        at that phase are kept there and added, instead of counting the
+        region's cells again."""
+        f = self.f
+        if cache is not None and all(x >= 0 and x + n <= N for x, n, N in zip(b, solid.shape, self.fine.shape)):
+            ph = tuple(int(x) % f for x in b)
+            pooled = cache.get(('pool', ph))
+            if pooled is None:
+                pooled = cache[('pool', ph)] = pool_sum(solid, f, ph)
+            c0 = [(int(x) - p) // f for x, p in zip(b, ph)]
+            if all(c + n <= N for c, n, N in zip(c0, pooled.shape, self.count.shape)):
+                win = self.fine[b[0]:b[0] + solid.shape[0], b[1]:b[1] + solid.shape[1], b[2]:b[2] + solid.shape[2]]
+                cw = self.count[c0[0]:c0[0] + pooled.shape[0], c0[1]:c0[1] + pooled.shape[1],
+                                c0[2]:c0[2] + pooled.shape[2]]
+                fresh = self._ntaken is not None and self._ntaken[0] == self.version
+                nz0 = int(np.count_nonzero(cw)) if fresh else 0
+                if sign > 0:
+                    win += solid
+                    cw += pooled
+                else:
+                    win -= solid
+                    cw -= pooled
+                self._spec = None
+                self.version += 1
+                if fresh:                                 # (kept up to date: counting all blocks is slow)
+                    self._ntaken = (self.version, self._ntaken[1] + int(np.count_nonzero(cw)) - nz0)
+                return
         dst, src = [], []
         for x, n, N in zip(b, solid.shape, self.fine.shape):
             lo, hi = max(x, 0), min(x + n, N)
@@ -295,7 +327,6 @@ class Bucket:
             win += solid[tuple(src)]
         else:
             win -= solid[tuple(src)]
-        f = self.f
         blk = tuple(slice(d.start // f, -(-d.stop // f)) for d in dst)
         fine = self.fine[tuple(slice(c.start * f, c.stop * f) for c in blk)]
         self.count[blk] = pool_sum(fine, f, (0, 0, 0))

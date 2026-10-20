@@ -272,6 +272,11 @@ class BucketBuilderSettings(PropertyGroup):
                ('RUSH', "Lowest Build", "As many parts, then the lowest build, ignoring how even the layers are"),
                ('QUALITY', "Even Layers", "As many parts, then the most even density from layer to layer")),
         description="What the packer looks for once every part has a place")
+    pack_keep_low: BoolProperty(
+        name="Keep Parts Low", default=False,
+        description="Leave every part as low as it goes, even if the layers end up uneven "
+                    "(for a build you fill up by hand afterwards). Otherwise parts are lifted where "
+                    "that evens out the density from layer to layer")
     pack_last: StringProperty(options={'SKIP_SAVE'})
 
     use_clearance: BoolProperty(

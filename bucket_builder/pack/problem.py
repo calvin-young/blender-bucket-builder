@@ -48,6 +48,7 @@ class Settings:
     preset: str = 'overnight'         # weights of the score (pack.score.PRESETS)
     seed: int = 0                     # of the improvement loop's choices
     compact: bool = True              # end with every part moved to the exact gap (pack.compact)
+    spread_z: bool = True             # end by lifting parts where that evens out the layers
 
     def __post_init__(self):
         if self.vlo is None or self.vhi is None:

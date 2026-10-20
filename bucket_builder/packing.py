@@ -218,7 +218,8 @@ class BUCKETBUILDER_OT_pack(Operator):
         s = Settings(vlo=vlo, vhi=vhi, gap=st.pack_gap, wall_gap=st.pack_wall_gap,
                      h=st.pack_cell, z_step=st.pack_z_step,
                      max_density=(st.pack_max_density / 100.0) or None,
-                     time_budget=float(st.pack_time), preset=st.pack_preset.lower())
+                     time_budget=float(st.pack_time), preset=st.pack_preset.lower(),
+                     spread_z=not st.pack_keep_low)
         self._settings = s
         self._start = start if self.improve else None
         self._job = J.Job(self._parts, s, lock, start=self._start)

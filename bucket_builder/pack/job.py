@@ -481,7 +481,7 @@ class Job:
         self.phase = 'improving'
         self._reserve = self._compact_reserve()
         if self._at_bound() or self._time_up():
-            yield from self._compact_phase()
+            yield from self._finish()
             return
         # probes: each part alone, one orientation at a time, no density limit
         cap0 = self.g.cap
@@ -514,7 +514,7 @@ class Job:
             if self._consider(lay, 'best %d' % m, choice):
                 self.cur = lay
         yield from self._improve()
-        yield from self._compact_phase()
+        yield from self._finish()
 
     def _improve_more(self):
         if self.cur is None:
@@ -688,6 +688,68 @@ class Job:
             return 0.0
         return keep
 
+    def _finish(self):
+        """The last steps on the best layout: even out the layers, then the
+        exact gaps (a generator)."""
+        if self.best is not None and not self.cancel and self.cur is not None:
+            yield from self._spread()
+        yield from self._compact_phase()
+
+    def _spread(self):
+        """Even out the density from layer to layer: lift parts straight up,
+        on the grid and never above the build's height, where that makes the
+        layers more even (one layer of 49 keycaps with one more on top
+        becomes a staggered build).  Off with Settings.spread_z (Keep Parts
+        Low: for builds the user fills by hand afterwards).  A generator."""
+        if not self.s.spread_z:
+            return
+        lay = self.cur
+        lay.restore(self.best)
+        g, b = self.g, lay.bucket
+        h = b.h
+        H = self._best_height()
+        before = S.spread(b.profile, H, h)
+        moved = 0
+        for rnd in range(3):
+            order = sorted((q for q, r in lay.recs.items() if r[0] != 'pin'), key=lambda q: (-lay.tops[q], q))
+            n_moved = 0
+            for n, q in enumerate(order):
+                i, c = q
+                k, cell = lay.remove(i, c)
+                p = g.pose(i, k)
+                top = g._top(b, p, cell)
+                room = int(np.floor((H - top) / h + 1e-9))
+                room = b.slide(p.grid, cell, 2, room, sign=1) if room > 0 else 0
+                d = 0
+                if room > 0:
+                    z0 = cell[2] - b.M
+                    prof = np.asarray(p.profile, float)
+                    W = np.zeros(room + len(prof))
+                    lo, hi = max(z0, 0), min(z0 + len(W), len(b.profile))
+                    if hi > lo:
+                        W[lo - z0:hi - z0] = b.profile[lo:hi]
+                    cost = np.correlate(W, prof, 'valid')        # (overlap with what is there, per lift)
+                    j = int(np.argmin(cost))
+                    if cost[j] < cost[0] - 1e-6 * max(1.0, abs(cost[0])):
+                        d = j
+                new = (cell[0], cell[1], cell[2] + d)
+                lay.add(i, c, k, new)
+                if d:
+                    n_moved += 1
+                if n % 16 == 15:
+                    yield
+            moved += n_moved
+            if not n_moved or self.cancel:
+                break
+        if moved:
+            after = S.spread(b.profile, H, h)
+            self.best = dict(lay.recs)
+            self.best_key = self.key(lay)
+            self.final = self.final_height = None
+            self.version += 1
+            self.log.append('%6.1f s  spread     %d lifts, layer spread %.2f -> %.2f'
+                            % (self.elapsed, moved, before, after))
+
     def _compact_phase(self):
         """Move every part of the best layout to the exact gap: down, back,
         left, lowest first, for the time kept for it (a generator; each
@@ -713,7 +775,7 @@ class Job:
         for rnd in range(2):
             moved = 0.0
             for j in order:
-                for ax in (2, 1, 0):
+                for ax in ((1, 0) if self.s.spread_z else (2, 1, 0)):     # (not down again after spreading)
                     if self._time_up(0.0):
                         break
                     moved += c.move(j, ax, tops)
@@ -841,6 +903,7 @@ class Job:
         self.phase = 'improving'
         self._reserve = self._compact_reserve()
         if self._at_bound():
+            yield from self._finish()
             return
         # 2. the rest of the probes
         while (pending or inflight) and not self._time_up(self._probe_keep()):
@@ -882,7 +945,7 @@ class Job:
             idle()
         if self.best is not None and not self.cancel:
             self.cur.restore(self.best)
-        yield from self._compact_phase()
+        yield from self._finish()
 
     def _adopt(self, recs, key, label, choice):
         """A layout from a worker process, if it is the best so far."""

@@ -482,6 +482,7 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
         header.label(text="Advanced")
         if body is not None:
             _split(body).prop(st, "pack_cell")
+            body.prop(st, "pack_keep_low")
             idle = packing.TIMING.get('proc') is None
             row = body.row()
             row.enabled = idle

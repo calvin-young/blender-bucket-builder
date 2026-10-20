@@ -80,6 +80,9 @@ def test_remove():
     same = (np.array_equal(b.fine, snap[0]) and np.array_equal(b.count, snap[1])
             and np.allclose(b.profile, snap[2]) and abs(b.volume - snap[3]) < 1e-6 and abs(b.height - snap[4]) < 1e-9)
     check(same, 'and back in, the bucket is as it was (cells, blocks, profile, volume, height)')
+    from pack.bucket import pool_sum
+    full = pool_sum(b.fine, b.f, (0, 0, 0))[:b.count.shape[0], :b.count.shape[1], :b.count.shape[2]]
+    check(np.array_equal(full, b.count), 'the block counts kept up to date are the cells counted afresh')
     for q in sorted(lay.recs):
         lay.remove(*q)
     check(not b.fine.any() and not b.count.any() and abs(b.volume) < 1e-6 and b.height == 0.0,
@@ -281,6 +284,24 @@ def test_tiers():
     check(nb == 4 and v.ok, 'all 4 essential boxes placed, %d of 40 others, referee clean' % ns)
 
 
+def test_spread():
+    print('layers evened out, or kept low')
+    from pack import metrics
+    out = {}
+    for spread in (False, True):
+        parts = [Part('box', S.box(18, 18, 9), 50, 'fixed')]
+        s = Settings(vlo=(0, 0, 0), vhi=(144, 144, 60), gap=2.0, wall_gap=2.0, max_density=None,
+                     time_budget=None, preset='rush', spread_z=spread)
+        jb, res = _job(parts, s, max_iterations=2)
+        rep = metrics.measure(res.items(parts), s.vlo, s.vhi)
+        v = referee.check(res.items(parts), s.vlo, s.vhi, s.gap, s.wall_gap)
+        out[spread] = (rep.height, rep.spread_cv, v.ok, len(res.placements))
+    (h0, cv0, ok0, n0), (h1, cv1, ok1, n1) = out[False], out[True]
+    check(ok0 and ok1 and n0 == n1 == 50, 'both valid, all 50 placed')
+    check(cv1 < cv0 - 0.05 and h1 <= h0 + 1e-6,
+          'lifting evens the layers (spread %.2f -> %.2f) without a higher build (%.1f, %.1f mm)' % (cv0, cv1, h0, h1))
+
+
 def test_worker():
     print('the worker process')
     import subprocess
@@ -327,6 +348,7 @@ if __name__ == '__main__':
     test_compact()
     test_start_off_grid()
     test_tiers()
+    test_spread()
     test_worker()
     print()
     if FAILS:
