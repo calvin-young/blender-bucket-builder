@@ -48,6 +48,7 @@ class Greedy:
         self._sigs = {}
         self._clouds = {}
         self._soups = {}
+        self._turn_base = {}        # part -> (orientation, grid) its quarter turns are made from
         self._extent = {}
         self.progress = (0, 0)
         self.cancel = False
@@ -118,8 +119,12 @@ class Greedy:
         s = self.s
         vol = self._part_volume(i) * abs(np.linalg.det(A))
         cloud = self._cloud(i)
-        g = voxel.voxelize(part.mesh.verts, part.mesh.tris, A, s.h, s.gap, self._close[i],
-                           cloud=cloud, align='min', soup=None if cloud is not None else self._soup(i))
+        g = self._turned_grid(i, A)
+        if g is None:
+            g = voxel.voxelize(part.mesh.verts, part.mesh.tris, A, s.h, s.gap, self._close[i],
+                               cloud=cloud, align='min', soup=None if cloud is not None else self._soup(i))
+            if g.solid.size >= self.TURN_FROM:
+                self._turn_base.setdefault(i, (np.asarray(A, float), g))
         p = _Pose()
         p.A = A
         p.grid = g
@@ -158,6 +163,43 @@ class Greedy:
             seen[sig] = k
         self._poses[key] = p
         return p
+
+    TURN_FROM = 1_500_000     # cells: a grid this large is voxelised once; its quarter turns are made from it
+
+    def _turned_grid(self, i, A):
+        """A large part's grid in orientation A made from the grid of its
+        first orientation, when A is that one turned by quarter turns about
+        the axes (free rotation: always): its arrays permuted and flipped,
+        no voxelising (a large part cost seconds per orientation).  The
+        cells are still a superset of the part, but on a flipped axis the
+        part's lowest point is no longer at the bottom of its lowest cell:
+        up to a cell of slack there, which the exact compaction takes back
+        sideways."""
+        base = self._turn_base.get(i)
+        if base is None:
+            return None
+        A0, g0 = base
+        G = np.asarray(A, float) @ np.linalg.inv(A0)
+        R = np.rint(G)
+        if np.abs(G - R).max() > 1e-9 or not np.all(np.abs(R).sum(axis=1) == 1) or \
+                not np.all(np.abs(R).sum(axis=0) == 1):
+            return None
+        axes = [int(np.nonzero(R[r])[0][0]) for r in range(3)]
+        signs = [int(R[r, axes[r]]) for r in range(3)]
+        solid = np.transpose(g0.solid, axes)
+        kernel = np.transpose(g0.kernel, axes)
+        origin = np.zeros(3)
+        h = g0.h
+        for r in range(3):
+            j = axes[r]
+            if signs[r] < 0:
+                solid = np.flip(solid, r)
+                kernel = np.flip(kernel, r)
+                origin[r] = -(g0.origin[j] + g0.solid.shape[j] * h)
+            else:
+                origin[r] = g0.origin[j]
+        return voxel.PartGrid(np.ascontiguousarray(solid), np.ascontiguousarray(kernel), origin, h, g0.gap,
+                              g0.closed)
 
     def _shape_sig(self, i, A):
         """The posed vertex set, rounded and sorted (equal for two turns that

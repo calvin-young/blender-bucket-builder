@@ -589,6 +589,36 @@ and the referee. They are listed in the solver dropdown; `auto` picks one
 > a lattice from threading rings: the interlocking check (§8.9) matters
 > more with patterns.
 >
+> **Mixed buckets** (1.4.1, the owner asked for much more varied shapes
+> and sizes): `huge-and-tiny` (two 150 mm housings and a 300 mm plate with
+> 500 parts of 5 - 15 mm), `mix-a` / `mix-b` (20 kinds at x0.3 - x3, all
+> free), `mix-c` (30 kinds at x0.2 - x4, some fixed upright), `one-offs`
+> (60 different parts, one of each). 60 s, 2 cores:
+>
+> | bucket | copies | height | lower bound | first layout |
+> |---|---|---|---|---|
+> | huge-and-tiny | 503 | 157 mm (176 before the fix below) | 150 mm | 23 s |
+> | mix-a | 375 | 166 | 165.7 | 49 s (146 s before turned grids) |
+> | mix-b | 208 | 117.9 | 117.9 | 42 s |
+> | mix-c | 814 | 274.6 | 255.6 | 92 s |
+> | one-offs | 60 | 255.6 (232 with 300 s) | 191.7 | 106 s (341 s before) |
+>
+> What they showed: (1) the height of a varied build is mostly set by its
+> largest parts, and the packer reaches or nears the lower bound; (2) the
+> first layout is the cost: large parts were voxelised in each of 24
+> orientations, seconds each; now a large part (1.5 M cells or more) is
+> voxelised once and its quarter turns are made by permuting and flipping
+> the arrays (`Greedy._turned_grid`; a superset still, with up to a cell of
+> slack on a flipped axis that the exact compaction takes back sideways):
+> 3 x faster on these buckets; (3) lattices first put 500 small parts on
+> the floor and the housings on top (176 mm): parts larger than every
+> lattice part now go in before the lattices, and lattices come first only
+> for builds of at most three kinds; (4) not solved: one-offs holds two
+> open housings, one of which would fit inside the other (191.7 mm); the
+> greedy only fills a cavity when the floor is full, and the improvement
+> loop did not find it in 5 minutes. A "nest the containers" move (try
+> each open part inside each larger one first) would.
+>
 > **Lattices first** (1.4.0): when parts with 20 copies or more, and
 > families, are nine tenths of the copies, their lattice probes (with at
 > most 12 turned ones, within a quarter of the time) and a lattice layout
@@ -667,10 +697,52 @@ Blender this is the existing monitor, switched back on.
 
 ### 8.9 Interlocking
 
-A checkbox, off, labelled as not implemented, until it is easy: the voxel
-disassembly test (remove parts along the three axes until none can move;
-anything left interlocks) fits the voxel layer well and may come with the
-improvement stage.
+The owner's requirement (2026-10-20): rare in real builds, so low
+priority, but expected (most programs have it). On by default, can be
+turned off. It must never slow anything down: it runs in the background
+only after every other check has passed and nothing else is waiting, and
+an interlock found says so a moment later. Two parts that were found to
+interlock are remembered as able to.
+
+Design (not built yet):
+
+* **What counts.** Two parts interlock when neither can be taken away from
+  the other by a straight move without touching it (a hook through a loop,
+  linked rings, a pin through a closed eye). Pairs only: three parts that
+  lock only together are left out (much rarer, much dearer to find).
+* **Candidates, cheaply.** Only pairs that already passed collision and
+  clearance, and whose convex hulls overlap: if the hulls are apart, a
+  plane separates the parts and one slides away. Nearly every pair in a
+  packed build is dropped here (vertex-in-hull tests, or the hull distance
+  from the engine).
+* **The test.** For a candidate pair, try to move A away from B along 26
+  directions (the faces, edges and corners of a cube) and along the line
+  between their centres, on voxel grids that are supersets of the parts:
+  if the swept A misses B in one direction, they come apart (sound,
+  because the grids are larger than the parts). If every direction is
+  blocked, check the most promising few exactly with the engine
+  (conservative advancement along the direction). Blocked exactly
+  everywhere means interlocked; blocked on the grid but not decided
+  exactly means "may interlock", shown as a warning.
+* **In the monitor.** The lowest priority of the timer's work: it starts
+  only when no pair is unsolved, unsettled or being refined, and stops
+  whenever the user does anything. Results are kept per pair and placement,
+  like the other proofs, so moving one part re-checks only its candidate
+  pairs. The badge says "Checking for interlocked parts" (neutral, not
+  green) while that is going on, then "Build OK"; an interlock is a
+  problem in the list like a collision. Guidance given to the owner: a
+  separate line rather than holding back the whole verdict, so a slow
+  check on a dense build never makes the badge look stuck.
+* **In the packer.** The same test runs on the final layout before it is
+  handed over (the packer knows which pairs it nested). An interlocked
+  pair is taken apart by the packer itself: one part is taken out and
+  placed again, and the layout is checked again; the result says "2 parts
+  placed again: they interlocked". No question to the user.
+* **Remembered.** Mesh pairs (by mesh hash) that interlocked are recorded
+  (scene data and the packer's job), so the packer checks those pairs
+  during packing (not only at the end) and the monitor tests them first.
+* **Switch.** "Check for Interlocking", on by default, in the checks'
+  settings; off skips the work entirely.
 
 ### 8.10 Large meshes
 

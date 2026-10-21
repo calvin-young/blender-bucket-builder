@@ -46,8 +46,8 @@ def main():
     ap.add_argument('--out')
     a = ap.parse_args()
     lib = synthetic.library()
-    print('%-13s %8s %9s %8s %7s %7s  %s' % ('bucket', 'placed', 'height', 'density', 'first', 'time', 'referee'),
-          flush=True)
+    print('%-13s %8s %9s %8s %8s %7s %7s  %s' % ('bucket', 'placed', 'height', 'bound', 'density', 'first', 'time',
+                                                'referee'), flush=True)
     for name in a.names or list(lib):
         desc, parts, kw = lib[name]
         s = Settings(time_budget=a.time, max_density=(a.max_density / 100.0) or None, **kw)
@@ -58,8 +58,8 @@ def main():
         n = sum(p.quantity for p in parts)
         how = sorted({line.split()[2] for line in jb.log if len(line.split()) > 2 and
                       line.split()[2] in ('pattern', 'patterns', 'family')})
-        print('%-13s %4d/%-4d %6.1f mm %6.2f %% %5.0f s %5.0f s  %s  %s' % (
-            name, len(res.placements), n, rep.height, 100 * (rep.density or 0), t1, dt,
+        print('%-13s %4d/%-4d %6.1f mm %5.1f mm %6.2f %% %5.0f s %5.0f s  %s  %s' % (
+            name, len(res.placements), n, rep.height, jb._lb, 100 * (rep.density or 0), t1, dt,
             'clean' if v.ok else 'VIOLATIONS %s' % (v,), ' '.join(how)), flush=True)
         if a.out:
             os.makedirs(a.out, exist_ok=True)
@@ -75,7 +75,7 @@ def main():
             finally:
                 family.find, J.Job.PATTERN_FROM = find, pf
             rep0 = metrics.measure(r0.items(parts), s.vlo, s.vhi)
-            print('%-13s %4d/%-4d %6.1f mm %6.2f %%         %5.0f s  (one copy at a time)' % (
+            print('%-13s %4d/%-4d %6.1f mm          %6.2f %%         %5.0f s  (one copy at a time)' % (
                 '', len(r0.placements), n, rep0.height, 100 * (rep0.density or 0), d0), flush=True)
             if a.out:
                 meshio.write_3mf(os.path.join(a.out, name + '-greedy.3mf'),

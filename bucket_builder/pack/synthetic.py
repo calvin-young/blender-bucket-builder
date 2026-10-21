@@ -484,11 +484,64 @@ def library():
                    [P('angle', angle(), 100), P('L plate', l_plate(), 100)], {'gap': 2.0}),
         'keycap-sizes': ('four sizes of keycap, 20 of each', [P('keycap-%d' % k, m, 20) for k, m in enumerate(caps)],
                          {'gap': 2.0}),
+        'huge-and-tiny': ('two large housings and a big plate, with hundreds of tiny parts', [
+            P('housing', cup(75.0, 70.0, 150.0, 5.0, 4, 'housing', square=True), 2, 'fixed'),
+            P('plate', plate(300.0, 200.0, 4.0), 1, 'z'),
+            P('tiny nut', transformed(hex_nut(), np.eye(3) * 0.5), 300),
+            P('tiny ring', transformed(ring(), np.eye(3) * 0.3), 100),
+            P('small chip', transformed(pringle(), np.eye(3) * 0.4), 60),
+            P('small knob', transformed(peg(), np.eye(3) * 0.5), 40)], {'gap': 1.5}),
+        'mix-a': ('20 kinds drawn at random, sizes x0.3 to x3, every one free to turn', random_mix(11, fixed=False),
+                  {'gap': 2.0}),
+        'mix-b': ('20 kinds drawn at random, sizes x0.3 to x3, every one free to turn', random_mix(23, fixed=False),
+                  {'gap': 2.0}),
+        'mix-c': ('30 kinds drawn at random, sizes x0.2 to x4', random_mix(37, 30, scale=(0.2, 4.0)), {'gap': 2.0}),
+        'one-offs': ('60 different parts, one of each, sizes x0.3 to x3', random_mix(41, 60, copies=1, fixed=False),
+                     {'gap': 2.0}),
         'workshop': ('a mixed day: brackets, keycaps, knobs, cups, chips, hooks, nuts, plates, rods', [
             P('bracket', bracket(), 12), P('keycap', keycap(), 40, 'z'), P('knob', peg(), 30),
             P('cup', tapered_cup(), 6), P('chip', pringle(), 40), P('hook', hook(), 20),
             P('nut', hex_nut(), 24), P('plate', plate(), 4, 'z'), P('rod', rod(), 10)], {'gap': 2.0}),
     }
+
+
+def _pool():
+    """Shape makers for random mixes: (name, maker, usual rotation mode)."""
+    return [
+        ('block', lambda: box(40, 30, 20), 'free'), ('ball', lambda: sphere(20, 24, 12), 'fixed'),
+        ('bracket', bracket, 'free'), ('figurine', figurine, 'z'), ('chip', pringle, 'free'),
+        ('keycap', big_keycap, 'free'), ('ring', ring, 'free'), ('wedge', wedge, 'free'),
+        ('gusset', gusset, 'free'), ('tee', tee, 'free'), ('knob', peg, 'free'),
+        ('cup', tapered_cup, 'free'), ('dome', dome, 'free'), ('nut', hex_nut, 'free'),
+        ('star', star, 'free'), ('clip', c_clip, 'free'), ('hook', hook, 'free'),
+        ('angle', angle, 'free'), ('L plate', l_plate, 'free'), ('rod', rod, 'free'),
+        ('plate', plate, 'z'), ('housing', lambda: cup(60.0, 56.0, 90.0, 4.0, 4, square=True), 'fixed'),
+        ('socket', socket, 'fixed'), ('insole', insole, 'free'), ('half disc', half_disc, 'free'),
+    ]
+
+
+def random_mix(seed, kinds=20, volume=(380.0, 284.0, 380.0), copies=None, scale=(0.3, 3.0), fixed=True):
+    """A mix of `kinds` part types drawn from the pool, each scaled by a
+    factor drawn log-uniformly from `scale` (kept inside the volume) and
+    given a quantity: many copies of small parts, few of large ones (or
+    `copies` each).  Shapes and sizes vary much more than in a usual day."""
+    rng = np.random.default_rng(seed)
+    pool = _pool()
+    room = 0.9 * min(volume)
+    parts = []
+    for n in range(kinds):
+        name, make, mode = pool[int(rng.integers(len(pool)))]
+        m = make()
+        ext = np.ptp(m.verts, axis=0)
+        f = float(np.exp(rng.uniform(np.log(scale[0]), np.log(scale[1]))))
+        f = min(f, room / float(ext.max()))
+        m = transformed(m, np.eye(3) * f)
+        size = float(np.prod(np.ptp(m.verts, axis=0)))
+        q = copies if copies else int(np.clip(rng.integers(1, 4) * 60000.0 / max(size, 1.0), 1, 60))
+        if not fixed and mode == 'fixed':
+            mode = 'free'
+        parts.append(Part('%s-%02d' % (name, n), _mesh(m.verts, m.tris, '%s-%02d' % (name, n)), q, mode))
+    return parts
 
 
 def write_unpacked(path, parts):

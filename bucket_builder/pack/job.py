@@ -450,6 +450,8 @@ class Job:
         return per * sum(len(choice[i]) if choice.get(i) else len(self.g.orients(i))
                          for i, c in self.copies if i not in skip)
 
+    LATTICE_FIRST_GROUPS = 3  # kinds of part (or families) at most for lattices before the first layout
+
     def _lattice_parts(self):
         """Parts whose lattices come before the first greedy layout: those
         with many copies, when they are most of the build (not for a start
@@ -461,7 +463,10 @@ class Job:
         n = sum(p.quantity for p in self.parts)
         covered = sum(self.parts[i].quantity for i in big) + \
             sum(self._family_quantity(F) for F in self._families())
-        self._lattice_wanted = covered >= 0.9 * n
+        groups = len(big) + len(self._families())
+        # (a few kinds that are most of the build: a mixed build is better
+        # off with greedy first, and its lattices later)
+        self._lattice_wanted = covered >= 0.9 * n and groups <= self.LATTICE_FIRST_GROUPS
         return big if self._lattice_wanted else []
 
     # ------------------------------------------------------------ families
@@ -799,8 +804,18 @@ class Job:
     def _pattern_run(self, lay, groups, choice):
         """Seed lay with the copies of each group on the best of its lattices
         (around what is there), then put the rest in with greedy (a
-        generator)."""
-        for grp in groups:
+        generator).  Parts larger than every seeded one go in first, with
+        greedy: big parts first, and the lattices fill around them."""
+        seeded = {i for g in groups for i in g}
+        if seeded:
+            big = max(self._size(i) for i in seeded)
+            rocks = [q for q in self._order() if q[0] not in seeded and self._size(q[0]) > big
+                     and q not in lay.recs]
+            if rocks:
+                yield from self._build(lay, rocks, choice)
+        for n_grp, grp in enumerate(groups):
+            if n_grp and self.best is not None and self._time_up(0.0):
+                return                      # (out of time: this layout would not be finished)
             pats = []
             yield from self._group_patterns(grp, pats)
             todo = [q for q in self._order() if q[0] in grp and q not in lay.recs]

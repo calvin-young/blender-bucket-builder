@@ -58,6 +58,10 @@ owner used in his previous print-prep software. Read `README.md` for the design 
   repository); push after every verified step. Exception: the auto packer is
   built on the `autopack` branch (agreed 2026-10-12) and merged in milestones
   behind an experimental preference; keep `main` releasable.
+* `docs/TALLY.md` keeps what the owner asked for apart from what was
+  assumed, what was not asked and what is for later (he wants this in
+  every project): update it whenever a request, an assumption or an open
+  question comes up.
 * `python3 tests/test_private_guard.py` checks that nothing but the README is
   ever committed from `benchmarks/private/` (the owner's own buckets).
 * Timing in the sandbox: the first write to a page of memory is about twenty
@@ -608,6 +612,17 @@ value: exact lattice refinement (cups that nest on a gentle taper, boxy
 parts at the array's pitch), partner grids by flipping instead of
 voxelising (doubles twice as cheap), interlocking check (§8.9), a summary
 in the panel of what was recognised (families, patterns).
+**1.4.1 (2026-10-20)**: the owner asked for more varied buckets
+(`synthetic.random_mix`, library buckets `huge-and-tiny`, `mix-a/b/c`,
+`one-offs`; results in AUTOPACK §8.4) and gave his interlocking
+requirement (design in AUTOPACK §8.9, not built, low priority). Fixes
+from the mixes: large parts' quarter turns from one grid
+(`Greedy._turned_grid`, `TURN_FROM` 1.5 M cells; test
+`test_turned_grids`), parts larger than every lattice part go in before
+lattices (`_pattern_run`), lattices first only for <= 3 kinds
+(`LATTICE_FIRST_GROUPS`), a lattice run stops seeding when time is up.
+Not solved: nesting open containers inside each other (one-offs).
+`docs/TALLY.md` started (asked / assumed / not asked / later).
 Not done in Stage 3: the commercial packer
 comparison (needs the owner's baselines), compaction that makes room for
 parts left out (now it only tidies the final layout), a lattice / pattern

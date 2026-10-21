@@ -164,7 +164,44 @@ def test_referee_catches():
     check(v.outside == 1, 'a part through the wall is outside')
 
 
+def test_turned_grids():
+    print('large parts: quarter turns made from one grid hold the part')
+    rng = np.random.default_rng(4)
+    shapes = [S.transformed(S.bracket(), np.eye(3) * 3), S.transformed(S.figurine(), np.eye(3) * 4.5),
+              S.transformed(S.pringle(), np.eye(3) * 2.5)]
+    s = Settings(gap=2.0, wall_gap=2.0, max_density=None)
+    for n, m in enumerate(shapes):
+        g = greedy.Greedy([Part('big', m, 1, 'free')], s)
+        made = 0
+        for k in range(len(g.orients(0))):
+            p = g.pose(0, k)
+            made += k > 0 and g._turn_base.get(0) is not None
+            # points of the posed surface must fall in solid cells of the grid
+            V = np.asarray(m.verts, float)
+            T = V[np.asarray(m.tris)]
+            w = rng.dirichlet((1, 1, 1), size=(len(T), 4))
+            P = np.einsum('tsk,tkd->tsd', w, T).reshape(-1, 3)
+            P = np.concatenate([V, P]) @ np.asarray(p.A, float).T
+            # (a point on a cell boundary is held by the cells on either side:
+            # closed cells, which is what the gap proof uses)
+            X = (P - p.grid.origin) / s.h
+            held = np.zeros(len(X), dtype=bool)
+            for e in np.array(np.meshgrid([-1e-7, 1e-7], [-1e-7, 1e-7], [-1e-7, 1e-7])).T.reshape(-1, 3):
+                c = np.clip(np.floor(X + e).astype(int), 0, np.array(p.grid.shape) - 1)
+                held |= p.grid.solid[c[:, 0], c[:, 1], c[:, 2]]
+            ok = bool(held.all())
+            if not ok:
+                break
+        check(ok and made >= 20, 'shape %d: %d orientations made by turning, every surface point inside' % (n, made))
+    parts = [Part('bracket', shapes[0], 4, 'free'), Part('figurine', shapes[1], 3, 'free'),
+             Part('chip', S.pringle(), 20, 'free')]
+    r = greedy.solve(parts, s)
+    v = referee.check(r.items(parts), s.vlo, s.vhi, s.gap, s.wall_gap)
+    check(v.ok and len(r.placements) == 27, 'a layout with them: %d placed, referee %s' % (len(r.placements), 'clean' if v.ok else v))
+
+
 if __name__ == '__main__':
+    test_turned_grids()
     test_referee_catches()
     test_random_layouts()
     test_cavity()
