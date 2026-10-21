@@ -50,6 +50,11 @@ class Settings:
     seed: int = 0                     # of the improvement loop's choices
     compact: bool = True              # end with every part moved to the exact gap (pack.compact)
     spread_z: bool = True             # end by lifting parts where that evens out the layers
+    flat_rules: bool = True           # avoid large flat faces close together or parallel to the walls
+    flat_pair_weight: float = 0.001   # mm of height one mm^2 of facing faces is worth (weighted by closeness)
+    flat_wall_weight: float = 0.0004  # mm of height one mm^2 of face parallel to a side wall is worth
+    stall_time: float = None          # seconds: stop once no better layout has turned up for this long
+    restarts: bool = False            # the improvement loop also starts afresh now and then (Effort: Best)
 
     def __post_init__(self):
         if self.vlo is None or self.vhi is None:

@@ -623,6 +623,19 @@ lattices (`_pattern_run`), lattices first only for <= 3 kinds
 (`LATTICE_FIRST_GROUPS`), a lattice run stops seeding when time is up.
 Not solved: nesting open containers inside each other (one-offs).
 `docs/TALLY.md` started (asked / assumed / not asked / later).
+**1.4.2 (2026-10-21)**: Effort (Quick / Standard / Best; `Settings.stall_time`,
+`restarts`; operator `packing.effort_settings`; props `pack_effort`,
+`pack_best_hours`, `pack_stall_minutes`; CLI `--effort --stall`) and the
+owner's flat-face rules (`pack/quality.py`; `Job._flat_cost` added to the
+score's last element, `Job._wall_turns` adds 45 degree turns for parts with
+wall faces; Build Report rows "Flat Faces Close" / "by Walls" via
+`report._warm` / `_final`). Interlocking topology filter and "Build OK*"
+written into AUTOPACK §12 (not built). Pins: printer- and
+technology-dependent rules, the two customer profiles for Stage 5.
+`docs/PROMPT_STATS.md` (collaboration log; the owner's ai-context repo
+has `tools/prompt_stats.py`, PR #1 there). The owner's ai-context
+WORKING_STYLE prefers AGENTS.md and docs/DECISIONS.md; this repo has not
+been moved to that layout yet (its `prompts/setup-repo-docs.md` does it).
 Not done in Stage 3: the commercial packer
 comparison (needs the owner's baselines), compaction that makes room for
 parts left out (now it only tidies the final layout), a lattice / pattern

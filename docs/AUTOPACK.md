@@ -244,7 +244,29 @@ Soft goals are folded into one **score** that solvers minimise:
 * layer-density penalty (§6.2);
 * orientation penalties: large up-facing flat areas (meniscus), cosmetic
   faces (later);
-* optional: compactness (contact with neighbours), which helps later parts.
+* optional: compactness (contact with neighbours), which helps later parts;
+* **flat-face rules** (the owner, 2026-10-21; built in 1.4.2,
+  `pack/quality.py`): large flat faces of two parts parallel and close to
+  each other invite defects ("elephant skin"), and so do large flat faces
+  parallel to the side walls; avoided unless necessary. A face counts from
+  2500 mm^2, 50 x 50 mm (triangles grouped by normal within about 3 degrees and plane
+  within 0.5 mm); a facing pair counts while the second face is less than
+  10 mm in front of the first, by the overlap of their rectangles weighted
+  by closeness (`flat_pair_weight`, 0.001 mm of height per mm^2); a wall
+  face by its area when its normal is within 10 degrees of x or y
+  (`flat_wall_weight`, 0.0004). Parts with wall faces also get their two
+  flattest orientations turned 45 degrees about z to choose from. Greedy
+  adds a pose's wall faces to its score and moves a part it has just
+  placed sideways, away from a big face it would face closely, if there
+  is room (`Job._nudge`: before smaller parts fill the space); the
+  improvement loop weighs both rules against height; at the end, pairs
+  still facing closely are moved apart where there is room, upwards only
+  when the score says the extra height is worth it (`Job._separate`), and
+  the compaction leaves those parts alone. The Build Report counts both.
+  Huge-and-tiny: two 150 mm housings 3 mm apart with a 300 mm plate 3 mm
+  above them (157 mm) became housings 10 mm apart and the plate 10 mm
+  above (164 mm). Not yet: faces parallel to the floor (not asked), and
+  per-printer rules (§12).
 
 Tiers are lexicographic: no number of tier 2 parts outweighs one tier 1 part.
 Within a tier the score is a weighted sum. A "soft" limit becomes a penalty
@@ -619,6 +641,17 @@ and the referee. They are listed in the solver dropdown; `auto` picks one
 > loop did not find it in 5 minutes. A "nest the containers" move (try
 > each open part inside each larger one first) would.
 >
+> **Effort** (1.4.2, the owner asked 2026-10-21 whether a fast / optimal
+> switch is needed): one progressive packer, and an Effort choice.
+> Quick: the first layout and at most 10 s more. Standard: the Time given.
+> Best: until no better layout has turned up for Give Up After (10 min by
+> default), at most the Time Limit (2 h by default); the improvement loop
+> then also starts afresh now and then (every part again in a shuffled
+> order, orientations drawn from the good ones), so it does not only polish
+> one start. The best layout so far is always kept and shown, so any run
+> can be stopped. `Settings.stall_time`, `restarts`; CLI `--effort`,
+> `--stall`.
+>
 > **Lattices first** (1.4.0): when parts with 20 copies or more, and
 > families, are nine tenths of the copies, their lattice probes (with at
 > most 12 turned ones, within a quarter of the time) and a lattice layout
@@ -861,7 +894,24 @@ minimal exporter in `pack/meshio.py` is decided at Stage 5.
 * The "3D Printing" application template (File > New).
 * A hollowing add-on (separate from this one); halos already account for
   thin walls.
-* Interlocking check (§8.9).
+* Interlocking check (§8.9). The owner (2026-10-21): "Build OK" may show an
+  asterisk while interlocks are still being checked. Cheap topological
+  filters, in order: hulls apart, free; neither part has a through-hole
+  (genus 0, from the Euler characteristic of the mesh or of its voxels),
+  only hooking is possible; both have holes, an exact linking test of
+  their hole loops (linked rings can never come apart); otherwise (an O on
+  the shaft of an I) the sliding test. The packer can also avoid threading
+  outright: no part placed through a ring's hole.
+* **Print technologies and printers** (the owner, 2026-10-21): this packer is
+  for MJF buckets, but other technologies will follow, and the 580 and the
+  5600 differ in details. Rules and parts of the algorithm (density limit,
+  flat-face rules, wall gaps, layer spread, interlocking) should come from
+  the printer profile and be switched on or off with it.
+* **Several printers at once** (Stage 5, with the owner's two profiles): a
+  service bureau sorts 1000 random parts into 4 printers every day and wants
+  it quick, spread evenly rather than 3.5 buckets; a medical device maker
+  prints the same bucket for weeks and wants 1 bucket rather than 1.5,
+  however long it takes (Effort Best, saved layouts reused).
 * Colour (texture) labels for colour printers.
 * A GPU path inside Blender (bundled), depending on Stage 2.
 

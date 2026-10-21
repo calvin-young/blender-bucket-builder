@@ -510,7 +510,12 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
                              "bucket_builder_pack_part", rows=3, maxrows=6)
         col = _split(layout)
         col.prop(st, "pack_preset")
-        col.prop(st, "pack_time")
+        col.prop(st, "pack_effort")
+        if st.pack_effort == 'STANDARD':
+            col.prop(st, "pack_time")
+        elif st.pack_effort == 'BEST':
+            col.prop(st, "pack_best_hours")
+            col.prop(st, "pack_stall_minutes")
         col.prop(st, "pack_mode")
         sub = col.column(align=True)
         sub.active = st.pack_mode == 'Z' or any(o.bucket_builder_pack_mode == 'Z' for o in sel)

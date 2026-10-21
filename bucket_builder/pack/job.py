@@ -52,9 +52,11 @@ class Layout:
     improvement loop takes it out (and then it is placed again like any
     other).  `pin_of(q)` gives its (grid, cell, profile, volume, top)."""
 
-    def __init__(self, g, locked=(), pin_of=None):
+    def __init__(self, g, locked=(), pin_of=None, faces_of=None):
         self.g = g
         self.bucket = g.new_bucket(locked)
+        self.faces_of = faces_of     # (part, orientation) -> large flat faces or None (Job._faces)
+        self.bucket.flat = {}        # (part, copy) -> (faces, translation), for Job._nudge
         self.base_height = self.bucket.height
         self.recs = {}               # (part, copy) -> (orientation, cell offset) or ('pin', cell)
         self.tops = {}
@@ -72,10 +74,15 @@ class Layout:
         self.tops[(i, c)] = self.g._top(self.bucket, p, b)
         self.g.put(self.bucket, i, k, b)
         self.recs[(i, c)] = (k, b)
+        if self.faces_of is not None:
+            f = self.faces_of(i, k)
+            if f is not None:
+                self.bucket.flat[(i, c)] = (f, self.bucket.translation(p.grid, b))
 
     def remove(self, i, c):
         k, b = self.recs.pop((i, c))
         self.tops.pop((i, c))
+        self.bucket.flat.pop((i, c), None)
         if k == 'pin':
             g, cell, prof, vol, top = self.pin_of((i, c))
             self.bucket.remove(g, cell, prof, vol)
@@ -118,6 +125,9 @@ class Job:
         if self.workers > 1 and threads is None:
             threads = max(1, min(4, (os.cpu_count() or 1) - self.workers))
         self.g = Greedy(parts, settings, threads)
+        if settings.flat_rules:
+            self.g.pose_penalty = self._pose_penalty
+            self.g.nudge = self._nudge
         # The density limit, met at the end: pack as low as the parts go,
         # then lift them, evenly, until the build is as high as the limit
         # wants (lifting a few parts during packing, as greedy does, gives
@@ -158,6 +168,10 @@ class Job:
         self.start = start          # {(part, copy): 4 x 4 in mm}: a layout to improve instead of a new one
         self._pins = {}
         self._extra = {}            # part -> orientations added by the turned probes (beyond the mode's)
+        self._face_cache = {}       # (part, orientation) -> pack.quality.Faces or None
+        self._has_faces = None
+        self.flat = None            # (facing pairs, area, wall faces, area) of the best layout, at the end
+        self._apart = set()         # (part, copy) moved apart by _separate: the compaction leaves them
         self._lattices = {}         # (part, orientation) -> pack.pattern.Lattice or None
         self._pats = {}             # group of parts -> [_Pattern] (job._group_patterns)
         self._seeded = {}           # group -> the kind of lattice its last seeding used
@@ -173,6 +187,7 @@ class Job:
         self.final = None           # {(part, copy): 4 x 4}: the best layout after exact compaction
         self.final_height = None
         self._reserve = 0.0         # seconds kept for compaction at the end
+        self._last_better = 0.0     # when the best layout last got better (for Settings.stall_time)
         self.max_iterations = max_iterations        # (of ruin and recreate: for tests, which want the same answer)
 
     # ------------------------------------------------------------ driving
@@ -233,7 +248,11 @@ class Job:
             return False
         keep = self._reserve if keep is None else keep
         now = time.perf_counter()
-        return self._elapsed + (now - self._t if self._t else 0.0) >= self.budget - keep
+        el = self._elapsed + (now - self._t if self._t else 0.0)
+        if self.s.stall_time and self.best is not None and self.phase == 'improving' and \
+                el - self._last_better >= self.s.stall_time:
+            return True                     # (nothing better for a while: Effort Best stops here)
+        return el >= self.budget - keep
 
     # ------------------------------------------------------------ scoring
     def _left(self, recs):
@@ -254,7 +273,146 @@ class Job:
     def key(self, lay):
         b = lay.bucket
         h = max(b.height, self._cap_height(b.volume))       # (lower is not better: it will be lifted)
-        return S.key(self._left(lay.recs), b.volume, h, b.profile, self.s, self.preset)
+        k = S.key(self._left(lay.recs), b.volume, h, b.profile, self.s, self.preset)
+        q = self._flat_cost(lay)
+        return k[:-1] + (k[-1] + q,) if q else k
+
+    # ------------------------------------------------------------ print quality
+    def _faces(self, i, k):
+        """Large flat faces of part i in orientation k (pack.quality), or None."""
+        key = (i, k)
+        if key not in self._face_cache:
+            from . import quality
+            part = self.parts[i]
+            A = np.asarray(self.g.orients(i)[k], float)
+            f = None
+            if k != 0:
+                f0 = self._faces(i, 0)
+                R = A @ np.linalg.inv(np.asarray(self.g.orients(i)[0], float))
+                if np.abs(R @ R.T - np.eye(3)).max() < 1e-9:
+                    # a turn of orientation 0: its faces turned (planes through the
+                    # origin keep their offsets, rectangles their extents)
+                    self._face_cache[key] = None if f0 is None else quality.turned(f0, R)
+                    return self._face_cache[key]
+            f = quality.flat_faces(part.mesh.verts, part.mesh.tris, A)
+            self._face_cache[key] = f if len(f) else None
+        return self._face_cache[key]
+
+    def flat_report(self, lay, pairs_out=None, who=None):
+        """(facing pairs, facing area, wall faces, wall area) of lay.  With
+        pairs_out (see quality.assess) and who, a list that gets the (part,
+        copy) of each id."""
+        from . import quality
+        placed = []
+        for (i, c), r in sorted(lay.recs.items()):
+            if r[0] == 'pin':
+                continue
+            k, cell = r
+            f = self._faces(i, k)
+            if f is not None:
+                if who is not None:
+                    who.append((i, c))
+                placed.append((len(placed), f, lay.bucket.translation(self.g.pose(i, k).grid, cell)))
+        return quality.assess(placed, pairs_out=pairs_out)
+
+    def _separate(self):
+        """Large flat faces left facing each other closely: move one of the
+        two parts straight away from the other, on the grid, as far as the
+        rule wants (if there is room and the build gets no higher), and keep
+        it there (the compaction leaves it alone).  A generator."""
+        from . import quality
+        lay = self.cur
+        lay.restore(self.best)
+        b = lay.bucket
+        h = b.h
+        H = b.height
+        moved = 0
+        for rnd in range(3):
+            pairs, who = [], []
+            self.flat_report(lay, pairs, who)
+            if not pairs:
+                break
+            progress = False
+            for pa, pb, n, s, area in sorted(pairs, key=lambda t: -t[4]):
+                ax = int(np.argmax(np.abs(n)))
+                if abs(n[ax]) < 0.99:
+                    continue                    # (only faces along an axis: the grid moves along axes)
+                want = int(np.ceil((quality.NEAR - s) / h - 1e-9))
+                if want <= 0:
+                    continue
+                sign = 1 if n[ax] > 0 else -1     # (the second part is in front of the first along n)
+                for q, sg in ((who[pb], sign), (who[pa], -sign)):
+                    if q in self._apart:
+                        continue
+                    i, c = q
+                    k, cell = lay.remove(i, c)
+                    p = self.g.pose(i, k)
+                    room = b.slide(p.grid, cell, ax, want, sign=sg)
+                    new = list(cell)
+                    new[ax] += sg * room
+                    ok = room >= want and b.in_range(p.grid, new)
+                    lay.add(i, c, k, tuple(new) if ok else cell)
+                    if ok and ax == 2 and self.g._top(b, p, new) > H + 1e-9:
+                        # (higher than the build: only if the score says it is worth it)
+                        k_new = self.key(lay)
+                        lay.remove(i, c)
+                        lay.add(i, c, k, cell)
+                        if not k_new < self.key(lay):
+                            ok = False
+                        else:
+                            lay.remove(i, c)
+                            lay.add(i, c, k, tuple(new))
+                    if ok:
+                        self._apart.update((who[pa], who[pb]))      # (neither may close the gap again)
+                        moved += 1
+                        progress = True
+                        break
+                yield
+            if not progress:
+                break
+        if moved:
+            self.best = dict(lay.recs)
+            self.best_key = self.key(lay)
+            self.final = self.final_height = None
+            self.version += 1
+            self.log.append('%6.1f s  flat faces %d parts moved apart' % (self.elapsed, moved))
+
+    def _flat_cost(self, lay):
+        """The flat-face rules' part of the score, in mm of height."""
+        if not self.s.flat_rules or not self._any_faces():
+            return 0.0
+        pairs, a_pair, walls, a_wall = self.flat_report(lay)
+        return self.s.flat_pair_weight * a_pair + self.s.flat_wall_weight * a_wall
+
+    def _any_faces(self):
+        if self._has_faces is None:
+            self._has_faces = any(self._faces(i, 0) is not None for i in range(len(self.parts)))
+        return self._has_faces
+
+    def _wall_turns(self):
+        """Parts with large flat faces that turn: their flattest orientations
+        also turned 45 degrees about the vertical, so that the packer can
+        keep those faces off the side walls (it weighs that against
+        height)."""
+        if not self.s.flat_rules or not self._any_faces():
+            return
+        from . import quality
+        for i, part in enumerate(self.parts):
+            if part.mode not in ('free', 'z') or i in self._too_large:
+                continue
+            ks = sorted(range(len(self.g.orients(i))), key=lambda k: (self._z_extent(i, k), k))[:2]
+            extra = list(self._extra.get(i, []))
+            n0 = len(extra)
+            for k in ks:
+                f = self._faces(i, k)
+                if f is None:
+                    continue
+                wall = (abs(f.n[:, 0]) > quality.WALL_COS) | (abs(f.n[:, 1]) > quality.WALL_COS)
+                if wall.any():
+                    extra.append(_axis_rot(2, 45.0) @ np.asarray(self.g.orients(i)[k], float))
+            if len(extra) > n0:
+                self._extra[i] = extra
+                self.g.add_orientations(i, extra)
 
     def _meets_cap(self, b):
         """Whether bucket b is within the density limit as it is, over the
@@ -272,6 +430,8 @@ class Job:
             return
         b = lay.bucket
         k = S.key(self._left(lay.recs), b.volume, b.height, b.profile, self.s, self.preset)
+        q = self._flat_cost(lay)
+        k = k[:-1] + (k[-1] + q,) if q else k
         if self.best_ok_key is None or k < self.best_ok_key:
             self.best_ok_key, self.best_ok, self.best_ok_choice = k, dict(lay.recs), dict(choice or {})
 
@@ -287,6 +447,7 @@ class Job:
             if choice is not None:
                 self.best_choice = dict(choice)
             self.version += 1
+            self._last_better = self.elapsed
             self.log.append('%6.1f s  %-10s height %.1f mm, %d left out%s'
                             % (self.elapsed, label, lay.bucket.height, sum(self._left(lay.recs).values()),
                                '' if old is None else ' (better)'))
@@ -910,7 +1071,53 @@ class Job:
         return float(z.max() - z.min())
 
     def _fresh(self):
-        return Layout(self.g, self.locked, self.pin)
+        return Layout(self.g, self.locked, self.pin, self._faces if self.s.flat_rules else None)
+
+    def _pose_penalty(self, i, k):
+        """Greedy's extra score for part i in orientation k: its large flat
+        faces parallel to a side wall."""
+        from . import quality
+        f = self._faces(i, k)
+        if f is None:
+            return 0.0
+        wall = (np.abs(f.n[:, 0]) > quality.WALL_COS) | (np.abs(f.n[:, 1]) > quality.WALL_COS)
+        return self.s.flat_wall_weight * float(f.area[wall].sum())
+
+    def _nudge(self, bucket, i, k, cell):
+        """Greedy's choice for part i moved sideways away from large flat
+        faces it would face closely, if there is room (a part placed next
+        to a big flat neighbour gets the distance the rule wants before
+        smaller parts fill the space)."""
+        from . import quality
+        f = self._faces(i, k)
+        if f is None or not getattr(bucket, 'flat', None):
+            return cell
+        p = self.g.pose(i, k)
+        cell = list(int(x) for x in cell)
+        for _ in range(2):
+            t = bucket.translation(p.grid, cell)
+            placed = [(0, f, t)] + [(n + 1, ff, tt) for n, (ff, tt) in enumerate(bucket.flat.values())]
+            pairs = []
+            quality.assess(placed, pairs_out=pairs)
+            moved = False
+            for pa, pb, n, s, area in sorted(pairs, key=lambda t: -t[4]):
+                if 0 not in (pa, pb):
+                    continue
+                ax = int(np.argmax(np.abs(n)))
+                if ax == 2 or abs(n[ax]) < 0.99:
+                    continue                    # (sideways only: lifting would raise the build)
+                want = int(np.ceil((quality.NEAR - s) / bucket.h - 1e-9))
+                sign = (1 if n[ax] > 0 else -1) * (1 if pb == 0 else -1)
+                room = bucket.slide(p.grid, cell, ax, want, sign=sign)
+                new = list(cell)
+                new[ax] += sign * room
+                if room >= want and bucket.in_range(p.grid, new):
+                    cell = new
+                    moved = True
+                    break
+            if not moved:
+                break
+        return tuple(cell)
 
     def pin(self, q):
         """(grid, cell, profile, volume, top) of part copy q exactly where
@@ -978,6 +1185,7 @@ class Job:
         t_first = time.perf_counter()
         self.cur = self._fresh()
         self._lb = self.lower_bound()
+        self._wall_turns()
         if self.start:
             left = self._load(self.cur, self.start)
             self.log.append('%6.1f s  start      %d parts kept where they are, %d to place'
@@ -1133,6 +1341,20 @@ class Job:
                 cur_key = self.best_key
                 choice = dict(self.best_choice)
                 rejects = 0
+                if self.s.restarts and self.rng.random() < 0.5:
+                    # start afresh: every part again, in a shuffled order and with
+                    # orientations drawn from the good ones, then improve from
+                    # there (the best layout is kept whatever happens)
+                    trial = {i: self.rng.choice(opts[i]) for i in opts}
+                    trial = {i: v for i, v in trial.items() if v}
+                    for q in list(lay.recs):
+                        if lay.recs[q][0] != 'pin':
+                            lay.remove(*q)
+                    yield from self._build(lay, self._shuffle(self.copies), trial, timed=True)
+                    yield from self._settle(lay)
+                    self._consider(lay, 'restart', trial)
+                    cur_key = self.key(lay)
+                    choice = trial
             yield
         lay.restore(self.best)
         self.cur = lay
@@ -1286,6 +1508,14 @@ class Job:
         exact gaps (a generator)."""
         if self.best is not None and not self.cancel and self.cur is not None:
             yield from self._spread()
+            if self.s.flat_rules and self._any_faces():
+                yield from self._separate()
+                lay = self.cur
+                lay.restore(self.best)
+                pairs, a_pair, walls, a_wall = self.flat_report(lay)
+                self.flat = (pairs, a_pair, walls, a_wall)
+                self.log.append('%6.1f s  flat faces %d pairs close together (%.0f mm2), %d parallel to a wall '
+                                '(%.0f mm2)' % (self.elapsed, pairs, a_pair, walls, a_wall))
         yield from self._compact_phase()
 
     def _spread(self):
@@ -1402,6 +1632,8 @@ class Job:
         for rnd in range(2):
             moved = 0.0
             for j in order:
+                if qs[j] in self._apart:
+                    continue                    # (moved apart on purpose: its faces were too close)
                 for ax in ((1, 0) if self.s.spread_z else (2, 1, 0)):     # (not down again after spreading)
                     if self._time_up(0.0):
                         break
@@ -1455,6 +1687,7 @@ class Job:
         inflight = {}
         self.cur = self._fresh()
         self._lb = self.lower_bound()
+        self._wall_turns()
         self._lattice_skip = set(self._lattice_parts())
         lattice_first = self._lattice_wanted
         # what the probes will be: each part with copies, tallest orientations first
@@ -1619,6 +1852,7 @@ class Job:
         self.final = self.final_height = None
         self.best_choice = dict(choice or {})
         self.version += 1
+        self._last_better = self.elapsed
         self.log.append('%6.1f s  %-10s height %.1f mm, %d left out%s'
                         % (self.elapsed, label, self._best_height(), sum(self._left(recs).values()),
                            '' if old is None else ' (better)'))

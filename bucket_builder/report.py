@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-from .pack import metrics, plot
+from .pack import metrics, plot, quality
 
 BAND = 1.0                  # mm, layer band of the profile
 SMOOTH = 5.0                # mm, window of the spread
@@ -45,6 +45,7 @@ def kind_was_final(rep):
 class BuildReport:
     def __init__(self):
         self.cache = {}
+        self.faces = {}               # (mesh key, linear part) -> pack.quality.Faces or None
         self.result = None            # metrics.Report, in mm
         self.result_sig = None
         self.incomplete = False       # parts were still being read when it was made
@@ -184,6 +185,7 @@ class BuildReport:
             return
         if len(self.cache) > CACHE_LIMIT:
             self.cache.clear()
+            self.faces.clear()
         nb = metrics.n_bands(vlo, vhi, BAND)
         miss, seen = [], set()
         for i, (name, m, M) in enumerate(parts):
@@ -215,12 +217,10 @@ class BuildReport:
                 total += m.nt
                 batch += [parts[i] for i in idx]
             self.kind = 'warm'
-            self.future = self._ex.submit(metrics.measure_parts, batch, vlo, vhi, BAND, None, True,
-                                          self.workers, self.cache)
+            self.future = self._ex.submit(_warm, batch, vlo, vhi, self.workers, self.cache, self.faces)
         else:
             self.kind = 'final'
-            self.future = self._ex.submit(metrics.measure, parts, vlo, vhi, BAND, SMOOTH,
-                                          self.workers, self.cache)
+            self.future = self._ex.submit(_final, parts, vlo, vhi, self.workers, self.cache, self.faces)
 
     def wait(self, mon, st, timeout=300.0):
         """Block until the report matches the build (for tests and scripts)."""
@@ -232,6 +232,35 @@ class BuildReport:
                 return True
             time.sleep(0.01)
         return False
+
+
+def _face_key(m, M):
+    return (m.key, np.asarray(M, float)[:3, :3].tobytes())
+
+
+def _warm(batch, vlo, vhi, workers, cache, faces):
+    """A batch of meshes read for the first time: their volume per layer,
+    and their large flat faces (worker thread)."""
+    out = metrics.measure_parts(batch, vlo, vhi, BAND, None, True, workers, cache)
+    for name, m, M in batch:
+        k = _face_key(m, M)
+        if k not in faces and m.verts is not None:
+            f = quality.flat_faces(m.verts, m.tris, np.asarray(M, float)[:3, :3])
+            faces[k] = f if len(f) else None
+    return out
+
+
+def _final(parts, vlo, vhi, workers, cache, faces):
+    """The report of the whole build (worker thread), with the flat-face
+    rules' counts for the parts whose faces are known."""
+    res = metrics.measure(parts, vlo, vhi, BAND, SMOOTH, workers, cache)
+    placed = []
+    for n, (name, m, M) in enumerate(parts):
+        f = faces.get(_face_key(m, M))
+        if f is not None:
+            placed.append((n, f, np.asarray(M, float)[:3, 3]))
+    res.flat = quality.assess(placed) if placed else (0, 0.0, 0, 0.0)
+    return res
 
 
 def rows(rep):
@@ -256,4 +285,10 @@ def rows(rep):
         out.append(('Peak Layer', '%.1f %%' % (rep.peak_layer * 100.0), ''))
         if rep.spread_cv is not None:
             out.append(('Layer Spread', '%.2f' % rep.spread_cv, ''))
+    flat = getattr(rep, 'flat', None)
+    if flat is not None and (flat[0] or flat[2]):
+        if flat[0]:
+            out.append(('Flat Faces Close', '%d pair%s' % (flat[0], '' if flat[0] == 1 else 's'), 'warn'))
+        if flat[2]:
+            out.append(('Flat Faces by Walls', '%d' % flat[2], ''))
     return out

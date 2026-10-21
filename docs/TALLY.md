@@ -39,6 +39,17 @@ the sessions before; earlier items are summaries.
   off; only in the background after every other check has passed, never
   slowing anything; a pair found to interlock remembered as able to.
   Design in AUTOPACK §8.9, not built.
+* Interlocking, more (2026-10-21): a topological filter (rings that link
+  against an O on an I); "Build OK*" with an asterisk while checking.
+* Large flat faces close together or parallel to the walls avoided unless
+  necessary (elephant skin; 2026-10-21): built as soft rules (1.4.2).
+* Fast against thorough (2026-10-21): left to Claude's judgment; built as
+  one progressive packer with an Effort choice (Quick / Standard / Best)
+  and a time cap (1.4.2).
+* Pin (2026-10-21): other print technologies later, and differences between
+  printers (580, 5600): rules switched on and off by the printer profile.
+* Prompt statistics in each project (2026-10-21): `docs/PROMPT_STATS.md`;
+  use the ai-context repo in this thread.
 * The "3D Printing" application template: "take a crack at it". Not started.
 * 3MF export: "the next project". Not started here.
 
@@ -68,6 +79,14 @@ the sessions before; earlier items are summaries.
   holding back "Build OK"; the packer takes interlocked pairs apart itself
   instead of asking.
 * Up to 8 helper processes for packing.
+* Effort: Quick is 10 s of improving; Best gives up after 10 minutes without
+  a better layout and stops at 2 hours at most; Best also restarts from
+  scratch now and then.
+* Flat-face rules: faces from 2500 mm^2 (50 x 50 mm; 1500 made a bucket of
+  40 mm blocks 10 mm higher), pairs closer than 10 mm, wall faces
+  within 10 degrees of x or y; their weights against height (a 50 x 50 mm
+  facing pair at contact is worth 2.5 mm, a 150 x 150 mm wall face 9 mm);
+  a 45 degree turn about z offered to parts with wall faces.
 
 ## Not asked yet
 
@@ -77,6 +96,10 @@ the sessions before; earlier items are summaries.
 * Whether customers' parts need arbitrary angles of rotation.
 * Whether a family should be split when its members differ a lot (spacing
   by the largest member costs height).
+* Whether large flat faces parallel to the floor matter too (only walls
+  and facing pairs were mentioned).
+* Whether public project repos should show the prompt statistics, or only
+  private ones.
 * How nested parts that are too dense in one layer should be handled
   (his idea: re-nest them farther apart; he asked to review first).
 * GPU for the packer: waits for his timing table.

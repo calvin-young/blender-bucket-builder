@@ -218,6 +218,11 @@ operator asks first of a build:
   the picture shows the density of every layer with the floor at the bottom,
   and the spread is how much that varies (over a 5 mm window; 0 is perfectly
   even).
+* **Flat Faces Close** and **Flat Faces by Walls**: large flat faces (from
+  50 x 50 mm) of two parts facing each other less than 10 mm apart,
+  and large flat faces parallel to a side wall. Both invite surface defects
+  in MJF builds, so the packer avoids them where it can; the rows appear
+  only when there are any.
 * Warnings for meshes that are not closed (their volume cannot be trusted)
   and for parts that are inside out.
 
@@ -242,7 +247,7 @@ working, and the badge at the top of the viewport says how far it is.
 
 1. **The first layout** fills the volume part by part, largest first, each
    one as low as it goes. You watch the parts fly in.
-2. **Improving**: for the rest of the **Time** you set, the packer looks for
+2. **Improving**: for as long as the **Effort** allows, the packer looks for
    better layouts, and the parts move whenever it finds one. It packs the
    copies of each part on their own, one orientation at a time, to find the
    ways they pack best together (81 keycaps standing on edge fit in one layer
@@ -258,7 +263,8 @@ working, and the badge at the top of the viewport says how far it is.
    family when they turn freely: they are turned alike and patterned
    together, spaced as the largest of them needs. When such parts are
    most of the build, the patterns come first and the build is ready
-   sooner. It stops sooner when the build cannot
+   sooner. Large flat faces are kept apart from each other and off the side
+   walls where that costs little height (they invite surface defects). It stops sooner when the build cannot
    get any lower.
 3. **Even layers**: parts are lifted, straight up and never above the top of
    the build, where that evens out the density from layer to layer: a layer
@@ -279,7 +285,7 @@ row beside the volume, and the panel says why.
 | Setting | What it does |
 | --- | --- |
 | **Goal** | *Big Parts First*: as much as fits, big parts first, so that when not everything fits what is left over is small parts (easier to fit into the next build; and a big part that fails is reprinted sooner); then as low as possible. *Most Parts*: as many parts as fit (small parts first when not all fit, so big ones may be left over). *Lowest Build*: as many parts, then the lowest build, whatever the layers look like. *Even Layers*: as many parts, then the most even density from layer to layer. |
-| **Time** | How long to look for better layouts after the first one (0: the first layout only). |
+| **Effort** | *Quick*: the first layout and a few seconds more, for a day's work that just has to go in. *Standard*: looks for better layouts for the **Time** given (0: the first layout only). *Best*: keeps looking, starting afresh now and then, until nothing better has turned up for **Give Up After** minutes, at most the **Time Limit** in hours: for a build you will print again and again. Every effort keeps the best layout found so far, so you can stop at any time. |
 | **Rotation** | *Fixed*: parts keep their rotation. *About Z*: they turn about the vertical, in steps of **Turn Step**. *Free*: any of the 24 ways a part's main axes can line up with the volume's. A part's own setting (below the settings, for the active part) overrides this. |
 | **Gap**, **Wall Gap** | The distance kept between parts, and from the side walls. |
 | **Max Density** | The packer builds higher rather than exceed this 3D density: it packs as low as the parts go, then lifts them, evenly, until the build is high enough (with Keep Parts Low it lifts only the parts that go in last). If the parts nest so that none can rise on its own, the whole build is raised a little off the floor. |

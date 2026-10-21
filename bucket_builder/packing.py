@@ -53,6 +53,19 @@ def _mesh_arrays(obj, depsgraph):
     return v.reshape(-1, 3).astype(np.float64), t.reshape(-1, 3)
 
 
+def effort_settings(effort, seconds, hours, minutes):
+    """Settings for the Effort choice: Quick, Standard (the Time given) or
+    Best (until nothing better turns up for `minutes`, at most `hours`)."""
+    if effort == 'QUICK':
+        return {'time_budget': min(float(seconds), QUICK_SECONDS)}
+    if effort == 'BEST':
+        return {'time_budget': float(hours) * 3600.0, 'stall_time': float(minutes) * 60.0, 'restarts': True}
+    return {'time_budget': float(seconds)}
+
+
+QUICK_SECONDS = 10.0
+
+
 def pack_mode(o, st):
     """How the packer may turn an object: its own setting, else its mesh's
     (the part list), else the panel's."""
@@ -247,8 +260,8 @@ class BUCKETBUILDER_OT_pack(Operator):
         s = Settings(vlo=vlo, vhi=vhi, gap=st.pack_gap, wall_gap=st.pack_wall_gap,
                      h=st.pack_cell, z_step=st.pack_z_step,
                      max_density=(st.pack_max_density / 100.0) or None,
-                     time_budget=float(st.pack_time), preset=st.pack_preset.lower(),
-                     spread_z=not st.pack_keep_low)
+                     preset=st.pack_preset.lower(), spread_z=not st.pack_keep_low,
+                     **effort_settings(st.pack_effort, st.pack_time, st.pack_best_hours, st.pack_stall_minutes))
         self._settings = s
         self._start = start if self.improve else None
         self._job = J.Job(self._parts, s, lock, start=self._start)

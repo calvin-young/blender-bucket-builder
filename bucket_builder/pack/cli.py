@@ -23,6 +23,14 @@ import numpy as np
 from . import meshio, metrics, printers
 
 
+def _effort(args):
+    if args.effort == 'quick':
+        return {'time_budget': min(args.time, 10.0)}
+    if args.effort == 'best':
+        return {'time_budget': args.time, 'stall_time': args.stall * 60.0, 'restarts': True}
+    return {'time_budget': args.time}
+
+
 def build_parser():
     ap = argparse.ArgumentParser(prog='pack', description=__doc__.split('\n')[0])
     sub = ap.add_subparsers(dest='cmd', required=True)
@@ -68,6 +76,10 @@ def build_parser():
     k.add_argument('--seed', type=int, default=0, help='of the improvement loop (0)')
     k.add_argument('--workers', type=int, default=None, help='processes (default: up to 8, two cores left)')
     k.add_argument('--no-compact', action='store_true', help='skip the final move to the exact gaps')
+    k.add_argument('--effort', choices=('quick', 'standard', 'best'), default='standard',
+                   help='quick: --time at most 10 s; best: until nothing better for --stall minutes '
+                        '(default 10), at most --time')
+    k.add_argument('--stall', type=float, default=10.0, help='minutes, with --effort best')
     k.add_argument('--keep-low', action='store_true',
                    help='leave parts as low as they go, even if the layers end up uneven')
     k.add_argument('--referee', action='store_true', help='check the result with the exact engine')
@@ -100,7 +112,8 @@ def pack_one(args, out):
     parts = parts_of(scene, args.mode, args.copies)
     s = Settings(vlo=vlo, vhi=vhi, gap=args.gap, wall_gap=args.wall_gap, h=args.cell,
                  z_step=args.z_step, max_density=(args.max_density / 100.0) or None,
-                 time_budget=args.time, preset=args.goal, seed=args.seed, compact=not args.no_compact, spread_z=not args.keep_low)
+                 preset=args.goal, seed=args.seed, compact=not args.no_compact, spread_z=not args.keep_low,
+                 **_effort(args))
     t_read = time.perf_counter() - t0
     first = []
 

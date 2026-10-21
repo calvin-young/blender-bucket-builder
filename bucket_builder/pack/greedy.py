@@ -29,7 +29,7 @@ CLOUD_MAX_CELLS = 300_000_000  # local cells: beyond this the cloud's grid is to
 
 class _Pose:
     """A part in one orientation, ready to place."""
-    __slots__ = ('A', 'grid', 'profile', 'volume', 'z_lo', 'z_hi', 'key', 'same_as')
+    __slots__ = ('A', 'grid', 'profile', 'volume', 'z_lo', 'z_hi', 'key', 'same_as', 'penalty')
 
 
 def _open(mesh):
@@ -49,6 +49,8 @@ class Greedy:
         self._clouds = {}
         self._soups = {}
         self._turn_base = {}        # part -> (orientation, grid) its quarter turns are made from
+        self.pose_penalty = None    # (part, orientation) -> mm added to every score of that pose
+        self.nudge = None           # (bucket, part, orientation, cell) -> cell: a last move of the choice
         self._extent = {}
         self.progress = (0, 0)
         self.cancel = False
@@ -150,6 +152,7 @@ class Greedy:
             p.z_lo = float(z.min()) - g.origin[2]
             p.z_hi = float(z.max()) - g.origin[2]
         p.key = ('pose', id(self), i, k)
+        p.penalty = float(self.pose_penalty(i, k)) if self.pose_penalty is not None else 0.0
         # an orientation whose grids are those of an earlier one (a symmetric
         # part turned onto itself) is not searched again
         p.same_as = None
@@ -342,7 +345,7 @@ class Greedy:
                         continue
                     cand = lifted
                 cand = self._refine(bucket, p, cand, need)
-                sc = self._score(bucket, p, cand)
+                sc = self._score(bucket, p, cand) + p.penalty
                 if best is None or sc < best[0]:
                     best = (sc, cand)
         return best
@@ -403,6 +406,8 @@ class Greedy:
             r = self._best_for_pose(bucket, p, need, co, None if best is None else best[0])
             if r is not None and (best is None or r[0] < best[0]):
                 best = (r[0], k, r[1])
+        if best is not None and self.nudge is not None:
+            best = (best[0], best[1], self.nudge(bucket, i, best[1], best[2]))
         return best, why
 
     def put(self, bucket, i, k, b):
