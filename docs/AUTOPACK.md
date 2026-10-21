@@ -15,8 +15,8 @@ stays releasable.
 
 Automatic part packing ("nesting") for powder-bed printers, HP Multi Jet
 Fusion first, inside the Bucket Builder add-on, and the same engine without
-Blender for a costing tool. Today the owner uses Netfabb's Monte Carlo packer
-and his colleagues use Magics. The aim is not only a denser packer, but one
+Blender for a costing tool. Today the owner uses a commercial Monte Carlo packer
+and his colleagues use another commercial tool. The aim is not only a denser packer, but one
 that understands what an MJF operator is trying to do:
 
 * put as many parts as possible into a bucket while respecting constraints;
@@ -72,13 +72,13 @@ Recorded as he stated them; defaults he named are in **bold**.
   full of insoles): **allowed**. Interlocking is rare: a **placeholder
   checkbox**, implemented only if easy.
 * Copies: "here are 20 pringles" (20 parts, maybe slightly different) and
-  "here is one pringle, I want 20" (an array). Netfabb's array is a grid from
+  "here is one pringle, I want 20" (an array). The array tool he uses today is a grid from
   a centre-to-centre distance; ours should find nested arrangements.
 * Serial labels: embossed (or, later, colour), **overlapping the part by about
   0.5 mm**, not face to face (HP's zonal scaling can separate parts that only
   touch). Two modes: kept as separate overlapping objects (preserves
   instancing, small file) or booleaned in at generation. The printer unions
-  overlapping parts itself. His intake tools (Magics, SmartStream, the API)
+  overlapping parts itself. His intake tools (commercial print-prep software, the printer vendor's job software, the API)
   preserve 3MF instancing; no round-trip test is needed.
 
 **Scale and speed**
@@ -101,11 +101,11 @@ Recorded as he stated them; defaults he named are in **bold**.
 
 **Workflow in Blender**
 
-* Several buckets per file, like Netfabb's workspaces: switch between them,
+* Several buckets per file, like the workspaces of his current tool: switch between them,
   clone one to try another layout and throw it away, delete, ignore, see each
   bucket's status ("C has clearance issues"), export one, selected or all.
   Today he does this by hand with collections. Mixed printer types are rare.
-* Netfabb counts only parts fully inside the volume in its density report,
+* His current tool counts only parts fully inside the volume in its density report,
   without warning. **Warn next to the density whenever a part is partly out
   of bounds.**
 
@@ -285,7 +285,7 @@ workflow, so it comes first.
   mesh, scaled by the object's determinant. Non-closed meshes are reported,
   not guessed.
 * Reported: total part volume, packed height, and **density against the
-  build area times packed height** (the figure the owner uses; Netfabb's
+  build area times packed height** (the figure the owner uses; his current tool's
   full-bucket figure is dropped, §14). The maximum-density limit applies to
   it.
 * Parts partly outside the volume: their volume is counted, and a **warning
@@ -446,7 +446,7 @@ For "one part, make 20" and for groups of identical copies:
 * Fit the lattice to the bucket: try a few orientations and phase offsets of
   the lattice in the volume, keep the arrangement with most copies inside, and
   hand the remaining space to the greedy solver for other parts.
-* Netfabb's array is the special case where the basis is the bounding box
+* The grid array of his current tool is the special case where the basis is the bounding box
   plus the gap; we report both counts so the gain is visible.
 * Exact check: the lattice's few distinct neighbour offsets are checked once
   with the referee (all copies share them).
@@ -552,7 +552,7 @@ when the fast tier is fast; it waits for Stage 2's numbers.
   clone, delete, ignore, export (one, selected, all).
 * **View** shows one bucket and hides the others with the layer collection's
   eye, so they are still evaluated (the monitor already treats hidden parts as
-  present; see `CLAUDE.md`).
+  present; see `AGENTS.md`).
 * **Clone** copies the collection's objects with shared mesh data (linked
   duplicates), so cloning a 600-part bucket costs almost nothing, and the
   engine shares one tree per unique mesh.
@@ -584,7 +584,7 @@ minimal exporter in `pack/meshio.py` is decided at Stage 5.
 ## 11. Labels (Stage 7)
 
 * Text from a pattern (`{job}-{n:04}`) placed on a surface **the user
-  picks** (as in Netfabb's dialog: pick the surface, then size, depth and
+  picks** (as in the dialog of his current tool: pick the surface, then size, depth and
   text), embossed and **embedded 0.5 mm** (parameter) into the part.
   Defaults: **5 mm text height, 0.5 mm emboss**. Engraving is also offered; it
   changes the part's mesh, so that part becomes single-user and loses
@@ -635,7 +635,7 @@ minimal exporter in `pack/meshio.py` is decided at Stage 5.
 
 ## 14. Open questions, as answered by the owner (2026-10-12)
 
-1. **Density reference**: Netfabb reports both full bucket height and max
+1. **Density reference**: his current tool reports both full bucket height and max
    part height; the latter is the useful one, "almost nobody cares about" the
    former. **Decision: report density against build area x packed height
    only.** The 12 % limit applies to it. (§6.1 mentioned both; the full-volume
@@ -664,7 +664,7 @@ minimal exporter in `pack/meshio.py` is decided at Stage 5.
    These are the first calibration points for the halo table (§7): flat
    faces and bulk raise the gap, thin walls and curvature lower it. Shell
    thickness is what takes a cube from 5 to 3 mm and a sphere from 3 to 1 mm.
-5. **Labels**: placement needs user input. In Netfabb a dialog lets the user
+5. **Labels**: placement needs user input. In his current tool a dialog lets the user
    pick a surface, then size, depth and text. **Defaults: 5 mm tall text,
    0.5 mm emboss.** Engraving is also wanted; it changes the mesh, so that
    part becomes single-user and loses instancing (the UI says so).
@@ -679,7 +679,7 @@ table the feature (the packer works with a uniform gap without it).
 ## 15. Stages
 
 Each stage ends with tests, benchmarks where relevant, a commit and push, and
-`CLAUDE.md` / this file updated. The model and effort are recommendations
+`AGENTS.md` / this file updated. The model and effort are recommendations
 for the owner to set before asking for the stage.
 
 | Stage | Work | Done when | Model, effort |
@@ -687,7 +687,7 @@ for the owner to set before asking for the stage.
 | 0 | This spec; benchmark folders | spec reviewed by the owner | Opus 5.5, high |
 | 1 (**done**, 2026-10-13) | `pack/meshio.py` (STL, 3MF), `pack/metrics.py` (volume, layer profile, density, partial-OOB warning), sidebar report and profile plot, `python -m pack report` | exact against analytic shapes (boxes, spheres, tori, rotated) to 1e-9; report on a 60 x 1 M build in seconds | Sonnet 5.5, medium |
 | 2 | Voxel layer (conservative voxelisation, flood fill, dilation), FFT feasibility, coarse to fine, greedy placement; CPU and GPU timing script for the owner | feasible layouts verified by the referee on all synthetic buckets; timing table on the VM and the owner's laptop; a decision on the GPU path | Opus 5.5, high |
-| 3 | `Job` loop, improvement (ruin and recreate), compaction, rotation modes, locks, tiers, density cap, layer penalty; Pack panel and part list | beats or matches the owner's Netfabb baseline on the synthetic set; first result within the targets of §2 | Sonnet 5.5, medium |
+| 3 | `Job` loop, improvement (ruin and recreate), compaction, rotation modes, locks, tiers, density cap, layer penalty; Pack panel and part list | beats or matches the owner's current packer as a baseline on the synthetic set; first result within the targets of §2 | Sonnet 5.5, medium |
 | 4 | Pattern solver (lattices, double lattices) | beats the bounding-box array on pringle, figurine and Suzanne copies | Opus 5.5, high |
 | 5 | Planner (goals, ratios, quantities); Buckets panel; World groups; export all | multi-bucket jobs from the synthetic set; bucket workflow tested in a window | Opus to design, Sonnet to build |
 | 6 | Halos (adaptive, thickness), pair warnings, what-if, solver recommendation | what-if suggestions reproducible across seeds | Sonnet 5.5, medium |
@@ -723,7 +723,7 @@ The VM has 2 cores and no GPU; GPU numbers come from the owner's laptop.
   **5 parts x 20 M triangles**.
 * **Synthetic buckets**: fixed recipes of the shapes (mixed bureau day, all
   pringles, swarm of figurines, socket with insoles, one giant part), each
-  with its settings. Public, so the owner can run Netfabb True Shape and
+  with its settings. Public, so the owner can run his current packer and
   Monte Carlo on them and record density, height and time as a baseline in
   `benchmarks/baselines.csv`.
 * **Private buckets** stay on the owner's machine in `benchmarks/private/`,
