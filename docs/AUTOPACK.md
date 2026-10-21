@@ -72,13 +72,13 @@ Recorded as he stated them; defaults he named are in **bold**.
   full of insoles): **allowed**. Interlocking is rare: a **placeholder
   checkbox**, implemented only if easy.
 * Copies: "here are 20 pringles" (20 parts, maybe slightly different) and
-  "here is one pringle, I want 20" (an array). The array tool he uses today is a grid from
-  a center-to-center distance; ours should find nested arrangements.
-* Serial labels: embossed (or, later, color), **overlapping the part by about
+  "here is one pringle, I want 20" (an array). The commercial packer's array is a grid from
+  a centre-to-centre distance; ours should find nested arrangements.
+* Serial labels: embossed (or, later, colour), **overlapping the part by about
   0.5 mm**, not face to face (HP's zonal scaling can separate parts that only
   touch). Two modes: kept as separate overlapping objects (preserves
   instancing, small file) or booleaned in at generation. The printer unions
-  overlapping parts itself. His intake tools (commercial print-prep software, the printer vendor's job software, the API)
+  overlapping parts itself. His intake tools (commercial print-prep software, the vendor's job software, the API)
   preserve 3MF instancing; no round-trip test is needed.
 
 **Scale and speed**
@@ -95,11 +95,11 @@ Recorded as he stated them; defaults he named are in **bold**.
 
 **Workflow in Blender**
 
-* Several buckets per file, like the workspaces of his current tool: switch between them,
+* Several buckets per file, like the commercial packer's workspaces: switch between them,
   clone one to try another layout and throw it away, delete, ignore, see each
   bucket's status ("C has clearance issues"), export one, selected or all.
   Today he does this by hand with collections. Mixed printer types are rare.
-* His current tool counts only parts fully inside the volume in its density report,
+* The commercial packer counts only parts fully inside the volume in its density report,
   without warning. **Warn next to the density whenever a part is partly out
   of bounds.**
 
@@ -210,7 +210,7 @@ Per **part** (or per group of copies of one mesh):
 
 | Field | Default | Notes |
 |---|---|---|
-| mesh | | vertices, triangles (millimeters); copies share one |
+| mesh | | vertices, triangles (millimetres); copies share one |
 | quantity | 1 | for "make 20 of this" |
 | rotation mode | bucket default | `fixed`, `z`, `free` |
 | locked | false | fixed position and rotation; packed around |
@@ -237,14 +237,36 @@ says which part could not be placed and why.
 * locked parts stay; rotations stay within each part's mode;
 * 3D density at most the maximum (12 %).
 
-Soft goals are folded into one **score** that solvers minimize:
+Soft goals are folded into one **score** that solvers minimise:
 
 * parts placed, by tier (dominant: see below);
 * Z height (packed height);
 * layer-density penalty (§6.2);
 * orientation penalties: large up-facing flat areas (meniscus), cosmetic
   faces (later);
-* optional: compactness (contact with neighbors), which helps later parts.
+* optional: compactness (contact with neighbours), which helps later parts;
+* **flat-face rules** (the owner, 2026-10-21; built in 1.4.2,
+  `pack/quality.py`): large flat faces of two parts parallel and close to
+  each other invite defects ("elephant skin"), and so do large flat faces
+  parallel to the side walls; avoided unless necessary. A face counts from
+  2500 mm^2, 50 x 50 mm (triangles grouped by normal within about 3 degrees and plane
+  within 0.5 mm); a facing pair counts while the second face is less than
+  10 mm in front of the first, by the overlap of their rectangles weighted
+  by closeness (`flat_pair_weight`, 0.001 mm of height per mm^2); a wall
+  face by its area when its normal is within 10 degrees of x or y
+  (`flat_wall_weight`, 0.0004). Parts with wall faces also get their two
+  flattest orientations turned 45 degrees about z to choose from. Greedy
+  adds a pose's wall faces to its score and moves a part it has just
+  placed sideways, away from a big face it would face closely, if there
+  is room (`Job._nudge`: before smaller parts fill the space); the
+  improvement loop weighs both rules against height; at the end, pairs
+  still facing closely are moved apart where there is room, upwards only
+  when the score says the extra height is worth it (`Job._separate`), and
+  the compaction leaves those parts alone. The Build Report counts both.
+  Huge-and-tiny: two 150 mm housings 3 mm apart with a 300 mm plate 3 mm
+  above them (157 mm) became housings 10 mm apart and the plate 10 mm
+  above (164 mm). Not yet: faces parallel to the floor (not asked), and
+  per-printer rules (§12).
 
 Tiers are lexicographic: no number of tier 2 parts outweighs one tier 1 part.
 Within a tier the score is a weighted sum. A "soft" limit becomes a penalty
@@ -279,7 +301,7 @@ workflow, so it comes first.
   mesh, scaled by the object's determinant. Non-closed meshes are reported,
   not guessed.
 * Reported: total part volume, packed height, and **density against the
-  build area times packed height** (the figure the owner uses; his current tool's
+  build area times packed height** (the figure the owner uses; the commercial packer's
   full-bucket figure is dropped, §13). The maximum-density limit applies to
   it.
 * Parts partly outside the volume: their volume is counted, and a **warning
@@ -299,7 +321,7 @@ workflow, so it comes first.
   0.08 mm; a single layer is too fine to matter thermally), configurable.
 * Layer density = band volume / (build area x band thickness).
 * Displayed as a small profile plot (density against Z) in the sidebar, with
-  the cap drawn as a line, and as a colored strip beside the volume in the
+  the cap drawn as a line, and as a coloured strip beside the volume in the
   viewport (later).
 * **Spread penalty**: the profile is smoothed over a window (**5 mm**, the
   owner's choice) and penalised mainly for variation across the packed height
@@ -365,6 +387,22 @@ and the referee. They are listed in the solver dropdown; `auto` picks one
 
 ### 8.1 The voxel layer
 
+> **As built (Stage 2, `pack/voxel.py`, `pack/bucket.py`).** Differences from
+> the plan below: the bucket grid holds the placed parts' *solid* cells, and
+> only the candidate is dilated, by the whole gap g (dilating both sides by
+> g/2 adds the conservative neighbour ring twice). The dilation is by exactly
+> the cell offsets d with h^2 sum max(|d_i| - 1, 0)^2 < g^2, the infimum
+> distance between points of two half-open cells, so no shared cell means a
+> real gap of at least g (checked against brute force). Triangles are cut
+> across their longest edge until no edge exceeds h, then their bounding-box
+> cells are marked; open meshes get a morphological closing before the flood
+> fill. SciPy is optional (Blender does not ship it and PyPI was unreachable,
+> so no wheels are bundled): NumPy paths give identical grids. The coarse
+> grid is rounded up to sizes with factors 2, 3, 5 only (a prime length was
+> 2.5 x slower), and single precision is used only where a bound on the
+> FFT's rounding keeps it far from 0.5. Refinement slides a part a cell at a
+> time checking only the kernel cells that lead in that direction.
+
 * Grid over the bucket at resolution h (default **1 mm**; finer levels for
   refinement). The bucket grid holds, per cell, whether it is taken by an
   already placed part's *dilated* shape.
@@ -414,7 +452,34 @@ and the referee. They are listed in the solver dropdown; `auto` picks one
 
 ### 8.3 Improvement (progressive, anytime)
 
-* **Ruin and recreate** (large neighborhood search): repeatedly remove a set
+> **As built (Stage 3, `pack/job.py`).** A `Job` runs, in order: greedy with
+> every orientation (the first result); **probes**, each part's copies alone
+> in an empty bucket in one orientation at a time, without the density limit,
+> tallest and one of each bounding-box shape first, a probe stopping as soon
+> as it is higher than the best finished one; **turned probes** near the
+> best (turned about the vertical in 15 degree steps, and in free mode the
+> best of each of the three best footprint shapes turned about its thinnest
+> horizontal axis); greedy with each part limited to its best 1, 2, 3
+> orientations; ruin and recreate (below); exact compaction (§8.5). It stops
+> early at a lower bound (the tallest part at its flattest, the height the
+> density limit demands). Why probes: greedy looks one part ahead, so it laid
+> 81 keycaps flat in two layers where standing they fit in one, and mixed
+> the orientations of 150 chips that nest when all are turned alike.
+> Ruin: the top layer, the tallest part and its neighbours, a region, or a
+> few at random; recreate in a shuffled size order; then every part settles
+> (down, back, left on the grid); accepted when better, or within a
+> threshold that shrinks to zero over the run. The bucket grid holds counts
+> so parts can be taken out. With more than two cores the probes, the
+> best-orientation runs and the ruin-and-recreate chains (slices of 8 s from
+> the best layout) run in up to eight `spawn` processes while the first
+> layout is built in the main one. Free mode is made deterministic: the
+> principal frame of a degenerate shape is fixed by its smallest bounding
+> rectangle (square shapes square to the axes) or, for a round outline, by
+> the direction it bends towards the third axis; orientations are sorted by
+> their posed shape. Score (`pack/score.py`): parts left out per tier, then
+> placed volume, then a preset's weighted height and layer spread.
+
+* **Ruin and recreate** (large neighbourhood search): repeatedly remove a set
   of placed parts (the top slab, a random region, the parts around a gap, or
   random parts), re-insert them and any unplaced parts greedily with a
   shuffled order and orientation choice, and keep the result if its score is
@@ -425,6 +490,173 @@ and the referee. They are listed in the solver dropdown; `auto` picks one
   naturally progressive; a GA needs whole populations of full layouts.
 
 ### 8.4 Pattern solver (copies of one part)
+
+> **As built (Stage 4, `pack/pattern.py`, 1.3.99).** Single lattices in one
+> orientation; double lattices are not built yet. Free offsets: one FFT
+> correlation of the part's solid with its flipped kernel (`free_offsets`;
+> agrees with the bucket's own test). Plane lattice: the nearest free offset
+> along each of 90 directions, pairs of them smallest area first (a cheap
+> test of a few combinations for all pairs at once), Gauss-reduced, the
+> first whose every vector within reach is free. Stacking vector: the lowest
+> dz over the plane cell that keeps every vector free (chips stack 9 mm
+> apart though 11 mm thick). Into the bucket: 16 phases of the plane
+> lattice, ordered by what they would give empty, so that only the promising
+> ones are checked against what is there; the q lowest lattice points. Valid
+> on the grid by construction; the referee checks the layout as always.
+> In the job: a probe of a part with 20 copies or more is a lattice (0.2 -
+> 0.5 s against about 2 s for greedy with 150 copies; below 20, greedy,
+> which stops early, is cheaper); after "best 1" come the **lattice runs**:
+> the part with the largest share on its lattice, then (if several) every
+> such part in turn, each in the best of its two best orientations and the
+> best of each other bounding-box shape, the rest by greedy around them.
+> With the density limit met late, a lattice denser than the limit is
+> passed over (its copies nest and cannot be lifted apart), and the job
+> keeps the best layout that meets the limit as it is, to fall back on when
+> lifting fails. Results (60 s, 2 cores): 150 chips without the limit at
+> 60 mm after 30 s (standing in one layer; before, only the turned probes
+> found it, near the end of the time); with the 12 % limit 111 -> 87.5 mm
+> (nested flat stacks, 9 %: the one-layer layout is 13 %); bureau-day,
+> keycaps and the rest as before. Against the bounding-box array (the commercial packer's
+> array), copies in a 5600 volume with a 2 mm gap
+> (`tests/bench_pack_pattern.py`):
+>
+> | shape | lattice | array | |
+> |---|---|---|---|
+> | chip | 885 | 360 | +146 % |
+> | figurine (z only) | 2021 | 924 | +119 % |
+> | bracket | 592 | 270 | +119 % |
+> | big keycap | 1070 | 1100 | -3 % |
+> | ring | 832 | 930 | -11 % |
+> | small keycap (z only) | 7006 | 8568 | -18 % |
+> | cube 20 mm | 2928 | 3468 | -16 % |
+> | insole | 1740 | 2079 | -16 % |
+>
+> Parts that nest gain a lot; boxy ones lose to the array because a 1 mm
+> grid is conservative (a 20 mm cube with a 2 mm gap needs a step of 23
+> cells, the array 22 mm). Not built yet: the array itself as a pattern
+> (it needs copies off the grid, as pinned parts are).
+> `tests/test_pack_pattern.py` checks the free offsets against the bucket,
+> every lattice with the referee, a lattice around a locked part, and the
+> chips (lattice probes 0.5 s and 60 mm, greedy probes 5.8 s and 106.5 mm).
+>
+> **Double lattices** (1.4.0): a copy A and its partner B, A turned 180
+> degrees about x, y or z (with free rotation these are among the 24
+> orientations; in z mode only the turn about z, if the step allows it).
+> One FFT of A's solid with B's kernel gives every offset where B clears A
+> (`pattern.cross_free`); the nearest such offset along each of 400
+> directions over the sphere is a candidate pairing, ranked by the
+> bounding box of the pair (`pairings`, three kept). A and B glued at the
+> pairing make one grid (`Envelope`) whose own free table covers A-A, B-B,
+> A-B and B-A, so the existing lattice search applies unchanged and a
+> lattice of pairs is valid copy by copy. Tried for the two best
+> orientations; the run keeps whichever lattice places most copies lowest.
+> Gains in a 5600 volume against the single lattice: gusset +48 %, wedge
+> +33 %, knob +20 %, tee +13 %; chips, L plates and angles keep the single
+> lattice (its steps may lean: L shapes nest along a diagonal by
+> translation alone).
+>
+> **Families** (1.4.0, `pack/family.py`): parts that turn freely and are
+> basically the same shape: size and volume within a factor 1.5 along each
+> principal axis, and a coarse picture (16 cells along the longest side)
+> whose overlap with an already accepted member's is at least 0.55 under
+> one of the 24 turns of the principal frame. Members are compared with the
+> four most alike in size of each family, so a chain of small differences
+> is one family. The turn found lines the member up, so the reference's
+> orientation k means the same for every member (`Family.matrix`). A
+> family is probed as its reference with as many copies as the family has,
+> then patterned on the **envelope** of its members in the best
+> orientations, lined up by the centres of their bounding boxes: valid
+> whichever member stands in a place. Families of up to 24 members also
+> get double lattices. Cost: every member is voxelised per orientation
+> tried (about 40 ms per chip here). What it does not do: chips that
+> differ in bend stack as far apart as the deepest needs (150 different
+> chips 108 mm against 87.5 mm for 150 identical ones in flat stacks);
+> placing each copy at the lattice point but checked as itself, and
+> sorting members so that neighbours are alike, were measured and gave
+> nothing.
+>
+> **The shape library** (1.4.0, `synthetic.library()`,
+> `tests/bench_pack_library.py --baseline`): 60 s, 2 cores, one process,
+> no density limit, every layout clean by the referee; "greedy" is one copy
+> at a time as before Stage 4.
+>
+> | bucket | parts | greedy | now | first layout |
+> |---|---|---|---|---|
+> | 50 different chips (a family) | 50 | 69.3 mm | 46.2 mm | 12 s |
+> | wedges (door stops) | 150 | 128.2 | 72.3 | 12 s |
+> | gussets | 300 | 117.7 | 67.0 | 9 s |
+> | flat tees | 200 | 69.0 | 42.0 | 8 s |
+> | knobs | 150 | 57.0 | 45.0 | 6 s |
+> | 40 different knobs (a family) | 40 | 38.7 | 36.0 (bound) | 10 s |
+> | tapered cups | 60 | 146.0 | 115.0 | 21 s |
+> | domes | 60 | 107.0 | 60.0 | 14 s |
+> | hex nuts | 600 | 65.1 | 41.0 | 3 s |
+> | stars | 200 | 77.0 | 33.0 | 5 s |
+> | C clips | 200 | 60.0 | 39.9 | 4 s |
+> | J hooks | 200 | 63.8 | 33.0 | 9 s |
+> | angles + L plates | 200 | 133.1 | 60.0 | 32 s |
+> | keycaps, four sizes | 80 | 26.4 | 26.4 (bound) | 6 s |
+> | mixed day (9 kinds) | 186 | 200 -> 86 | 86 | 22 s |
+>
+> Failures found: (1) the mixed day was 200 mm high because ten 200 mm
+> rods, placed late, stood up in gaps on the floor (greedy took the lowest
+> bottom whatever the top); greedy's score now counts how far a placement
+> raises the build (`Settings.overshoot_weight`). (2) Tapered cups with a
+> gentle taper do not nest: on 1 mm cells the conservative grid needs a
+> step of about 36 mm where 21 mm is enough exactly, so the lattice lays
+> them on their sides. (3) Boxy parts lose to the array (above). (2) and
+> (3) want an exact refinement of the lattice (shrink each lattice vector
+> by conservative advancement on the engine, copies off the grid). Rings
+> (tori) do not come out linked (0 linked pairs in 120), but nothing stops
+> a lattice from threading rings: the interlocking check (§8.9) matters
+> more with patterns.
+>
+> **Mixed buckets** (1.4.1, the owner asked for much more varied shapes
+> and sizes): `huge-and-tiny` (two 150 mm housings and a 300 mm plate with
+> 500 parts of 5 - 15 mm), `mix-a` / `mix-b` (20 kinds at x0.3 - x3, all
+> free), `mix-c` (30 kinds at x0.2 - x4, some fixed upright), `one-offs`
+> (60 different parts, one of each). 60 s, 2 cores:
+>
+> | bucket | copies | height | lower bound | first layout |
+> |---|---|---|---|---|
+> | huge-and-tiny | 503 | 157 mm (176 before the fix below) | 150 mm | 23 s |
+> | mix-a | 375 | 166 | 165.7 | 49 s (146 s before turned grids) |
+> | mix-b | 208 | 117.9 | 117.9 | 42 s |
+> | mix-c | 814 | 274.6 | 255.6 | 92 s |
+> | one-offs | 60 | 255.6 (232 with 300 s) | 191.7 | 106 s (341 s before) |
+>
+> What they showed: (1) the height of a varied build is mostly set by its
+> largest parts, and the packer reaches or nears the lower bound; (2) the
+> first layout is the cost: large parts were voxelised in each of 24
+> orientations, seconds each; now a large part (1.5 M cells or more) is
+> voxelised once and its quarter turns are made by permuting and flipping
+> the arrays (`Greedy._turned_grid`; a superset still, with up to a cell of
+> slack on a flipped axis that the exact compaction takes back sideways):
+> 3 x faster on these buckets; (3) lattices first put 500 small parts on
+> the floor and the housings on top (176 mm): parts larger than every
+> lattice part now go in before the lattices, and lattices come first only
+> for builds of at most three kinds; (4) not solved: one-offs holds two
+> open housings, one of which would fit inside the other (191.7 mm); the
+> greedy only fills a cavity when the floor is full, and the improvement
+> loop did not find it in 5 minutes. A "nest the containers" move (try
+> each open part inside each larger one first) would.
+>
+> **Effort** (1.4.2, the owner asked 2026-10-21 whether a fast / optimal
+> switch is needed): one progressive packer, and an Effort choice.
+> Quick: the first layout and at most 10 s more. Standard: the Time given.
+> Best: until no better layout has turned up for Give Up After (10 min by
+> default), at most the Time Limit (2 h by default); the improvement loop
+> then also starts afresh now and then (every part again in a shuffled
+> order, orientations drawn from the good ones), so it does not only polish
+> one start. The best layout so far is always kept and shown, so any run
+> can be stopped. `Settings.stall_time`, `restarts`; CLI `--effort`,
+> `--stall`.
+>
+> **Lattices first** (1.4.0): when parts with 20 copies or more, and
+> families, are nine tenths of the copies, their lattice probes (with at
+> most 12 turned ones, within a quarter of the time) and a lattice layout
+> come before anything else, and greedy's layout of every copy one at a
+> time only if that leaves parts out.
 
 For "one part, make 20" and for groups of identical copies:
 
@@ -440,12 +672,26 @@ For "one part, make 20" and for groups of identical copies:
 * Fit the lattice to the bucket: try a few orientations and phase offsets of
   the lattice in the volume, keep the arrangement with most copies inside, and
   hand the remaining space to the greedy solver for other parts.
-* The grid array of his current tool is the special case where the basis is the bounding box
+* The commercial packer's array is the special case where the basis is the bounding box
   plus the gap; we report both counts so the gain is visible.
-* Exact check: the lattice's few distinct neighbor offsets are checked once
+* Exact check: the lattice's few distinct neighbour offsets are checked once
   with the referee (all copies share them).
 
 ### 8.5 Compaction (all solvers)
+
+> **As built (Stage 3, `pack/compact.py`).** Conservative advancement on the
+> exact engine: the engine measures distances up to gap + 4 mm (its clearance
+> threshold set there); a part may move by d - gap in any direction without
+> coming closer than the gap, so it moves that much (less a margin of 1 % of
+> the gap plus 5 micrometres, for the engine's 1 % proofs), measures again,
+> and stops when the step is under 0.02 mm; a step after which the engine
+> finds a pair under the gap is halved until it does not. Floor, side walls
+> (wall gap) and the density limit's height are checked from the vertices.
+> The job keeps min(30 % of the time, 1 s + 0.15 s per part) for it, and
+> skips it when reading the meshes into the engine would take most of that.
+> A compacted layout is off the packer's grid, so Improve Current Layout
+> keeps such parts *pinned*: voxelised where they are (as locked parts),
+> placed again only if ruin and recreate takes them out.
 
 Voxel layouts waste up to about 2h of gap. A final pass moves each part, in
 order from the bottom, along -Z, then -Y, -X, by bisection between where it
@@ -458,7 +704,7 @@ parts.
 * **Single part fit**: one big part; search orientations (fine steps in its
   mode) for one that fits; report "does not fit" with the smallest overshoot.
 * **Box/shelf packing**: parts whose volume is close to their bounding box
-  (ratio above about 0.8) or when the user asks for bounding-box behavior.
+  (ratio above about 0.8) or when the user asks for bounding-box behaviour.
   Instant.
 
 ### 8.7 Recommending a solver (`auto`)
@@ -484,10 +730,52 @@ Blender this is the existing monitor, switched back on.
 
 ### 8.9 Interlocking
 
-A checkbox, off, labeled as not implemented, until it is easy: the voxel
-disassembly test (remove parts along the three axes until none can move;
-anything left interlocks) fits the voxel layer well and may come with the
-improvement stage.
+The owner's requirement (2026-10-20): rare in real builds, so low
+priority, but expected (most programs have it). On by default, can be
+turned off. It must never slow anything down: it runs in the background
+only after every other check has passed and nothing else is waiting, and
+an interlock found says so a moment later. Two parts that were found to
+interlock are remembered as able to.
+
+Design (not built yet):
+
+* **What counts.** Two parts interlock when neither can be taken away from
+  the other by a straight move without touching it (a hook through a loop,
+  linked rings, a pin through a closed eye). Pairs only: three parts that
+  lock only together are left out (much rarer, much dearer to find).
+* **Candidates, cheaply.** Only pairs that already passed collision and
+  clearance, and whose convex hulls overlap: if the hulls are apart, a
+  plane separates the parts and one slides away. Nearly every pair in a
+  packed build is dropped here (vertex-in-hull tests, or the hull distance
+  from the engine).
+* **The test.** For a candidate pair, try to move A away from B along 26
+  directions (the faces, edges and corners of a cube) and along the line
+  between their centres, on voxel grids that are supersets of the parts:
+  if the swept A misses B in one direction, they come apart (sound,
+  because the grids are larger than the parts). If every direction is
+  blocked, check the most promising few exactly with the engine
+  (conservative advancement along the direction). Blocked exactly
+  everywhere means interlocked; blocked on the grid but not decided
+  exactly means "may interlock", shown as a warning.
+* **In the monitor.** The lowest priority of the timer's work: it starts
+  only when no pair is unsolved, unsettled or being refined, and stops
+  whenever the user does anything. Results are kept per pair and placement,
+  like the other proofs, so moving one part re-checks only its candidate
+  pairs. The badge says "Checking for interlocked parts" (neutral, not
+  green) while that is going on, then "Build OK"; an interlock is a
+  problem in the list like a collision. Guidance given to the owner: a
+  separate line rather than holding back the whole verdict, so a slow
+  check on a dense build never makes the badge look stuck.
+* **In the packer.** The same test runs on the final layout before it is
+  handed over (the packer knows which pairs it nested). An interlocked
+  pair is taken apart by the packer itself: one part is taken out and
+  placed again, and the layout is checked again; the result says "2 parts
+  placed again: they interlocked". No question to the user.
+* **Remembered.** Mesh pairs (by mesh hash) that interlocked are recorded
+  (scene data and the packer's job), so the packer checks those pairs
+  during packing (not only at the end) and the monitor tests them first.
+* **Switch.** "Check for Interlocking", on by default, in the checks'
+  settings; off skips the work entirely.
 
 ### 8.10 Large meshes
 
@@ -546,7 +834,7 @@ when the fast tier is fast; it waits for Stage 2's numbers.
   clone, delete, ignore, export (one, selected, all).
 * **View** shows one bucket and hides the others with the layer collection's
   eye, so they are still evaluated (the monitor already treats hidden parts as
-  present; see `AGENTS.md`).
+  present; see `CLAUDE.md`).
 * **Clone** copies the collection's objects with shared mesh data (linked
   duplicates), so cloning a 600-part bucket costs almost nothing, and the
   engine shares one tree per unique mesh.
@@ -578,7 +866,7 @@ minimal exporter in `pack/meshio.py` is decided at Stage 5.
 ## 11. Labels (Stage 7)
 
 * Text from a pattern (`{job}-{n:04}`) placed on a surface **the user
-  picks** (as in the dialog of his current tool: pick the surface, then size, depth and
+  picks** (as in the commercial packer's dialog: pick the surface, then size, depth and
   text), embossed and **embedded 0.5 mm** (parameter) into the part.
   Defaults: **5 mm text height, 0.5 mm emboss**. Engraving is also offered; it
   changes the part's mesh, so that part becomes single-user and loses
@@ -606,18 +894,39 @@ minimal exporter in `pack/meshio.py` is decided at Stage 5.
 * The "3D Printing" application template (File > New).
 * A hollowing add-on (separate from this one); halos already account for
   thin walls.
-* Interlocking check (§8.9).
-* Color (texture) labels for color printers.
+* Interlocking check (§8.9). The owner (2026-10-21): "Build OK" may show an
+  asterisk while interlocks are still being checked. Cheap topological
+  filters, in order: hulls apart, free; neither part has a through-hole
+  (genus 0, from the Euler characteristic of the mesh or of its voxels),
+  only hooking is possible; both have holes, an exact linking test of
+  their hole loops (linked rings can never come apart); otherwise (an O on
+  the shaft of an I) the sliding test. The packer can also avoid threading
+  outright: no part placed through a ring's hole.
+* **Print technologies and printers** (the owner, 2026-10-21): this packer is
+  for MJF buckets, but other technologies will follow, and the 580 and the
+  5600 differ in details. Rules and parts of the algorithm (density limit,
+  flat-face rules, wall gaps, layer spread, interlocking) should come from
+  the printer profile and be switched on or off with it.
+* **Several printers at once** (Stage 5, with the owner's two profiles): a
+  service bureau sorts 1000 random parts into 4 printers every day and wants
+  it quick, spread evenly rather than 3.5 buckets; a medical device maker
+  prints the same bucket for weeks and wants 1 bucket rather than 1.5,
+  however long it takes (Effort Best, saved layouts reused).
+* Colour (texture) labels for colour printers.
 * A GPU path inside Blender (bundled), depending on Stage 2.
 
 ---
 
 ## 13. Open questions, as answered by the owner (2026-10-12)
 
-1. **Density reference**: his current tool reports both full bucket height and max
+1. **Density reference**: the commercial packer reports both full bucket height and max
    part height; the latter is the useful one, "almost nobody cares about" the
    former. **Decision: report density against build area x packed height
-   only.** The 12 % limit applies to it. (§6.1 mentioned both; the full-volume
+   only.** The 12 % limit applies to it. **Refined (2026-10-20):** the height
+   is the one the parts fill, from their lowest point to their highest: a
+   single cube in the middle of the bucket is as dense as one on the floor
+   (the commercial packer's "with object height" ignores only the empty space above).
+   Raising a whole build off the floor changes nothing. (§6.1 mentioned both; the full-volume
    figure is dropped.)
 2. **Layer spread**: smoothing window **5 mm**. A per-layer *cap* is not the
    right way to think about it: the goal is to spread density across layers
@@ -643,7 +952,7 @@ minimal exporter in `pack/meshio.py` is decided at Stage 5.
    These are the first calibration points for the halo table (§7): flat
    faces and bulk raise the gap, thin walls and curvature lower it. Shell
    thickness is what takes a cube from 5 to 3 mm and a sphere from 3 to 1 mm.
-5. **Labels**: placement needs user input. In his current tool a dialog lets the user
+5. **Labels**: placement needs user input. In the commercial packer a dialog lets the user
    pick a surface, then size, depth and text. **Defaults: 5 mm tall text,
    0.5 mm emboss.** Engraving is also wanted; it changes the mesh, so that
    part becomes single-user and loses instancing (the UI says so).
@@ -658,7 +967,7 @@ table the feature (the packer works with a uniform gap without it).
 ## 14. Stages
 
 Each stage ends with tests, benchmarks where relevant, a commit and push, and
-`AGENTS.md` / this file updated. The model and effort are recommendations
+`CLAUDE.md` / this file updated. The model and effort are recommendations
 for the owner to set before asking for the stage.
 
 | Stage | Work | Done when | Model, effort |
@@ -666,11 +975,11 @@ for the owner to set before asking for the stage.
 | 0 | This spec; benchmark folders | spec reviewed by the owner | Opus 5.5, high |
 | 1 (**done**, 2026-10-13) | `pack/meshio.py` (STL, 3MF), `pack/metrics.py` (volume, layer profile, density, partial-OOB warning), sidebar report and profile plot, `python -m pack report` | exact against analytic shapes (boxes, spheres, tori, rotated) to 1e-9; report on a 60 x 1 M build in seconds | Sonnet 5.5, medium |
 | 2 | Voxel layer (conservative voxelisation, flood fill, dilation), FFT feasibility, coarse to fine, greedy placement; CPU and GPU timing script for the owner | feasible layouts verified by the referee on all synthetic buckets; timing table on the VM and the owner's laptop; a decision on the GPU path | Opus 5.5, high |
-| 3 | `Job` loop, improvement (ruin and recreate), compaction, rotation modes, locks, tiers, density cap, layer penalty; Pack panel and part list | beats or matches the owner's current packer as a baseline on the synthetic set; first result within the targets of §2 | Sonnet 5.5, medium |
-| 4 | Pattern solver (lattices, double lattices) | beats the bounding-box array on pringle, figurine and Suzanne copies | Opus 5.5, high |
+| 3 (**mostly done**, 2026-10-16) | `Job` loop, improvement (ruin and recreate), compaction, rotation modes, locks, tiers, density cap, layer penalty; Pack panel and part list | beats or matches the owner's commercial packer baseline on the synthetic set; first result within the targets of §2 | Sonnet 5.5, medium |
+| 4 (**mostly done**, 2026-10-20) | Pattern solver (lattices, double lattices, families) | beats the bounding-box array on pringle, figurine and Suzanne copies | Opus 5.5, high |
 | 5 | Planner (goals, ratios, quantities); Buckets panel; World groups; export all | multi-bucket jobs from the synthetic set; bucket workflow tested in a window | Opus to design, Sonnet to build |
 | 6 | Halos (adaptive, thickness), pair warnings, what-if, solver recommendation | what-if suggestions reproducible across seeds | Sonnet 5.5, medium |
-| 7 | Labels | labeled builds pass the referee | Sonnet 5.5, low to medium |
+| 7 | Labels | labelled builds pass the referee | Sonnet 5.5, low to medium |
 
 Stage 1 results (2 cores, 2.4 GHz): reports against Blender's own bmesh
 volume agree to 1e-4 in 46 cases of moves, lifts, rotations, scales,
@@ -681,6 +990,40 @@ copies 3.7 s (same orientation) to 9 s (every copy turned); 5 meshes of 20 M
 triangles 15 s. In Blender, 46 parts of 490 k triangles (22 M in all, 40 of
 them copies): first report 1.8 s, a lift 0.3 s, main-thread slices under
 25 ms. Reading a 3MF costs 2.2 s per million triangles.
+
+Stage 2 results so far (2026-10-13, 2 cores; `tests/bench_pack_greedy.py`,
+every layout checked by the exact engine: no violation anywhere):
+
+| Bucket (default settings, 12 % cap) | parts | height | density | time |
+|---|---|---|---|---|
+| bureau-day (7 kinds, mixed modes, gap 3) | 82/82 | 85 mm | 11.9 % | 9.7 s |
+| pringles (free rotation, gap 2) | 150/150 | 109 mm | 7.2 % | 18.8 s |
+| figurines (z, gap 1) | 80/80 | 55.5 mm | 4.8 % | 4.8 s |
+| sockets + insoles (gap 3) | 30/30 | 140 mm | 7.3 % | 3.4 s |
+| giant housing + keycaps | 31/31 | 180 mm | 5.6 % | 4.9 s |
+
+The same in Blender's Python (NumPy only): identical layouts, same times
+(the orientations of a part are searched in threads). With the cap binding
+the height is the cap's, so resolution was compared without it, quantities
+x 3 (bureau-day, 246 parts): cell 1 mm with coarse blocks of 2 / 4 / 8
+cells: 153 / 161 / 182 mm in 500 / 25 / 12 s; cell 2 mm: 193 mm (blocks of
+2) and 201 mm (4). So 1 mm cells matter (+20 % height at 2 mm), and a finer
+coarse search buys about 5 % for 20 x the time on the CPU. That is the GPU
+question: on a GPU a 2 mm-block query (200 x 150 x 200 cells) should cost
+about what a 4 mm one costs here. Decision waits for `tools/pack_timing.py`
+on the owner's laptop: if a 2 mm query is under about 2 ms there, add an
+array-module backend (CuPy) for the coarse search; otherwise the CPU at
+4 mm stays the default and Stage 3's compaction and improvement recover the
+rest.
+
+Large meshes that turn are voxelised from a surface cloud made once per
+mesh (`voxel.Cloud`), so an orientation costs what the part's size costs,
+not its triangle count: 5 ellipsoids of 4 M triangles (20 M) packed in 21 s
+here, referee clean (10 s).
+
+![The bureau-day bucket packed by the greedy solver, loaded into Blender:
+the monitor, with its clearance set to the 3 mm packing gap, finds nothing
+wrong](images/autopack-greedy-bureau-day.png)
 
 Blender in the sandbox: `download.blender.org` and PyPI are blocked by the
 sandbox's network policy (2026-10-12); GitHub is reachable. Stages 1 - 4 are

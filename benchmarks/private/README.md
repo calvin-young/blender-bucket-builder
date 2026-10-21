@@ -5,7 +5,7 @@ README and its `.gitignore` is ever committed**: git ignores everything else,
 and `tests/test_private_guard.py` fails if a file here is tracked anyway (for
 example with `git add -f`).
 
-The benchmark script (Stage 2 onward, see `docs/AUTOPACK.md` §15) reads the
+The benchmark script (Stage 2 onward, see `docs/AUTOPACK.md` §16) reads the
 buckets here and writes only a results table with generic labels
 (`bucket-01`, `bucket-02`, ...). The table is safe to share.
 

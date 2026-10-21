@@ -3,7 +3,7 @@ is tracked by git, or would be committed if staged with a plain `git add`.
 
     python3 tests/test_private_guard.py
 
-Real buckets there may hold customer data (docs/AUTOPACK.md §15).
+Real buckets there may hold customer data (docs/AUTOPACK.md §16).
 """
 
 import os

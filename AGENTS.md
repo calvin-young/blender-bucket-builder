@@ -411,7 +411,7 @@ report`, `tools/pack_report.py`; prints generic labels unless `--names`),
 of the two checks, which read the parts; result cached per (mesh, linear part,
 height), worked out in a thread). Tests: `tests/test_pack_*.py`,
 `blender_report_test.py`, `blender_gui_report.py`, `bench_pack_metrics.py`
-(numbers in AUTOPACK.md §14). Released as 1.3.0 on `main` (the owner asked);
+(numbers in AUTOPACK.md §15). Released as 1.3.0 on `main` (the owner asked);
 `autopack` continues from there.
 
 Gotchas learned: a large icon is drawn from the preview's `image_pixels_float`,

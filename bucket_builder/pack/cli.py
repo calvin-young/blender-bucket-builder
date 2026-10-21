@@ -10,7 +10,7 @@ Run it from the `bucket_builder` folder (or use tools/pack_report.py).
 The output never contains the file name or the part names unless `--names` is
 given: parts are `part-001` ... in file order and the file is `bucket-01`.
 That keeps a report of a customer's bucket safe to paste anywhere
-(docs/AUTOPACK.md section 15).
+(docs/AUTOPACK.md section 16).
 """
 
 import argparse
