@@ -294,5 +294,5 @@ def rows(rep):
             out.append(('Flat Faces by Walls', '%d' % flat[2], ''))
     top = getattr(rep, 'top', None)
     if top is not None and top[0]:
-        out.append(('Flat Faces Facing Up', '%d' % top[0], ''))
+        out.append(('Flat Faces Up', '%d' % top[0], ''))
     return out

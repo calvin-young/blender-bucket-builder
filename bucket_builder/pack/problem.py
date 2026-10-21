@@ -80,7 +80,8 @@ def dial_settings(quality):
     """Settings for a place on the dial between packing density (0) and
     part quality (1) (docs/PRINT_QUALITY.md, "The quality / efficiency
     dial"): the soft rules scale with it, the hard ones (gaps, the density
-    limit) do not.  Height counts less far below the top of the volume the
+    limit) do not.  The final lift stays on (it is how the density limit is
+    met as low as possible); only Keep Parts Low turns it off.  Height counts less far below the top of the volume the
     more quality counts; near the top it always counts three times."""
     q = min(1.0, max(0.0, float(quality)))
     on = q > 0.05
@@ -89,7 +90,7 @@ def dial_settings(quality):
                 flat_wall_weight=0.0008 * q,
                 flat_top_weight=0.0016 * max(0.0, q - 0.5),
                 spread_scale=2.0 * q,
-                spread_z=on,
+                spread_z=True,                  # (also how the density limit is met: never off here)
                 height_far=1.0 - 0.8 * q,
                 height_top=3.0,
                 height_band=0.1,

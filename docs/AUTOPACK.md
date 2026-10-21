@@ -284,7 +284,8 @@ cares; 377 against 384 mm in a 380 mm volume: a deal breaker).
 `problem.dial_settings(q)` maps the panel's **Part Quality** (0 - 100 %,
 default 50) to the soft weights: facing pairs `0.002 q`, wall faces
 `0.0008 q`, faces facing up `0.0016 max(0, q - 0.5)`, layer spread
-`2 q` times the preset's, the final lift for even layers off below 5 %;
+`2 q` times the preset's (the final lift stays on: it is how the density
+limit is met as low as possible; only Keep Parts Low turns it off);
 the hard limits never change. The score's height term is
 `score.height_cost`: a millimeter costs `height_far = 1 - 0.8 q` far
 below the top, rising evenly to `height_top = 3` over the last 10 % of

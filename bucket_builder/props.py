@@ -314,7 +314,7 @@ class BucketBuilderSettings(PropertyGroup):
     pack_quality: IntProperty(
         name="Part Quality", default=50, min=0, max=100, subtype='PERCENTAGE',
         description="How much part quality counts against packing density. 0 %: fit as much as possible "
-                    "and as low as possible, whatever the layers and the faces look like. 100 %: large flat "
+                    "and as low as possible, whatever the faces look like. 100 %: large flat "
                     "faces kept apart, off the side walls and not facing up, even layers, and height counts "
                     "little unless the build is close to the top of the volume. Gaps and the density limit "
                     "are kept at every setting")

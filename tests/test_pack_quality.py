@@ -40,7 +40,7 @@ def test_height_curve():
     near = score.height_cost(H - 3.0, s) - score.height_cost(H - 10.0, s)
     check(far < 2.0 and near > 15.0, '7 mm far below the top cost %.1f, near the top %.1f' % (far, near))
     d0, d5, d1 = dial_settings(0.0), dial_settings(0.5), dial_settings(1.0)
-    check(not d0['flat_rules'] and not d0['spread_z'] and d0['height_far'] == 1.0 and d0['spread_scale'] == 0.0,
+    check(not d0['flat_rules'] and d0['spread_z'] and d0['height_far'] == 1.0 and d0['spread_scale'] == 0.0,
           'density end: the soft rules off, height counts everywhere')
     check(abs(d5['flat_pair_weight'] - 0.001) < 1e-12 and d5['flat_top_weight'] == 0.0 and d5['spread_scale'] == 1.0,
           'middle: the weights of 1.4.2, faces facing up not counted')

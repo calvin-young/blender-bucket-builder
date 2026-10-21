@@ -224,7 +224,7 @@ operator asks first of a build:
   and large flat faces parallel to a side wall. Both invite surface defects
   in MJF builds, so the packer avoids them where it can; the rows appear
   only when there are any.
-* **Flat Faces Facing Up**: large flat faces that face straight up, toward
+* **Flat Faces Up**: large flat faces that face straight up, toward
   the top of the volume. They can come out cupped (sharp, raised edges and a
   slightly sunken middle: the "capillary" or "meniscus" defect). Faces
   facing down do not matter.
@@ -317,7 +317,7 @@ row beside the volume, and the panel says why.
 | Setting | What it does |
 | --- | --- |
 | **Goal** | *Big Parts First*: as much as fits, big parts first, so that when not everything fits what is left over is small parts (easier to fit into the next build; and a big part that fails is reprinted sooner); then as low as possible. *Most Parts*: as many parts as fit (small parts first when not all fit, so big ones may be left over). *Lowest Build*: as many parts, then the lowest build, whatever the layers look like. *Even Layers*: as many parts, then the most even density from layer to layer. |
-| **Part Quality** | How much part quality counts against packing density. *0 %*: fit as much as possible as low as possible, whatever the layers and faces look like (parts also stay low, as with Keep Parts Low). *50 %* (the default): large flat faces kept apart and off the side walls, even layers. *100 %*: all of that counts more, faces facing up are avoided too, and the height of the build counts little unless it is close to the top of the volume. At every setting the gaps and **Max Density** are kept, and when parts are left out or the build is within a few millimeters of the top the packer takes up to twice the time set, once: that is when a few millimeters decide whether the job fits. The rules are described in `docs/PRINT_QUALITY.md` in the repository. |
+| **Part Quality** | How much part quality counts against packing density. *0 %*: fit as much as possible as low as possible, whatever the faces look like and however uneven the layers (they are still evened out as far as Max Density needs). *50 %* (the default): large flat faces kept apart and off the side walls, even layers. *100 %*: all of that counts more, faces facing up are avoided too, and the height of the build counts little unless it is close to the top of the volume. At every setting the gaps and **Max Density** are kept, and when parts are left out or the build is within a few millimeters of the top the packer takes up to twice the time set, once: that is when a few millimeters decide whether the job fits. The rules are described in `docs/PRINT_QUALITY.md` in the repository. |
 | **Effort** | *Quick*: the first layout and a few seconds more, for a day's work that just has to go in. *Standard*: looks for better layouts for the **Time** given (0: the first layout only). *Best*: keeps looking, starting afresh now and then, until nothing better has turned up for **Give Up After** minutes, at most the **Time Limit** in hours: for a build you will print again and again. Every effort keeps the best layout found so far, so you can stop at any time. |
 | **Rotation** | *Fixed*: parts keep their rotation. *About Z*: they turn about the vertical, in steps of **Turn Step**. *Free*: any of the 24 ways a part's main axes can line up with the volume's. A part's own setting (below the settings, for the active part) overrides this. |
 | **Gap**, **Wall Gap** | The distance kept between parts, and from the side walls. |

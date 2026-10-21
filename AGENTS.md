@@ -743,7 +743,7 @@ branches; the whole tree in US spelling. `docs/PRINT_QUALITY.md` started
 (rules PQ-01 - PQ-10, PK-01 - PK-05, the dial). Part Quality dial
 (`problem.dial_settings`, props `pack_quality`, CLI `--quality`),
 height curve (`score.height_cost`), faces facing up (PQ-07,
-`quality.top_area`, `flat_top_weight`, Build Report row "Flat Faces Facing
+`quality.top_area`, `flat_top_weight`, Build Report row "Flat Faces
 Up"), extra time once near the top or with parts left out
 (`Job._try_harder`); spec AUTOPACK §5.2. Engine defaults unchanged; the
 operator and CLI apply the dial (50 % by default). Test
