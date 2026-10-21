@@ -353,9 +353,12 @@ Last updated: 2026-10-21 (session 4).
 * The repository is `calvin-young/blender-bucket-builder` (moved and renamed
   on 2026-10-21; it is **public**). The maintainer, Calvin Young, may be
   named. Repo docs (this file, CONTRIBUTING.md, docs/DECISIONS.md, the PR
-  template) added 2026-10-21; text is US English. Product names are gone
-  from `main`'s files but remain in old commits and on `autopack` (left to
-  that branch's thread; history rewrite not decided).
+  template) added 2026-10-21; text is US English. On the owner's request the
+  whole history was rewritten on 2026-10-21 so that no commercial
+  print-prep product is named in any file or commit message of any branch
+  (`git fast-export | scrub | fast-import`, script kept in the session's
+  scratch space; 83 commits, `main`'s files unchanged). Every clone made
+  before that must be replaced: fetch, then `git reset --hard origin/<branch>`.
 * `main` is **1.4.0**: 1.3.0 plus the Arrange tools.
 
 * `main` is **1.3.0** (2026-10-13): 1.2.0 plus the Build Report (Stage 1 of the
