@@ -12,9 +12,9 @@ Cursor and Gemini CLI read it directly.
   collisions, clearance violations and geometry outside the printer's build
   volume, with a pass / fail badge. Around it: a Build Report (density, packed
   height), Arrange tools (drop to floor, minimize box or height, tilt off axis,
-  snap to the volume). An automatic packer is being designed (`docs/AUTOPACK.md`,
-  branch `autopack`).
-* **Status:** version 1.4.0, in production use by its first user. Declared for
+  snap to the volume), and an automatic packer, still marked experimental
+  (`docs/AUTOPACK.md`; print-quality rules in `docs/PRINT_QUALITY.md`).
+* **Status:** version 1.5.0, in production use by its first user. Declared for
   Blender 4.2 and newer; tested on Blender 5.2 (Linux, software OpenGL).
   Not yet tried: Blender 4.2 - 5.1, macOS, Vulkan / Metal, a real GPU.
 * **Runs in:** Blender's bundled Python (3.11 in 4.2) with NumPy, nothing else.
@@ -27,6 +27,9 @@ Cursor and Gemini CLI read it directly.
     python3 tests/test_world.py          # against brute force, about 10 minutes
     python3 tests/test_pack_meshio.py; python3 tests/test_pack_metrics.py; python3 tests/test_pack_cli.py
     python3 tests/test_private_guard.py  # nothing from benchmarks/private/ is committed
+    python3 tests/test_engine_boundary.py   # core/ and pack/ import nothing from Blender
+    python3 tests/test_pack_voxel.py; python3 tests/test_pack_greedy.py; python3 tests/test_pack_pattern.py
+    python3 tests/test_pack_quality.py; python3 tests/test_pack_job.py   # the packer (job: about 20 minutes)
     python3.11 -m compileall -q bucket_builder   # still valid for Blender 4.2's Python
 
     # in Blender: install the add-on into the profile BLENDER_USER_RESOURCES points to,
@@ -36,6 +39,7 @@ Cursor and Gemini CLI read it directly.
     blender --background --python tests/blender_arrange_test.py  # Arrange tools
     blender --background --python tests/blender_large_test.py    # large parts, memory
     blender --background --python tests/blender_report_test.py   # Build Report
+    blender --background --python tests/blender_pack_test.py     # the Pack operator
     blender --background --python tests/blender_gpu_test.py -- out   # overlay, off screen
     SDL_VIDEO_FORCE_EGL=1 bash tests/gui_on_xvfb.sh blender out [blender_gui_test.py|blender_gui_undo.py|blender_gui_stress.py]
     blender --background --python tests/blender_upgrade_test.py -- old.zip new.zip   # empty profile
@@ -78,6 +82,27 @@ Blender from source where it cannot be downloaded.
 * Do not name commercial print-preparation products in the repository, its
   docs or commit messages.
 
+## Engine boundary
+
+`bucket_builder/core/` (collision engine) and `bucket_builder/pack/`
+(packer, metrics, mesh I/O) import nothing from Blender; the owner means
+to make them a Python package of their own some day, usable outside
+Blender. `tests/test_engine_boundary.py` fails on any import there other
+than the standard library, NumPy and the optional accelerators (SciPy,
+CuPy). Blender-specific code is welcome where it makes things faster or
+better (the add-on's modules use `bpy`, `gpu`, `bmesh` freely), but it
+lives outside those two folders, and **every time a feature of the
+engines needs something only Blender has, say so to the owner and note it
+under "Blender dependencies" below**, so the split can be planned.
+
+Blender dependencies of the engines so far: none. The engines take
+NumPy arrays (vertices, triangles, 4 x 4 matrices) and return results;
+the add-on reads meshes from Blender (`monitor.py`, `packing.py`) and
+runs the packer in Blender's own Python (`packing.python_exe`), which is
+the only place it needs Blender at run time. Expect the Blender packer and
+a later stand-alone one to differ in what they read and show, not in how
+they pack.
+
 ## Before you change things
 
 Read `docs/DECISIONS.md` (what was decided, what was tried and abandoned, open
@@ -95,8 +120,9 @@ use and is checked by `tests/test_private_guard.py`.
 
 One logical change each, with tests, using `.github/pull_request_template.md`
 (including the requested-vs-assumed section) for outside contributions. The
-maintainer's own agent commits and pushes to `main` directly (his choice); the
-auto packer is developed on the `autopack` branch and merged in milestones.
+maintainer's own agent commits and pushes to `main` directly (his choice).
+Everything, the packer included, is developed on `main` since 1.5.0
+(2026-10-21); the `autopack` branch was merged and retired.
 
 ## Implementation notes
 
@@ -360,9 +386,10 @@ Last updated: 2026-10-21 (session 4).
   (`git fast-export | scrub | fast-import`, script kept in the session's
   scratch space; 83 commits, `main`'s files unchanged). Every clone made
   before that must be replaced: fetch, then `git reset --hard origin/<branch>`.
-* `main` is **1.4.0**: 1.3.0 plus the Arrange tools. `autopack` is **1.4.3**:
-  the packer (1.4.2) with `main` merged in on 2026-10-21 (Arrange, these repo
-  docs, US spelling). Merge `main` into `autopack` whenever `main` moves.
+* `main` is **1.5.0** (2026-10-21): the Arrange tools (1.4.0) and the packer
+  from the `autopack` branch (1.4.3, merged by fast-forward; the branch is
+  retired, the owner asked for one line of development). The Pack panel is
+  closed by default and still labeled Experimental.
 
 * `main` is **1.3.0** (2026-10-13): 1.2.0 plus the Build Report (Stage 1 of the
   auto packer, merged from `autopack` by fast-forward). Zip sent to the owner.

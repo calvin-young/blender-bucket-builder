@@ -243,7 +243,8 @@ Soft goals are folded into one **score** that solvers minimize:
 * Z height (packed height);
 * layer-density penalty (§6.2);
 * orientation penalties: large up-facing flat areas (meniscus, PQ-07: built
-  in 1.4.3, `flat_top_weight`, counted in the score, in greedy's pose
+  in 1.4.3, faces within 1 degree of up (the owner: 10 was far too
+  generous), `flat_top_weight`, counted in the score, in greedy's pose
   score and in the Build Report; on at the quality end of the dial only),
   cosmetic faces (later). Faces facing down do not matter (the owner,
   2026-10-21);

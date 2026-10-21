@@ -117,14 +117,16 @@ yet; treat its numbers as placeholders).
   sagging a little.
 * **Cause**: not yet explained here; the names suggest the shape of a
   liquid's surface in a narrow tube.
-* **Detect**: large flat regions whose normal is within a few degrees of
-  +z.
-* **Avoid**: a soft goal: turn the part so the face does not face up, or
-  tilt it (see PQ-09).
+* **Detect**: large flat regions whose normal is within about 1 degree of
+  +z. The defect needs the face to be really flat to the layers: about one
+  degree off, it is no longer seen.
+* **Avoid**: a soft goal: turn the part so the face does not face up. A
+  small tilt also avoids it, but a face only slightly tilted shows the layer
+  steps instead (PQ-09), so a tilt has to be large enough for that.
 * **Who cares**: some customers a great deal, others not at all: off by
   default for the efficiency end of the dial.
-* **Source**: practitioner. **Numbers**: assumed (faces from 2500 mm^2,
-  within 10 degrees of up).
+* **Source**: practitioner (the 1 degree too). **Numbers**: the area from
+  which a face counts is assumed (2500 mm^2).
 
 ### PQ-08 Faces facing down do not matter
 
@@ -138,8 +140,10 @@ yet; treat its numbers as placeholders).
 * **Avoid**: tilt parts so large faces are well away from every axis (the
   Arrange tool's Tilt Off Axis uses 20 degrees).
 * **Source**: practitioner, as "a first rule to refine". **Numbers**:
-  assumed. How this interacts with PQ-06 and PQ-07 (which prefer faces off
-  the walls and not facing up) has not been worked out.
+  assumed. With PQ-07 it brackets what a large top face can do: flat to
+  within about a degree (meniscus), tilted a little (steps), or tilted
+  well away. How the tilt trades against PQ-06 (faces off the walls) has
+  not been worked out.
 
 ### PQ-10 Interlocking parts
 

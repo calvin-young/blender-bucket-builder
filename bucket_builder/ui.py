@@ -474,6 +474,7 @@ class BUCKETBUILDER_PT_report(_Base, Panel):
 class BUCKETBUILDER_PT_pack(_Base, Panel):
     bl_label = "Pack (Experimental)"
     bl_idname = "BUCKETBUILDER_PT_pack"
+    bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
         layout = self.layout

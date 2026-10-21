@@ -270,7 +270,8 @@ With the add-on installed and enabled in Blender:
       ui.py               sidebar panels, the list of problems, entries in Blender's own menus
       icons.py            the colored icons of the status box, and the report's profile picture
       report.py           the Build Report: parts from the world, results cached, worked out in a thread
-      pack/               auto packer, no Blender imports: meshio, metrics, plot, cli (more on `autopack`)
+      pack/               auto packer, no Blender imports: voxels, greedy, patterns, job, metrics, meshio, cli
+      packing.py          the Pack operator: runs the packer in a process of its own
     tests/
     tools/test-blender/   building Blender from source where it cannot be downloaded
     AGENTS.md             for contributors and AI agents: setup, conventions, working notes

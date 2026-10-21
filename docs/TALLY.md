@@ -100,7 +100,7 @@ the sessions before; earlier items are summaries.
 * Up to 8 helper processes for packing.
 * The dial's weights (facing pairs 0.002 q, wall faces 0.0008 q, faces up
   0.0016 (q - 0.5), height far below the top 1 - 0.8 q, three times near
-  it, over the last 10 % of the height); faces up within 10 degrees count;
+  it, over the last 10 % of the height);
   "close to the top" is within 3 % of the height; the extra time is the
   time set, once. All first guesses for the case studies to correct.
 * Effort: Quick is 10 s of improving; Best gives up after 10 minutes without

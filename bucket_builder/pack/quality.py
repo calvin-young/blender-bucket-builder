@@ -18,7 +18,7 @@ with the part's translation.
   overlapping: the overlap counts, more the closer they are.
 * Wall face: a face whose normal is within 10 degrees of the x or y axis:
   its area counts.
-* Top face: a face whose normal is within 10 degrees of straight up
+* Top face: a face whose normal is within 1 degree of straight up
   (parallel to the top of the bucket: the "capillary" or "meniscus"
   defect, a cupped face).  Faces facing down do not matter.
 
@@ -33,7 +33,7 @@ MIN_AREA = 2500.0           # mm^2: a flat face this large counts (50 x 50 mm)
 NEAR = 10.0                 # mm: facing faces closer than this count
 WALL_COS = math.cos(math.radians(10.0))
 FACING_COS = -math.cos(math.radians(5.0))
-TOP_COS = math.cos(math.radians(10.0))
+TOP_COS = math.cos(math.radians(1.0))       # (the owner: a face 1 degree off flat shows no meniscus)
 
 
 class Faces:

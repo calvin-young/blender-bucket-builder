@@ -77,7 +77,12 @@ still open. The details are in `AGENTS.md` (Implementation notes).
 - Alternatives: a custom snapping modal (would fight Blender's own snapping).
 - Revisit if: Blender lets add-ons add snap targets.
 
-**The packer runs in a process of its own** (branch `autopack`)
+**The packer is part of the add-on, not an add-on of its own**
+- Context: it needs the collision engine (its referee) and the scene reading of Bucket Builder; Blender extensions have no way to declare one add-on as a dependency of another.
+- Decision: one add-on, one line of development (`main`, 1.5.0); the Pack panel is closed by default and labeled Experimental, so users who do not pack can ignore it. Cost: a larger download.
+- Revisit if: the engines become a package of their own (AGENTS.md, Engine boundary).
+
+**The packer runs in a process of its own**
 - Context: a packer in a thread of Blender's Python froze the interface (one GIL, many short NumPy calls).
 - Decision: `pack/worker.py` in Blender's own Python, reading a job folder and writing progress; parts move as results arrive.
 - Revisit if: never for the main loop; helper processes may grow.
