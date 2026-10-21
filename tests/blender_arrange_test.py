@@ -75,7 +75,7 @@ def main():
           'the smallest box of a turned box is the box itself', (round(vol0), e.round(2)))
     check(bool(e[2] == e.min()), 'with its shortest side upright', e.round(2))
     centre = 0.5 * (world(c).min(axis=0) + world(c).max(axis=0))
-    check(np.allclose(centre, (200, 150, 100), atol=1e-6), 'turned about its own centre', centre)
+    check(np.allclose(centre, (200, 150, 100), atol=1e-6), 'turned about its own center', centre)
 
     # ---- minimize height: a standing slab lies down
     d = box('PartD', (30, 4, 50), (250, 60, 100), (0.0, 0.0, 0.5))

@@ -123,7 +123,7 @@ def colour_mask(box, colour):
 
 
 def badge_box(colour, edge):
-    """Bounding box of the pixels of one colour in the bottom right corner of
+    """Bounding box of the pixels of one color in the bottom right corner of
     the part of the viewport that ends at ``edge`` (pixels from the region's
     left): (count, distance of the rightmost one from that edge, of the
     lowest one from the bottom), or None without a virtual display to read."""
@@ -156,7 +156,7 @@ def check_badge(colour, where, edge):
 
 
 def pixels_around(point, colour, size=14):
-    """How many pixels of a colour the screen shows around a point of the
+    """How many pixels of a color the screen shows around a point of the
     scene (None without a virtual display)."""
     px = gui_common.screen_pixels()
     if px is None:
@@ -639,7 +639,7 @@ def step_isolate_next_shot():
 
 
 def step_ignore():
-    # A problem that is ignored: its hatching goes, a small grey ring stays,
+    # A problem that is ignored: its hatching goes, a small gray ring stays,
     # and the verdict no longer counts it but says that something is ignored.
     before = pixels_around((230, 90, 66.5), 'amber', 30)
     assert before is None or before > 20, before

@@ -4,7 +4,7 @@ id = "bucket_builder"
 version = "1.4.0"
 name = "Bucket Builder"
 tagline = "Live collision, clearance and build-volume monitor"
-maintainer = "Bucket Builder contributors"
+maintainer = "Calvin Young <github.com/calvin-young>"
 type = "add-on"
 website = "https://github.com/calvin-young/blender-bucket-builder"
 

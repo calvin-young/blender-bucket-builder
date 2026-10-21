@@ -144,7 +144,7 @@ LAST = {}
 
 
 def colours(img):
-    """Pixels in the collision, warning and out-of-volume colours."""
+    """Pixels in the collision, warning and out-of-volume colors."""
     red = int(((img[:, :, 0] > 200) & (img[:, :, 1] < 90) & (img[:, :, 2] < 90)).sum())
     amber = int(((img[:, :, 0] > 200) & (img[:, :, 1] > 130) & (img[:, :, 1] < 220) & (img[:, :, 2] < 80)).sum())
     magenta = int(((img[:, :, 0] > 180) & (img[:, :, 1] < 110) & (img[:, :, 2] > 150)).sum())
@@ -230,16 +230,16 @@ def main():
     assert a > 100, 'no clearance hatch visible'
     assert m > 300, 'no out-of-volume hatch visible'
     # the verdict sits in the bottom right corner: the most serious problem
-    # is the part outside the volume, so in that colour, with the collision
-    # in its own colour underneath
+    # is the part outside the volume, so in that color, with the collision
+    # in its own color underneath
     cr, _, cm = colours(corner(LAST['img']))
-    assert cm > 1500, f'no badge in the out-of-volume colour in the bottom right corner ({cm} px)'
-    assert cr > 60, f'the line about the collision is not in the collision colour ({cr} px)'
+    assert cm > 1500, f'no badge in the out-of-volume color in the bottom right corner ({cm} px)'
+    assert cr > 60, f'the line about the collision is not in the collision color ({cr} px)'
     text = overlay.badge_text(mon.status())
     assert text[:2] == ('FAIL', '1 Part Outside Build Volume') and text[2][0] == '1 Collision Detected', text
     assert colours(LAST['img'][H // 2 - 60:H // 2 + 60, :300])[0] == 0, 'something red at the left edge'
     # Only the wall that the part goes through is marked: the middle of an
-    # upright edge of the x = 380 wall is drawn in the out-of-volume colour,
+    # upright edge of the x = 380 wall is drawn in the out-of-volume color,
     # that of an edge of the x = 0 wall in the volume's own.
     assert mon.walls()[0] == (False, False, False, True, False, False), mon.walls()
     hit = colours(around((380, 0, 190)))[2]
@@ -318,7 +318,7 @@ def main():
     mon = settle()
 
     # A problem that is ignored is not drawn and does not count; what is left
-    # of it is a small grey ring where it is.
+    # of it is a small gray ring where it is.
     ball_ring = next(q for q in mon.problems() if q['kind'] == 'COLLIDE')
     r_before, _, _ = render(mon, st, 'collision_counts', (150, -20, 150), (112, 110, 64))
     assert bpy.ops.bucketbuilder.ignore_problem(kind='P', a=ball_ring['names'][0],
@@ -330,7 +330,7 @@ def main():
         'an ignored collision is still drawn', LAST['drawn'], r_ignored, r_before)
     grey = around(ball_ring['center'], 8)
     assert int(((np.abs(grey[:, :, 0].astype(int) - grey[:, :, 1]) < 12) & (grey[:, :, 0] > 120)
-                & (grey[:, :, 0] < 200)).sum()) > 12, 'no grey ring where the ignored problem is'
+                & (grey[:, :, 0] < 200)).sum()) > 12, 'no gray ring where the ignored problem is'
     assert bpy.ops.bucketbuilder.count_all_problems() == {'FINISHED'} and mon.status()['collisions'] == 1
 
     # a warning only: the badge is an amber triangle

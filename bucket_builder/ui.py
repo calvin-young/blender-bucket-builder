@@ -17,15 +17,15 @@ from . import icons, monitor, ops, overlay, props, report
 
 LIST_ROWS = 10
 IGNORED_ROWS = 12
-TAB_WIDTH = 0.3       # of the colour tab of a row in the list of problems, in interface units
+TAB_WIDTH = 0.3       # of the color tab of a row in the list of problems, in interface units
 
 # the icon of every tone of overlay.summary: (ours, Blender's if ours could not be made)
 _TONE_ICON = {'fail': ('cross', 'CANCEL'), 'out': ('box', 'SHADING_BBOX'), 'warn': ('warn', 'ERROR'),
               'wall': ('gap', 'SHADING_BBOX'), 'ok': ('ok', 'CHECKMARK'), 'note': ('note', 'INFO'),
               'dim': ('dot', 'DOT'), '': (None, 'BLANK1'), 'printer': (None, 'BLANK1'),
               'view': (None, 'VIEWZOOM')}
-# The list of problems has Blender's own icons, in the colour of its text: a
-# coloured icon on every row was too loud.  The colour of a kind is a slim
+# The list of problems has Blender's own icons, in the color of its text: a
+# colored icon on every row was too loud.  The color of a kind is a slim
 # tab at the left end of its row (see props._tab).
 _KIND_ICON = {'PARTIAL': 'SHADING_BBOX', 'OUTSIDE': 'SHADING_BBOX', 'COLLIDE': 'CANCEL',
               'CLEAR': 'ERROR', 'WALL': 'OBJECT_HIDDEN'}
@@ -97,7 +97,7 @@ class BUCKETBUILDER_PT_main(_Base, Panel):
         state, rows = overlay.summary(status, local)
         box = layout.box()
         col = box.column(align=True)
-        # (The colour of a line is in its icon.  A panel's text can be made
+        # (The color of a line is in its icon.  A panel's text can be made
         # red and nothing else, and one red line among white ones looked like
         # a mistake: so all of them are plain.)
         for text, tone in rows:
@@ -109,7 +109,7 @@ class BUCKETBUILDER_PT_main(_Base, Panel):
 
 
 def _mm(pr):
-    """A distance for the list: "[3.0 mm]", with two decimals under a millimetre."""
+    """A distance for the list: "[3.0 mm]", with two decimals under a millimeter."""
     d = pr['dist_mm']
     return f"[{'~' if pr['approx'] else ''}{d:.1f} mm]" if d >= 0.995 else \
         f"[{'~' if pr['approx'] else ''}{d:.2f} mm]"
@@ -152,12 +152,12 @@ class BUCKETBUILDER_UL_problems(UIList):
         ignored = pr['ignored']
         row = layout.row(align=True)
         if p is not None:
-            # the colour the problem has in the viewport (grey: ignored)
+            # the color the problem has in the viewport (gray: ignored)
             tab = row.row(align=True)
             tab.ui_units_x = TAB_WIDTH
             tab.enabled = False
             tab.prop(p, 'tab_ignored' if ignored else _KIND_TAB[pr['kind']], text="")
-        # the problem itself: a click on the row goes there.  Greyed when it is ignored.
+        # the problem itself: a click on the row goes there.  Grayed when it is ignored.
         sub = row.row(align=True)
         sub.active = not ignored
         sub.label(text=problem_text(pr), icon=_KIND_ICON[pr['kind']])
@@ -439,7 +439,7 @@ class BUCKETBUILDER_PT_options(_Base, Panel):
         shading = getattr(space, "shading", None)
         if shading is None:
             return
-        # Random colours tell the parts apart; one plain colour lets the
+        # Random colors tell the parts apart; one plain color lets the
         # problems stand out.  Both are worth a click away.
         col = layout.column(align=True)
         col.label(text="Part Colors")
@@ -448,7 +448,7 @@ class BUCKETBUILDER_PT_options(_Base, Panel):
         row.prop_enum(shading, "color_type", 'SINGLE', text="Custom")
         row.prop_enum(shading, "color_type", 'RANDOM', text="Random")
         if shading.type != 'SOLID':
-            # (the colours above are those of solid shading)
+            # (the colors above are those of solid shading)
             col.prop_enum(shading, "type", 'SOLID', text="Use Solid Shading")
         elif shading.color_type == 'SINGLE':
             col.prop(shading, "single_color", text="")
@@ -510,7 +510,7 @@ class BUCKETBUILDER_PT_performance(_Base, Panel):
         if mon is not None:
             stats = mon.world.stats()
             col = layout.column(align=True)
-            col.label(text=f"{stats['pairs']} neighbouring pairs tracked")
+            col.label(text=f"{stats['pairs']} neighboring pairs tracked")
             limit = stats['cache_limit']
             used = f"{stats['bytes'] / 1e6:.0f} MB of cached data"
             col.label(text=used + (f" (limit {limit / 2 ** 30:.1f} GB)" if limit else ""))

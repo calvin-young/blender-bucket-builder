@@ -29,7 +29,7 @@ Pipeline for one batch
     5. report   classify each pair and collect what the overlay draws
 
 What the overlay gets for a colliding pair is the intersection curve plus the
-surface patches of both parts that lie within a few millimetres of the other
+surface patches of both parts that lie within a few millimeters of the other
 part.  That region is found by the coarse traversal, so its size does not
 depend on how finely the parts are tessellated (the triangles actually cut by
 the curve would be an almost invisible band on a dense mesh).
@@ -37,7 +37,7 @@ the curve would be an almost invisible band on a dense mesh).
 Whether two parts intersect has to be right, always.  The batch above is
 bounded per pair (``CAP_FINE``, ``CAP_OVERLAP``), and two finely tessellated
 surfaces that nearly coincide over a large area (a part and its copy a
-fraction of a millimetre apart, a shell nested closely in another) have
+fraction of a millimeter apart, a shell nested closely in another) have
 millions of triangle pairs with overlapping boxes.  When a pair runs into a
 cap without an intersection having been found, its result is flagged
 ``unproven`` and the question is settled by ``scan``: an exhaustive search
@@ -177,7 +177,7 @@ class _Borrow:
 
 def _move_boxes(X, ps, flag, R9, A9, pad2):
     """Boxes ``X`` (6, children, rows) with those of borrowing sides moved into
-    their object's orientation: the box around the transformed box (centre
+    their object's orientation: the box around the transformed box (center
     through the matrix, half extent through its absolute value) plus a little
     slack for rounding.  Empty boxes come out as NaN, which fails every test.
     """
@@ -190,7 +190,7 @@ def _move_boxes(X, ps, flag, R9, A9, pad2):
     r = np.take(R9, sel, axis=1)
     a = np.take(A9, sel, axis=1)
     pd = np.take(pad2, sel)
-    cx = S[0] + S[3]                     # twice the centre
+    cx = S[0] + S[3]                     # twice the center
     cy = S[1] + S[4]
     cz = S[2] + S[5]
     ex = S[3] - S[0]                     # twice the half extent
@@ -237,7 +237,7 @@ def _pair_tris(w, pose_a, pose_b, rel64t, pid, ia, ib, xf=None):
 def _test_block(w, p, a, b, sa, sb, blk_a, blk_b, relt, thr2_p, eps2, want_cd, out, xf=None):
     """Test every child pair of the given rows (all with the same step sizes).
 
-    The children of a node are neighbours in memory, so one gather per parent
+    The children of a node are neighbors in memory, so one gather per parent
     fetches all of them; the box arithmetic then runs on contiguous arrays with
     the row index last.  Only surviving children get index arithmetic.
     """
@@ -373,7 +373,7 @@ def _runs(pid):
 
 def _beam(pid, lb2, cd2, k):
     """Roughly the ``k`` most promising rows of every pair (smallest box
-    distance, ties broken by centre distance) without sorting the whole
+    distance, ties broken by center distance) without sorting the whole
     frontier: only rows close to their pair's minimum are sorted."""
     n = pid.shape[0]
     if n <= 4 * k:
@@ -608,7 +608,7 @@ def _share(cnt, budget):
 
 def _thin(pid, cnt, take):
     """Indices of the rows to keep so that pair ``p`` keeps ``take[p]`` of its
-    ``cnt[p]`` rows, spread evenly over them (rows of a pair are neighbours in
+    ``cnt[p]`` rows, spread evenly over them (rows of a pair are neighbors in
     space: the first so many would all be from one corner of the part)."""
     order = np.argsort(pid, kind='stable')
     ps = np.take(pid, order)

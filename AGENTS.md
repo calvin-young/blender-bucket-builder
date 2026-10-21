@@ -71,7 +71,7 @@ Blender from source where it cannot be downloaded.
 * The scene is never modified by the checker; everything is drawn on top.
 * Never read the dependency graph from a timer before `view_layer.update()`
   (see the top of `monitor.py`: this crashed Blender once).
-* User-facing text: plain, short, British-neutral spelling as in the code;
+* User-facing text: plain, short, US English spelling;
   the verdict's wording lives in one place, `overlay.summary`.
 * Commits: imperative subject, a body that says why.
 * Do not name commercial print-preparation products in the repository, its
@@ -93,9 +93,9 @@ use and is checked by `tests/test_private_guard.py`.
 ## Pull requests
 
 One logical change each, with tests, using `.github/pull_request_template.md`
-(including the requested-vs-assumed section). The maintainer currently lets
-the agent working with him push to `main` directly; the auto packer is
-developed on the `autopack` branch and merged in milestones.
+(including the requested-vs-assumed section) for outside contributions. The
+maintainer's own agent commits and pushes to `main` directly (his choice); the
+auto packer is developed on the `autopack` branch and merged in milestones.
 
 ## Implementation notes
 
@@ -115,7 +115,7 @@ behind them, for whoever changes the code.
   it is also the memory cost: about 55 bytes per triangle per pose.
 * **Poses are a cache** (`World.set_cache_limit`), built on demand, least
   recently used out first, each one a single block (vertices + boxes) in one
-  array, in size classes. A part without neighbours never has one.
+  array, in size classes. A part without neighbors never has one.
 * **Borrowed poses, for live answers only.** An object whose rotation/scale
   changes keeps its pose; boxes read from it are moved at query time
   (`narrow._move_boxes`, padded for rounding), its triangles are posed from
@@ -166,7 +166,7 @@ behind them, for whoever changes the code.
   (`touch`) proves a collision: a copy lying exactly on its original is red
   at once, without any search. Test: `live_budget_tests`.
 * **The hatched collision region** is the surface of both parts within a few
-  millimetres of the other (from the coarse traversal), not the triangles the
+  millimeters of the other (from the coarse traversal), not the triangles the
   intersection curve crosses, which are an invisible sliver on dense meshes.
 * **Status badge "busy"** only waits for work that can change the verdict
   (unread parts, unsolved pairs), not for refinement or the periodic resync.
@@ -221,14 +221,14 @@ Interface (1.1.0, from the owner's list after his first trial):
   parts in Blender's local view (`ops.local_view`, with
   `frame_selected=False`, so the view does not jump) and switching it off
   leaves local view. The view frames the problem, not the parts.
-* **Only the walls that are exceeded change colour** (`Monitor.walls`, exact:
+* **Only the walls that are exceeded change color** (`Monitor.walls`, exact:
   the extents in `OobResult` are the part's own).
 * **The verdict's wording** is in one place, `overlay.summary` (lines with a
   tone); the sidebar shows the same text. Tests compare heads and lines.
 * **Printer names changed once** (`props.PROFILES_VERSION`, `_PROFILES_V1`):
   a 1.0 library is migrated, a scene saved with a 1.0 name shows the new one
   (`current_printer_name`) and never has its volume changed.
-Interface and behaviour (1.2.0, the owner's lists of 2026-10-09):
+Interface and behavior (1.2.0, the owner's lists of 2026-10-09):
 
 * **Two switches**, `detect_collisions` and `monitor_volume`, both off in a
   new scene. `World.set_pair_check` stops pair work without forgetting
@@ -254,18 +254,18 @@ Interface and behaviour (1.2.0, the owner's lists of 2026-10-09):
   and its name, alive).
 * **The list of problems is a UIList** (`BUCKETBUILDER_UL_problems`): the only
   way to get left-aligned text in rows that can be clicked (operator buttons
-  centre their text; enum buttons too). Its rows come from the monitor; the
+  center their text; enum buttons too). Its rows come from the monitor; the
   collection it is given (`WindowManager.bucket_builder_rows`) only has to be
   long enough (`props.ensure_rows`, called from `Monitor.tick`, never from a
   draw). The lit row is `bucket_builder_row`, an IntProperty with a getter
   (`Monitor.active_index`) and a setter that calls the `focus_problem`
   operator (so that a click is an undo step). Verified with a real click in
   `blender_gui_test.py`.
-* **Colour in the sidebar**: Blender gives a panel no coloured rows and no
-  coloured text except red. The list has a slim tab per row: a greyed colour
+* **Color in the sidebar**: Blender gives a panel no colored rows and no
+  colored text except red. The list has a slim tab per row: a grayed color
   swatch (`props._tab`, read-only properties on the preferences that follow
-  the overlay colours). The status box has custom icons (`icons.py`, pixels
-  premultiplied by alpha) beside plain text. The preference colours are
+  the overlay colors). The status box has custom icons (`icons.py`, pixels
+  premultiplied by alpha) beside plain text. The preference colors are
   `COLOR_GAMMA` (as plain `COLOR` their swatches were paler than what the
   overlay draws).
 * **The arrows of Previous / Next are text glyphs** (U+25C0, U+25B6, in the
@@ -283,7 +283,7 @@ Interface and behaviour (1.2.0, the owner's lists of 2026-10-09):
   changed and what is not exported is missing, made every part be read again
   and parts drop out.
 * `frame()` raises the view's Clip End when what it frames would be cut off
-  (a build volume in millimetres is larger than the default 1000 units).
+  (a build volume in millimeters is larger than the default 1000 units).
 
 Engine, from the review of 2026-10-09 (four reviewers, cut off by the usage
 limit but their scripts are in `scratchpad/review_*`):
@@ -350,14 +350,12 @@ Keep this and the next section current; push after every verified step.
 
 Last updated: 2026-10-21 (session 4).
 
-* **The repository moved** to `calvin-young/temp` (every branch pushed and
-  compared ref by ref on 2026-10-21). The owner deletes
-  `calvin-young/blender-bucket-builder` and renames `temp` himself; then
-  point `origin` at the new name. Still to do after the move (owner's
-  request, attached prompt in session 4): AGENTS.md / CONTRIBUTING.md /
-  docs/DECISIONS.md / PR template / issue drafts, **on a branch with a PR**,
-  and purge competitor product names from the repo and its history (the
-  owner: never name them on GitHub; this file and old commit messages do).
+* The repository is `calvin-young/blender-bucket-builder` (moved and renamed
+  on 2026-10-21; it is **public**). The maintainer, Calvin Young, may be
+  named. Repo docs (this file, CONTRIBUTING.md, docs/DECISIONS.md, the PR
+  template) added 2026-10-21; text is US English. Product names are gone
+  from `main`'s files but remain in old commits and on `autopack` (left to
+  that branch's thread; history rewrite not decided).
 * `main` is **1.4.0**: 1.3.0 plus the Arrange tools.
 
 * `main` is **1.3.0** (2026-10-13): 1.2.0 plus the Build Report (Stage 1 of the
@@ -415,7 +413,7 @@ height), worked out in a thread). Tests: `tests/test_pack_*.py`,
 
 Gotchas learned: a large icon is drawn from the preview's `image_pixels_float`,
 not `icon_pixels_float`; Blender's Suzanne has 42 boundary edges (the open-mesh
-warning is right about it); `meshes.box` in the tests is centred on the origin.
+warning is right about it); `meshes.box` in the tests is centered on the origin.
 
 Next is **Stage 2** (voxel layer, FFT feasibility, greedy placement, GPU timing
 script): recommended model Opus 5.5, high; prompt the owner to switch first.
@@ -501,7 +499,7 @@ Where the time goes now, and what each idea would buy (figures from the
 * Blender 4.2 - 5.1 have still not been run: the API audit against the 4.2
   source found nothing missing.
 
-Later, if wanted: smaller poses (quantised low levels); logarithmic extents
+Later, if wanted: smaller poses (quantized low levels); logarithmic extents
 for a rotating part; results rotated instead of re-solved when a group is
 rotated; non-mesh objects checked instead of warned about.
 

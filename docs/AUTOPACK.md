@@ -73,8 +73,8 @@ Recorded as he stated them; defaults he named are in **bold**.
   checkbox**, implemented only if easy.
 * Copies: "here are 20 pringles" (20 parts, maybe slightly different) and
   "here is one pringle, I want 20" (an array). The array tool he uses today is a grid from
-  a centre-to-centre distance; ours should find nested arrangements.
-* Serial labels: embossed (or, later, colour), **overlapping the part by about
+  a center-to-center distance; ours should find nested arrangements.
+* Serial labels: embossed (or, later, color), **overlapping the part by about
   0.5 mm**, not face to face (HP's zonal scaling can separate parts that only
   touch). Two modes: kept as separate overlapping objects (preserves
   instancing, small file) or booleaned in at generation. The printer unions
@@ -210,7 +210,7 @@ Per **part** (or per group of copies of one mesh):
 
 | Field | Default | Notes |
 |---|---|---|
-| mesh | | vertices, triangles (millimetres); copies share one |
+| mesh | | vertices, triangles (millimeters); copies share one |
 | quantity | 1 | for "make 20 of this" |
 | rotation mode | bucket default | `fixed`, `z`, `free` |
 | locked | false | fixed position and rotation; packed around |
@@ -237,14 +237,14 @@ says which part could not be placed and why.
 * locked parts stay; rotations stay within each part's mode;
 * 3D density at most the maximum (12 %).
 
-Soft goals are folded into one **score** that solvers minimise:
+Soft goals are folded into one **score** that solvers minimize:
 
 * parts placed, by tier (dominant: see below);
 * Z height (packed height);
 * layer-density penalty (§6.2);
 * orientation penalties: large up-facing flat areas (meniscus), cosmetic
   faces (later);
-* optional: compactness (contact with neighbours), which helps later parts.
+* optional: compactness (contact with neighbors), which helps later parts.
 
 Tiers are lexicographic: no number of tier 2 parts outweighs one tier 1 part.
 Within a tier the score is a weighted sum. A "soft" limit becomes a penalty
@@ -299,7 +299,7 @@ workflow, so it comes first.
   0.08 mm; a single layer is too fine to matter thermally), configurable.
 * Layer density = band volume / (build area x band thickness).
 * Displayed as a small profile plot (density against Z) in the sidebar, with
-  the cap drawn as a line, and as a coloured strip beside the volume in the
+  the cap drawn as a line, and as a colored strip beside the volume in the
   viewport (later).
 * **Spread penalty**: the profile is smoothed over a window (**5 mm**, the
   owner's choice) and penalised mainly for variation across the packed height
@@ -414,7 +414,7 @@ and the referee. They are listed in the solver dropdown; `auto` picks one
 
 ### 8.3 Improvement (progressive, anytime)
 
-* **Ruin and recreate** (large neighbourhood search): repeatedly remove a set
+* **Ruin and recreate** (large neighborhood search): repeatedly remove a set
   of placed parts (the top slab, a random region, the parts around a gap, or
   random parts), re-insert them and any unplaced parts greedily with a
   shuffled order and orientation choice, and keep the result if its score is
@@ -442,7 +442,7 @@ For "one part, make 20" and for groups of identical copies:
   hand the remaining space to the greedy solver for other parts.
 * The grid array of his current tool is the special case where the basis is the bounding box
   plus the gap; we report both counts so the gain is visible.
-* Exact check: the lattice's few distinct neighbour offsets are checked once
+* Exact check: the lattice's few distinct neighbor offsets are checked once
   with the referee (all copies share them).
 
 ### 8.5 Compaction (all solvers)
@@ -458,7 +458,7 @@ parts.
 * **Single part fit**: one big part; search orientations (fine steps in its
   mode) for one that fits; report "does not fit" with the smallest overshoot.
 * **Box/shelf packing**: parts whose volume is close to their bounding box
-  (ratio above about 0.8) or when the user asks for bounding-box behaviour.
+  (ratio above about 0.8) or when the user asks for bounding-box behavior.
   Instant.
 
 ### 8.7 Recommending a solver (`auto`)
@@ -484,7 +484,7 @@ Blender this is the existing monitor, switched back on.
 
 ### 8.9 Interlocking
 
-A checkbox, off, labelled as not implemented, until it is easy: the voxel
+A checkbox, off, labeled as not implemented, until it is easy: the voxel
 disassembly test (remove parts along the three axes until none can move;
 anything left interlocks) fits the voxel layer well and may come with the
 improvement stage.
@@ -607,7 +607,7 @@ minimal exporter in `pack/meshio.py` is decided at Stage 5.
 * A hollowing add-on (separate from this one); halos already account for
   thin walls.
 * Interlocking check (§8.9).
-* Colour (texture) labels for colour printers.
+* Color (texture) labels for color printers.
 * A GPU path inside Blender (bundled), depending on Stage 2.
 
 ---
@@ -670,7 +670,7 @@ for the owner to set before asking for the stage.
 | 4 | Pattern solver (lattices, double lattices) | beats the bounding-box array on pringle, figurine and Suzanne copies | Opus 5.5, high |
 | 5 | Planner (goals, ratios, quantities); Buckets panel; World groups; export all | multi-bucket jobs from the synthetic set; bucket workflow tested in a window | Opus to design, Sonnet to build |
 | 6 | Halos (adaptive, thickness), pair warnings, what-if, solver recommendation | what-if suggestions reproducible across seeds | Sonnet 5.5, medium |
-| 7 | Labels | labelled builds pass the referee | Sonnet 5.5, low to medium |
+| 7 | Labels | labeled builds pass the referee | Sonnet 5.5, low to medium |
 
 Stage 1 results (2 cores, 2.4 GHz): reports against Blender's own bmesh
 volume agree to 1e-4 in 46 cases of moves, lifts, rotations, scales,

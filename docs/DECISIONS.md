@@ -21,7 +21,7 @@ still open. The details are in `AGENTS.md` (Implementation notes).
 - Context: copies in the same rotation should share work; memory is about 55 bytes per triangle per pose.
 - Decision: poses are fitted on demand, least recently used dropped first, under a memory limit.
 - Alternatives: fitting every part up front.
-- Revisit if: memory per pose can be cut (quantised boxes).
+- Revisit if: memory per pose can be cut (quantized boxes).
 
 **A collision verdict is never left to a capped search**
 - Context: nearly coincident fine meshes have millions of candidate triangle pairs; a capped search missed collisions and contacts.
@@ -59,11 +59,11 @@ still open. The details are in `AGENTS.md` (Implementation notes).
 - Alternatives: sorting everything before any verdict.
 - Revisit if: a disk cache of sorted meshes makes sorting rare.
 
-**The problem list is Blender's UIList; colour as tabs and icons**
-- Context: panels cannot colour rows, and text only red.
-- Decision: a UIList (left-aligned, clickable rows), a slim colour swatch per row, coloured icons beside plain text.
-- Alternatives: coloured icons in every row (judged too loud).
-- Revisit if: Blender's layout API gains colour.
+**The problem list is Blender's UIList; color as tabs and icons**
+- Context: panels cannot color rows, and text only red.
+- Decision: a UIList (left-aligned, clickable rows), a slim color swatch per row, colored icons beside plain text.
+- Alternatives: colored icons in every row (judged too loud).
+- Revisit if: Blender's layout API gains color.
 
 **Arrange tools are independent of the checker**
 - Context: drop to floor, minimize box / height, tilt off axis may later live in a general 3D-print add-on.
@@ -95,7 +95,7 @@ still open. The details are in `AGENTS.md` (Implementation notes).
 - Why it failed: each redraw restarted the viewport's anti-aliasing; a result that took 0.35 s of work appeared after 12 s.
 - Worth retrying if: never; redraws are rate-limited while work goes on.
 
-**Coloured icons in every row of the problem list**
+**Colored icons in every row of the problem list**
 - Why it failed: too loud, by the user's judgement.
 - Worth retrying if: rows can be tinted subtly.
 

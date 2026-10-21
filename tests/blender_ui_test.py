@@ -74,7 +74,7 @@ class FakeLayout:
         if self._attrs.get('alert'):
             LOG.append(('alert', kw.get('text', '')))
         if self._attrs.get('active') is False:
-            LOG.append(('greyed', kw.get('text', '')))
+            LOG.append(('grayed', kw.get('text', '')))
 
     def template_icon(self, icon_value=0, scale=1.0):
         assert icon_value, 'an icon that does not exist'
@@ -228,7 +228,7 @@ def main():
     for idname in ('bucketbuilder.status', 'bucketbuilder.export_3mf', 'bucketbuilder.frame_volume'):
         assert ('operator', idname) in LOG, idname
     assert ('prop_enum', 'color_type=SINGLE') in LOG and ('prop_enum', 'color_type=RANDOM') in LOG, \
-        'the two colour buttons are missing'
+        'the two color buttons are missing'
     labels = labels_since(n0)
     assert 'Not checking collisions' in labels and 'Not checking the build volume' in labels, labels[:6]
     assert 'Collision' in labels and 'Clearance' in labels, 'the display switches have no headings'
@@ -285,11 +285,11 @@ def main():
     labels = labels_since(n0)
     alerts = [t for k, t in LOG[n0:] if k == 'alert']
     assert '1 Part Outside Build Volume' in labels and any('Clearance Warning' in t for t in labels), labels[:8]
-    assert not alerts, ('the lines of the verdict are all plain: their colour is in the icons', alerts)
+    assert not alerts, ('the lines of the verdict are all plain: their color is in the icons', alerts)
     assert 'HP MJF 5600' in labels and LOG[n0:][LOG[n0:].index(('label', 'HP MJF 5600')) + 1] == ('label_icon', 'INFO')
     # The list of problems: previous, on its own, next, in that order; then
     # Blender's list widget with a row for every problem, each with one of
-    # Blender's own icons (one per kind), a colour tab that is shown and
+    # Blender's own icons (one per kind), a color tab that is shown and
     # cannot be clicked, and a magnifier for "on its own".
     called = [t for k, t in LOG[n0:] if k == 'operator']
     at = called.index('bucketbuilder.step_problem')
@@ -314,8 +314,8 @@ def main():
     assert tabs == [ui._KIND_TAB[k] for k in kinds], (tabs, kinds)
     p = props.prefs()
     assert tuple(p.tab_collision) == tuple(p.color_collision)[:3] and \
-        tuple(p.tab_outside) == tuple(p.color_outside)[:3], 'a tab is not in the colour of its kind'
-    p.tab_collision = (0.0, 1.0, 0.0)                   # (cannot be set: it follows the colour)
+        tuple(p.tab_outside) == tuple(p.color_outside)[:3], 'a tab is not in the color of its kind'
+    p.tab_collision = (0.0, 1.0, 0.0)                   # (cannot be set: it follows the color)
     assert tuple(p.tab_collision) == tuple(p.color_collision)[:3]
     # clearance warnings: the closest pair first, the distance at the front
     gaps = [pr for pr in problems if pr['kind'] == 'CLEAR']
@@ -342,7 +342,7 @@ def main():
     assert labels[:len(lines) + 1] == [head] + lines, (labels[:6], head, lines)
     print('  badge:', state, '|', head, '|', lines)
 
-    # a problem of the list ignored, and ignored for good: greyed, counted, and back
+    # a problem of the list ignored, and ignored for good: grayed, counted, and back
     assert bpy.ops.bucketbuilder.focus_problem(index=0) == {'FINISHED'}
     first = mon.problems()[1]
     assert first['kind'] == 'COLLIDE', first['kind']
@@ -350,10 +350,10 @@ def main():
     assert bpy.ops.bucketbuilder.ignore_problem(**args) == {'FINISHED'}
     n0 = len(LOG)
     draw_all(ctx, 'a problem ignored')
-    greyed = [t for k, t in LOG[n0:] if k == 'greyed' and ('row', t) in LOG[n0:]]
+    greyed = [t for k, t in LOG[n0:] if k == 'grayed' and ('row', t) in LOG[n0:]]
     pressed = [t for k, t in LOG[n0:] if k == 'pressed']
     assert greyed == [ui.problem_text(first)], greyed
-    assert [t for k, t in LOG[n0:] if k == 'shown only'][1] == 'tab_ignored', 'an ignored row keeps its colour'
+    assert [t for k, t in LOG[n0:] if k == 'shown only'][1] == 'tab_ignored', 'an ignored row keeps its color'
     assert ('bucketbuilder.ignore_problem', 'HIDE_ON') in pressed and \
         ('bucketbuilder.ignore_problem', 'LOCKED') not in pressed, pressed
     assert '1 ignored' in labels_since(n0) and '1 problem ignored' in labels_since(n0), labels_since(n0)[:8]
@@ -381,7 +381,7 @@ def main():
     mon = settle()
     n0 = len(LOG)
     draw_all(ctx, 'none ignored')
-    assert not [t for k, t in LOG[n0:] if k == 'greyed' and ('row', t) in LOG[n0:]] and \
+    assert not [t for k, t in LOG[n0:] if k == 'grayed' and ('row', t) in LOG[n0:]] and \
         '1 ignored' not in labels_since(n0)
     assert bpy.ops.bucketbuilder.ignore_problem(kind='P', a='nobody', b='nothing') == {'CANCELLED'}
     print('  problems: ignored, locked, passed over by Next, and counted again')
@@ -429,7 +429,7 @@ def main():
     # the report for whoever is asked why something is slow
     lines = ops.report_lines(ctx)
     text = '\n'.join(lines)
-    for word in ('Bucket Builder', 'Blender', 'Parts:', 'Neighbouring pairs', 'Cached data',
+    for word in ('Bucket Builder', 'Blender', 'Parts:', 'Neighboring pairs', 'Cached data',
                  'While editing', 'Overlay', 'Clearance'):
         assert word in text, (word, text)
     assert lines[0].startswith('Bucket Builder 1.'), lines[0]      # the version is found

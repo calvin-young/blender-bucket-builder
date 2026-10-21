@@ -19,7 +19,7 @@ anything else you would not publish.
 
 ## Finding something to work on
 
-Issues labelled `good first issue` are small and well described.
+Issues labeled `good first issue` are small and well described.
 `help wanted` marks larger pieces nobody is working on yet.
 
 ## Sending changes back
@@ -44,7 +44,7 @@ asked for, what the assistant assumed, and what nobody checked.
 
 Issues, pull requests, tests and screenshots use synthetic data only.
 
-## Licence
+## License
 
 By contributing you agree that your contribution is licensed under the
-GPL-3.0-or-later, the licence of this project (see `LICENSE`).
+GPL-3.0-or-later, the license of this project (see `LICENSE`).

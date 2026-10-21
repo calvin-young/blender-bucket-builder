@@ -4,7 +4,7 @@
 
 bl_info = {
     "name": "Bucket Builder",
-    "author": "Bucket Builder contributors",
+    "author": "Calvin Young and contributors",
     "version": (1, 4, 0),
     "blender": (4, 2, 0),
     "location": "3D Viewport > Sidebar > Bucket",

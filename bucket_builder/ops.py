@@ -45,7 +45,7 @@ def frame(context, center, radius):
     half = math.atan(18.0 / max(space.lens, 1.0))
     rv3d.view_location = (float(center[0]), float(center[1]), float(center[2]))
     rv3d.view_distance = max(float(radius), 1e-6) / math.tan(half) * 2.2
-    # A build volume in millimetres is larger than a new viewport sees to
+    # A build volume in millimeters is larger than a new viewport sees to
     # (Clip End is 1000 units): what is framed has to be inside it.
     far = rv3d.view_distance + 2.0 * float(radius)
     if space.clip_end < 1.5 * far:
@@ -381,7 +381,7 @@ _KIND_NAME = {'P': 'PAIR', 'V': 'VOLUME', 'W': 'WALL'}
 
 
 class BUCKETBUILDER_OT_ignore_problem(_RowOperator, Operator):
-    """Ignore this problem: it stays in the list, greyed, and no longer counts. It counts again as soon as it changes, for instance when one of the parts is moved, unless it is locked"""
+    """Ignore this problem: it stays in the list, grayed, and no longer counts. It counts again as soon as it changes, for instance when one of the parts is moved, unless it is locked"""
     bl_idname = "bucketbuilder.ignore_problem"
     bl_label = "Ignore Problem"
     bl_options = {'REGISTER', 'UNDO'}
@@ -528,7 +528,7 @@ class BUCKETBUILDER_OT_frame_volume(Operator):
 
 
 class BUCKETBUILDER_OT_recheck(Operator):
-    """Discard all cached data and analyse the scene again"""
+    """Discard all cached data and analyze the scene again"""
     bl_idname = "bucketbuilder.recheck"
     bl_label = "Recheck Everything"
 
@@ -654,7 +654,7 @@ def report_lines(context):
     lines.append(f"Parts: {stats['objects']} ({s['hidden']} hidden), {triangles_text(stats['triangles'])}; "
                  f"{stats['geoms']} different meshes, {triangles_text(stats['unique_triangles'])}; "
                  f"largest part {triangles_text(largest)}")
-    lines.append(f"Neighbouring pairs: {stats['pairs']} | collisions {s['collisions']}, clearance "
+    lines.append(f"Neighboring pairs: {stats['pairs']} | collisions {s['collisions']}, clearance "
                  f"{s['clearance']}, outside {s['partly_out'] + s['outside']}, near wall {s['near_wall']}"
                  f" | ignored: {s['ignored_problems']} problems, {s['ignored_parts']} parts")
     limit = stats['cache_limit']

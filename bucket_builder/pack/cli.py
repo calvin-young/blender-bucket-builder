@@ -34,7 +34,7 @@ def build_parser():
     g.add_argument('--volume', nargs=3, type=float, metavar=('X', 'Y', 'Z'),
                    help='build volume in mm')
     r.add_argument('--center', action='store_true',
-                   help='the volume is centred on x = y = 0 (default: its corner is at 0, 0, 0)')
+                   help='the volume is centered on x = y = 0 (default: its corner is at 0, 0, 0)')
     r.add_argument('--band', type=float, default=1.0, help='layer thickness of the profile, mm (1)')
     r.add_argument('--smooth', type=float, default=5.0, help='smoothing window of the spread, mm (5)')
     r.add_argument('--profile', action='store_true', help='print the density of every layer band')
@@ -77,7 +77,7 @@ def report_one(path, label, args, out):
     tri = sum(m.nt for m in scene.meshes.values())
     tri_all = sum(it.mesh.nt for it in scene.items)
     p('  printer        %s  (%.1f x %.1f x %.1f mm, %s)'
-      % (pname, *(vhi - vlo), 'centred' if args.center else 'corner at 0'))
+      % (pname, *(vhi - vlo), 'centered' if args.center else 'corner at 0'))
     p('  parts          %d  (%d unique meshes, %.2f M triangles stored, %.2f M printed)'
       % (rep.n_parts, len(scene.meshes), tri / 1e6, tri_all / 1e6))
     p('                 %d inside, %d partly outside, %d outside'

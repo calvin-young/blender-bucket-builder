@@ -85,7 +85,7 @@ void main()
   }
   /* The spacing is a whole number of pixels and so is the line width: with
    * anything else the lines come out unevenly thick and the pattern shimmers.
-   * (Pixel centres are at halves, so both sums below are whole numbers.) */
+   * (Pixel centers are at halves, so both sums below are whole numbers.) */
   float s = u_a.x;
   float w = max(1.0, floor(0.145 * s + 0.5));
   float d1 = mod(floor(gl_FragCoord.x) + floor(gl_FragCoord.y), s);
@@ -684,16 +684,16 @@ def _volume_batches(mon, st, shaders):
 
 
 def _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only=None):
-    """The build volume.  It keeps its own colour; only the walls something
-    goes through turn to the out-of-volume colour, and only the sides of the
-    wall-gap box that something is too close to turn to the warning colour."""
+    """The build volume.  It keeps its own color; only the walls something
+    goes through turn to the out-of-volume color, and only the sides of the
+    wall-gap box that something is too close to turn to the warning color."""
     v = _volume_batches(mon, st, shaders)
     out, near = mon.walls(only) if props.volume_checked(st) else ((False,) * 6, (False,) * 4)
     flat = shaders['flat']
     gpu.state.depth_test_set('LESS_EQUAL')
     # The viewport blends in linear light, where a little alpha goes a long
     # way on a dark background: keep the tint faint so the parts and the
-    # problem colours stay readable.
+    # problem colors stay readable.
     fill = p.volume_fill if p else 0.25
     if fill > 0.0:
         flat.bind()
@@ -962,7 +962,7 @@ def _ring_template(n=24, inner=0.74):
 
 
 def _rings(px, py, radius, inner=0.74):
-    """Many rings at once: centres (k,), radius scalar or (k,) -> (k * T, 2)."""
+    """Many rings at once: centers (k,), radius scalar or (k,) -> (k * T, 2)."""
     tpl = _state.get(('ring', inner))
     if tpl is None:
         tpl = _ring_template(24, inner)
@@ -1177,7 +1177,7 @@ def badge_text(status, local=None):
 
 def _quads(prims):
     """Vertex data for the smooth-icon shader: ``prims`` is a list of
-    (ax, ay, bx, by, half width, radius, colour): a stroke from a to b, or
+    (ax, ay, bx, by, half width, radius, color): a stroke from a to b, or
     with a radius the circle of that radius around a (= b).  Each becomes a
     quad a pixel larger than the stroke all round."""
     n = len(prims)
@@ -1237,7 +1237,7 @@ def _badge_prims(state, cx, cy, r, color):
     pen = 0.2 * r
     if state == 'WARN':
         # corners on a circle a little smaller than the ring of the other
-        # states, and lowered so that the triangle looks centred
+        # states, and lowered so that the triangle looks centered
         q = 0.98 * r
         top = (cx, cy + q - 0.06 * r)
         left = (cx - 0.866 * q, cy - 0.5 * q - 0.06 * r)
@@ -1271,7 +1271,7 @@ def _text_width(text, size):
 
 
 def _palette(p):
-    """The colour of every tone of ``summary``."""
+    """The color of every tone of ``summary``."""
     red = tuple(p.color_collision) if p else (1.0, 0.08, 0.05, 1.0)
     amber = tuple(p.color_clearance) if p else (1.0, 0.72, 0.0, 1.0)
     mag = tuple(p.color_outside) if p else (0.95, 0.1, 0.85, 1.0)
@@ -1284,7 +1284,7 @@ def _palette(p):
 
 def badge_layout(status, p, ui, local=None):
     """What the badge shows and how much room it takes: (state, rows with
-    their colours, width, height) in pixels, margins included.  ``local``:
+    their colors, width, height) in pixels, margins included.  ``local``:
     see ``summary``."""
     state, rows = summary(status, local)
     tones = _palette(p)
@@ -1376,7 +1376,7 @@ def _marker_data(mon, problems, n):
 def _draw_markers(mon, st, p, shaders, ui, persp_matrix, width, height, only=None, srgb=1.0):
     """A ring on every problem and, for clearance and wall-gap warnings, the
     distance next to it.  Rings and distances have switches of their own.  A
-    problem the user ignores keeps a small grey ring, so that it can still be
+    problem the user ignores keeps a small gray ring, so that it can still be
     found."""
     problems = mon.problems()
     if not problems:

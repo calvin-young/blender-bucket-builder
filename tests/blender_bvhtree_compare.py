@@ -1,6 +1,6 @@
 """Blender's mathutils.bvhtree.BVHTree against the add-on's engine.
 
-Two things are measured for a part being dragged into a neighbour:
+Two things are measured for a part being dragged into a neighbor:
 
 * BVHTree.overlap() has no transform argument, so both trees must be in world
   space and the moving part's tree has to be rebuilt on every step.

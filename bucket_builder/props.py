@@ -12,7 +12,7 @@ from bpy.types import AddonPreferences, PropertyGroup
 ADDON_ID = __package__
 GIB = float(1 << 30)
 
-# Build volumes in millimetres (X, Y, Z).  These only seed the editable
+# Build volumes in millimeters (X, Y, Z).  These only seed the editable
 # profile list; nothing else in the add-on depends on them.  The 580+ is the
 # owner's 580 with custom firmware, which builds a little more than the
 # 332 x 190 x 248 mm HP publishes for the 500 series; the figure is his.
@@ -214,7 +214,7 @@ def _poke_volume(self, context):
 class BucketBuilderProfile(PropertyGroup):
     """One printer build volume in the user's library"""
     size: FloatVectorProperty(
-        name="Build Volume", description="Usable build volume in millimetres",
+        name="Build Volume", description="Usable build volume in millimeters",
         size=3, subtype='XYZ', min=1.0, soft_max=1000.0, precision=1, step=100,
         default=(380.0, 284.0, 380.0))
 
@@ -239,7 +239,7 @@ class BucketBuilderSettings(PropertyGroup):
     enabled: BoolProperty(default=False, options={'HIDDEN'})
     detect_collisions: BoolProperty(
         name="Detect Collisions",
-        description="Check every part against its neighbours while you arrange the build: "
+        description="Check every part against its neighbors while you arrange the build: "
                     "parts that touch or cut through each other, and parts that are closer "
                     "than the clearance",
         default=False, update=_poke_enabled)
@@ -260,11 +260,11 @@ class BucketBuilderSettings(PropertyGroup):
     use_clearance: BoolProperty(
         name="Clearance Between Parts",
         description="Warn when two parts are closer to each other than the distance beside "
-                    "this (in millimetres)",
+                    "this (in millimeters)",
         default=True, update=_poke)
     clearance_mm: FloatProperty(
         name="Clearance Between Parts",
-        description="Minimum gap between parts, in millimetres; closer pairs get a warning",
+        description="Minimum gap between parts, in millimeters; closer pairs get a warning",
         default=5.0, min=0.0, soft_max=20.0, precision=2, step=50, update=_poke)
 
     detect_enclosed: BoolProperty(
@@ -282,10 +282,10 @@ class BucketBuilderSettings(PropertyGroup):
         default=False, update=_poke)
 
     unit_mode: EnumProperty(
-        name="Units", description="How scene coordinates map to millimetres",
+        name="Units", description="How scene coordinates map to millimeters",
         items=(('AUTO', "Auto", "Use the scene's unit scale; a default scene holding "
-                "millimetre-sized numbers (the usual STL import) is treated as 1 unit = 1 mm"),
-               ('MM', "1 unit = 1 mm", "Coordinates are millimetres, whatever the scene "
+                "millimeter-sized numbers (the usual STL import) is treated as 1 unit = 1 mm"),
+               ('MM', "1 unit = 1 mm", "Coordinates are millimeters, whatever the scene "
                 "unit settings say"),
                ('SCENE', "Scene Units", "Use the scene's unit scale as it is")),
         default='AUTO', update=_poke)
@@ -296,11 +296,11 @@ class BucketBuilderSettings(PropertyGroup):
     use_wall_clearance: BoolProperty(
         name="Wall Gap",
         description="Warn when a part inside the build volume is closer to a side wall (X "
-                    "and Y) than the distance beside this (in millimetres). The top and the "
+                    "and Y) than the distance beside this (in millimeters). The top and the "
                     "bottom are not checked",
         default=False, update=_poke)
     wall_clearance_mm: FloatProperty(
-        name="Wall Gap", description="Distance parts should keep from the side walls, in millimetres",
+        name="Wall Gap", description="Distance parts should keep from the side walls, in millimeters",
         default=5.0, min=0.0, soft_max=50.0, precision=2, step=50, update=_poke)
     show_volume: BoolProperty(
         name="Show Build Volume", description="Draw the build volume in the viewport",
@@ -313,7 +313,7 @@ class BucketBuilderSettings(PropertyGroup):
     # "Custom"): the one the disk button stores the new size in
     printer_last: StringProperty(default="", options={'HIDDEN'})
     volume_size: FloatVectorProperty(
-        name="Size", description="Build volume in millimetres",
+        name="Size", description="Build volume in millimeters",
         size=3, subtype='XYZ', min=1.0, soft_max=1000.0, precision=1, step=100,
         default=DEFAULT_PROFILES[0][1], update=_poke_volume)
     snap_to_volume: BoolProperty(
@@ -325,11 +325,11 @@ class BucketBuilderSettings(PropertyGroup):
     volume_align: EnumProperty(
         name="Origin", description="Where the build volume sits relative to the scene origin",
         items=(('CORNER', "Corner", "The scene origin is the lower front left corner"),
-               ('CENTER_XY', "Centred", "Centred on the origin in X and Y, standing on Z = 0"),
-               ('CENTER', "Centred XYZ", "Centred on the origin in all three axes")),
+               ('CENTER_XY', "Centered", "Centered on the origin in X and Y, standing on Z = 0"),
+               ('CENTER', "Centered XYZ", "Centered on the origin in all three axes")),
         default='CORNER', update=_poke)
     volume_offset: FloatVectorProperty(
-        name="Offset", description="Extra shift of the build volume in millimetres",
+        name="Offset", description="Extra shift of the build volume in millimeters",
         size=3, subtype='XYZ', precision=1, step=100, default=(0.0, 0.0, 0.0), update=_poke)
 
     show_overlay: BoolProperty(
@@ -384,11 +384,11 @@ class BucketBuilderSettings(PropertyGroup):
 
 
 def _tab(source, name, description):
-    """The colour of a kind of problem as the list of problems shows it: a
+    """The color of a kind of problem as the list of problems shows it: a
     slim tab at the left end of a row.  Blender has no way to give a row of a
-    panel a colour, and its text can only be red; what it does have is the
-    colour swatch, which shows any colour and, greyed out, shows it mutedly.
-    These properties exist to be drawn like that.  They follow the colour the
+    panel a color, and its text can only be red; what it does have is the
+    color swatch, which shows any color and, grayed out, shows it mutedly.
+    These properties exist to be drawn like that.  They follow the color the
     kind has in the viewport and cannot be set."""
     def get(self):
         if source is None:
@@ -455,9 +455,9 @@ class BucketBuilderPreferences(AddonPreferences):
     profiles_seeded: BoolProperty(default=False)
     profiles_version: IntProperty(default=0)
 
-    # 'COLOR_GAMMA': these are colours of the screen, as theme colours are,
+    # 'COLOR_GAMMA': these are colors of the screen, as theme colors are,
     # and the overlay draws exactly these values.  (As plain 'COLOR' Blender
-    # took them for scene colours and showed them paler here than in the
+    # took them for scene colors and showed them paler here than in the
     # viewport.)
     color_collision: FloatVectorProperty(
         name="Collision", subtype='COLOR_GAMMA', size=4, min=0.0, max=1.0,

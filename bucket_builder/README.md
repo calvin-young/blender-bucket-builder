@@ -28,12 +28,12 @@ panels; each can be folded away by a click on its title.
 | **Collision Detection** | The switch for collisions and clearance, their settings, and which parts are checked. |
 | **Build Volume** | The switch for the build volume, the printer, the wall gap. |
 | **Build Report** | The switch for the density report: parts, volume, packed height, 3D density, the density of every layer and a picture of it. |
-| **Options** | Part colours, what is drawn, performance figures, units. |
+| **Options** | Part colors, what is drawn, performance figures, units. |
 | **Export** | Writing the build to a 3MF file (not in this version yet). |
 
 There are two switches, and they are independent:
 
-1. **Detect Collisions** checks every part against its neighbours.
+1. **Detect Collisions** checks every part against its neighbors.
 2. **Monitor Build Volume** shows the printer's build volume and checks that
    every part is inside it.
 
@@ -43,23 +43,23 @@ parts: results follow while you drag.
 | What you see | Meaning |
 | --- | --- |
 | Red cross-hatching and a red curve | Parts intersect. The curve is where the two surfaces cross; the hatching covers both surfaces around it. |
-| A part shaded red | It collides with at least one other part. In a crowded build this is how you tell the parts at fault from their neighbours. |
+| A part shaded red | It collides with at least one other part. In a crowded build this is how you tell the parts at fault from their neighbors. |
 | Red box around a part | The part is completely inside another part. |
 | Amber diagonal hatching, a line and a distance | Parts are closer than the clearance. The line joins the two closest points. |
 | Magenta hatching | The part of a mesh that is outside the build volume. |
 | Magenta box | A part that is entirely outside the build volume. |
-| A wall of the build volume in magenta | Something goes through that wall. The other walls keep their colour. |
+| A wall of the build volume in magenta | Something goes through that wall. The other walls keep their color. |
 | Amber hatching next to a wall, and a distance "to wall" | A part inside the volume but closer to a side wall than the wall gap you asked for. |
 | Thin inner box | The limit set by the wall gap. The side a part is too close to turns amber. |
-| A small grey ring | A problem you have chosen to ignore (see below). |
+| A small gray ring | A problem you have chosen to ignore (see below). |
 | "~" in front of a distance | The gap is at most that; the search for the smallest one was cut short. This happens between parts with large faces lying side by side. Whether the pair touches, and whether it keeps the clearance, is never left at that: those two questions are searched to the end (the verdict says "Checking" meanwhile). |
 
 ### The verdict
 
 The **Bucket Monitoring** sign at the top of the sidebar is lit while
-something is being checked, and grey while both switches are off. The box
+something is being checked, and gray while both switches are off. The box
 under it says how the build stands, one line for each kind of problem, the
-most serious first, each with an icon in its colour. The badge in the bottom
+most serious first, each with an icon in its color. The badge in the bottom
 right corner of the viewport shows the same lines: the first one large, with
 a large icon.
 
@@ -73,11 +73,11 @@ a large icon.
 | Amber ring | 2 problems ignored / 1 part ignored | What you have left out on purpose, so that it is not forgotten when the build is finished. |
 | Green tick | Build OK | Both checks are on and there is nothing to report. With only one of them on it says **No Collisions** or **Inside Build Volume**. |
 | Magnifier | Local view: 2 of 6 parts shown | This viewport shows some of the parts only (see "Problems"). The lines above it are about the whole build all the same. |
-| Grey | Preparing Parts / Checking | Still analysing: parts are being read, pairs are being checked, or gaps that could still turn out to be under the clearance are being measured. A problem that is already known is shown at once. |
-| Grey | Not checking collisions / Not checking the build volume | That switch is off. |
+| Gray | Preparing Parts / Checking | Still analyzing: parts are being read, pairs are being checked, or gaps that could still turn out to be under the clearance are being measured. A problem that is already known is shown at once. |
+| Gray | Not checking collisions / Not checking the build volume | That switch is off. |
 
 The last line, with the "i", names the printer the build is being checked
-for (in the badge it is in the colour of the build volume).
+for (in the badge it is in the color of the build volume).
 
 The badge sits at the right edge of the viewport. The sidebar lies on top of
 the viewport there, but only as far down as its panels go: when they reach
@@ -91,7 +91,7 @@ outside the build volume, collisions, clearance, wall gap. Clearance warnings
 are sorted by their gap, the closest pair first, and so are the wall-gap
 warnings; the gap is what their line starts with: `[3.0 mm] Block | Pin`.
 Each kind has its icon, and a slim tab at the left end of the line in the
-colour that kind has in the viewport: magenta, red, amber.
+color that kind has in the viewport: magenta, red, amber.
 
 Click a line, or use **Previous** / **Next**, to frame the problem in the
 viewport and select the parts involved; the status bar then names them in
@@ -106,7 +106,7 @@ Every entry has three buttons:
   without its surroundings. The magnifier between Previous and Next is the
   same switch for whatever entry you are at: leave it on and step through
   the list to see one problem after the other.
-* **Eye: ignore.** The problem stays in the list, greyed, but it is no longer
+* **Eye: ignore.** The problem stays in the list, grayed, but it is no longer
   drawn and no longer counts: the verdict is about what is left, and says
   "1 problem ignored". It counts again by itself as soon as it changes, for
   instance when one of the parts is moved. Moving both parts together does
@@ -140,7 +140,7 @@ shown"). Numpad `.` frames the selected parts as a whole.
   parts is worked out; what was known is kept, and switching it on again
   only looks at what has moved since.
 * **Clearance Between Parts**: the minimum gap you want between parts, in
-  millimetres. Closer pairs get a warning; untick it to check collisions
+  millimeters. Closer pairs get a warning; untick it to check collisions
   only. Parts collide when they touch or cut through each other.
 * **Ignore Hidden Parts**: off by default, because a part you hid to see past
   it is still in the build. Hidden parts are then checked like the others.
@@ -169,17 +169,17 @@ shown"). Numpad `.` frames the selected parts as a whole.
   view's Clip End is raised.)
 * **Show Build Volume** draws it; **Check Build Volume** warns about parts
   that reach out of it. Under the switch above, each works on its own.
-* **Wall Gap** (in millimetres) is optional. When ticked, a part that sits closer than
+* **Wall Gap** (in millimeters) is optional. When ticked, a part that sits closer than
   this to a side wall (X and Y; the floor and the top are not counted) gets a
   warning. A part that actually crosses a wall is an error.
 * **Advanced**: type a **Size** of your own, place the volume with a corner on
-  the scene origin or centred on it (**Origin**), shift it (**Offset**).
+  the scene origin or centered on it (**Origin**), shift it (**Offset**).
 
 ### Options
 
 * **Part Colors**: two buttons that switch the viewport between *Custom* (one
-  colour for every part, which lets the problems stand out; the swatch
-  underneath picks it) and *Random* (a colour per part, which tells the parts
+  color for every part, which lets the problems stand out; the swatch
+  underneath picks it) and *Random* (a color per part, which tells the parts
   apart). These are Blender's own settings of solid shading; if the viewport
   is in another shading mode, a button to go back to solid shading appears.
 * **Display**: a switch for each thing that is drawn. First the badge and the
@@ -191,10 +191,10 @@ shown"). Numpad `.` frames the selected parts as a whole.
   strong the shading is, the distance between hatch lines in pixels, whether
   hatching that is hidden behind geometry shows through (**Hatch X-Ray**)
   and how strongly, how much the walls of the volume are tinted, the size of
-  the badge, and the colours.
+  the badge, and the colors.
 * **Performance**: see "When it feels slow".
 * **Units**: *Auto* follows the scene's unit scale, and treats a default
-  scene holding millimetre-sized numbers (the usual STL import) as
+  scene holding millimeter-sized numbers (the usual STL import) as
   1 unit = 1 mm. The line underneath shows what was decided; override it if
   it is wrong.
 
@@ -319,7 +319,7 @@ Nothing needs switching on for these, but it helps to know what happens.
 * **Preferences > Add-ons > Bucket Builder > Memory (GB)** limits what the
   checker keeps in memory. Left at 0 it uses a fifth of the installed memory.
   As a guide: 20 bytes per triangle for each different mesh, plus 55 bytes
-  per triangle for each part that has neighbours. When the limit is reached
+  per triangle for each part that has neighbors. When the limit is reached
   the checker keeps working with what it has, more slowly, and says so under
   Performance. A single part too large for the limit is listed under Parts
   as not checked, and the verdict shows a warning instead of a plain tick.
@@ -344,7 +344,7 @@ again.
   they are looked at; a moment after you stop they are fitted again, in
   pieces of a millisecond or two. Only an actual geometry change re-sorts a
   mesh, and that happens in the background.
-* Results are kept per pair of neighbouring parts. When a part changes, only
+* Results are kept per pair of neighboring parts. When a part changes, only
   its own pairs are looked at again; parts that are moved together keep the
   results among themselves.
 * All pairs that need work are traversed together in vectorised NumPy passes;
@@ -352,12 +352,12 @@ again.
 * While you drag, every step has a time budget. Whether parts collide is
   decided on every step, and the colliding parts are shaded at once. The
   curve, the hatching and the exact clearance are worked out for as many
-  neighbours as fit in the budget and for all of them a moment after you
+  neighbors as fit in the budget and for all of them a moment after you
   stop. So a part dropped into the middle of a full build can still be
   dragged out smoothly.
 * One case takes longer than a step: two finely meshed surfaces that lie
   almost exactly on each other, or flat on each other over a large area (a
-  part and a copy of it moved by a fraction of a millimetre, a flange
+  part and a copy of it moved by a fraction of a millimeter, a flange
   resting on a plate, two large faces at about the clearance). While you
   move them the pair may show as "too close" and the verdict says
   "Checking"; the answer follows a moment after you stop, or, for the
@@ -382,9 +382,9 @@ again.
   you change it) are skipped and listed under Parts.
 * Two surfaces closer than about a micron (two millionths of the size of the
   build) count as touching.
-* The coloured icons of the box at the top of the sidebar keep their colours
-  when you change the overlay's colours in Options > Display > Colors; the
+* The colored icons of the box at the top of the sidebar keep their colors
+  when you change the overlay's colors in Options > Display > Colors; the
   viewport and the tabs in the list of problems follow.
-* A row of a Blender panel cannot be given a background colour by an add-on,
+* A row of a Blender panel cannot be given a background color by an add-on,
   and its text can only be made red. That is why the list of problems carries
-  its colours as tabs, and the box at the top as icons beside plain text.
+  its colors as tabs, and the box at the top as icons beside plain text.

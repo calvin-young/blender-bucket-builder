@@ -190,9 +190,9 @@ def build_order(cx, cy, cz, cancel=None, threads=1):
     the longest side of each node.
 
     ``cx, cy, cz`` are contiguous float32 arrays with the triangle bounding-box
-    centres; they are used as scratch space.  ``cancel``, if given, is called
+    centers; they are used as scratch space.  ``cancel``, if given, is called
     now and then; when it returns true the sort is abandoned with
-    ``Cancelled``.  With ``threads`` > 1 the subtrees are shared out between
+    ``Canceled``.  With ``threads`` > 1 the subtrees are shared out between
     that many threads (the result does not depend on it).
     """
     n = cx.shape[0]

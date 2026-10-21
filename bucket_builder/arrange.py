@@ -276,7 +276,7 @@ def rotation_off_axis(dirs, area, target):
 
 
 def _turn(obj, R, points):
-    """Turn an object by the world rotation R about the centre of its box."""
+    """Turn an object by the world rotation R about the center of its box."""
     c = 0.5 * (points.min(axis=0) + points.max(axis=0))
     T = Matrix.Translation(c)
     obj.matrix_world = T @ Matrix(R.tolist()).to_4x4() @ T.inverted() @ obj.matrix_world

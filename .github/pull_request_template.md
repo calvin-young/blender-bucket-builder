@@ -17,6 +17,6 @@
 
 - [ ] One logical change
 - [ ] Tests added or updated, and they pass
-- [ ] User guide (`bucket_builder/README.md`) updated if behaviour changed
+- [ ] User guide (`bucket_builder/README.md`) updated if behavior changed
 - [ ] No real data, real paths or credentials (synthetic files and placeholders only)
 - [ ] No commercial print-preparation products named
