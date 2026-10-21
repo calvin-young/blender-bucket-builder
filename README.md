@@ -43,9 +43,15 @@ Screenshots are from the automated window tests (`tests/blender_gui_test.py`,
 
 The user guide is in [bucket_builder/README.md](bucket_builder/README.md).
 
+**Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) (how to report issues and
+send changes), [AGENTS.md](AGENTS.md) (setup, tests, layout and conventions,
+for people and AI assistants alike), [docs/DECISIONS.md](docs/DECISIONS.md)
+(what was decided and why, what was tried), and the
+[Issues](https://github.com/calvin-young/blender-bucket-builder/issues).
+
 ## Status
 
-Version 1.3.0. Declared for Blender 4.2 and newer. Its tests run on
+Version 1.4.0. Declared for Blender 4.2 and newer. Its tests run on
 **Blender 5.2.2** (Linux, software OpenGL), where:
 
 * the geometry engine agrees with brute-force references on random and
@@ -267,7 +273,9 @@ With the add-on installed and enabled in Blender:
       pack/               auto packer, no Blender imports: meshio, metrics, plot, cli (more on `autopack`)
     tests/
     tools/test-blender/   building Blender from source where it cannot be downloaded
-    CLAUDE.md             working notes: state, decisions, what is next
+    AGENTS.md             for contributors and AI agents: setup, conventions, working notes
+    CONTRIBUTING.md       how to report issues and send changes
+    CLAUDE.md             points Claude Code at AGENTS.md
 
 ## Licence
 
