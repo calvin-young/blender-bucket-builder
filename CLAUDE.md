@@ -273,6 +273,32 @@ limit but their scripts are in `scratchpad/review_*`):
   group is keyed by it: late pictures of large parts were not drawn until
   something moved). `set_scale` invalidates when the scale changes.
 
+Arrange tools (1.4.0, owner's request of 2026-10-21; `arrange.py`, panel
+"Arrange", `tests/blender_arrange_test.py`):
+
+* Independent of the checker on purpose (could move to a general 3D-print
+  add-on later). Each selected part is treated on its own; transforms only.
+* **Own convex hull** (incremental, on ~1200 extreme points along a Fibonacci
+  sphere of directions): `bmesh.ops.convex_hull` needs Bullet, which the
+  sandbox build lacks and other builds may too.
+* Min height: hull face normal of least width, that face down, footprint to
+  the smallest rectangle. Min volume: smallest box over the 400 largest hull
+  face directions (rectangle by angle search), shortest side upright.
+* Tilt Off Axis: large flat faces = triangle normals grouped to ~1 degree
+  holding >= 4 % of the area (6 at most); score = area-weighted
+  min(angle to nearest axis, target) / target over 289 X/Y tilts and 6000
+  random rotations; of the best, the smallest turn. A cube gets ~22 degrees.
+  The owner called this a first rule to refine.
+* Drop to Floor: floor only (owner's choice), Ctrl+Down Arrow in the Object
+  Mode keymap.
+* **Snap to Build Volume** is a switch (`st.snap_to_volume`): a visible,
+  unselectable, unrendered 12-edge wireframe marked `bucket_builder_helper`,
+  kept in step with the volume from `props._poke`; the monitor skips it.
+  Blender does not snap to hidden objects, does snap to unselectable ones
+  unless "Snap onto Selectable Only" is ticked (`transform_snap_object.cc`).
+  Re-entry guard: writing the object fires `_poke` again. Not yet tried by
+  hand in a window.
+
 * Collapsible parts of a panel use `layout.panel(idname, default_closed=True)`;
   their state cannot be set from Python (the scratch script
   `scratchpad/panel_shots.py` opens them with simulated clicks for
@@ -284,7 +310,17 @@ limit but their scripts are in `scratchpad/review_*`):
 
 ## State
 
-Last updated: 2026-10-13 (session 3).
+Last updated: 2026-10-21 (session 4).
+
+* **The repository moved** to `calvin-young/temp` (every branch pushed and
+  compared ref by ref on 2026-10-21). The owner deletes
+  `calvin-young/blender-bucket-builder` and renames `temp` himself; then
+  point `origin` at the new name. Still to do after the move (owner's
+  request, attached prompt in session 4): AGENTS.md / CONTRIBUTING.md /
+  docs/DECISIONS.md / PR template / issue drafts, **on a branch with a PR**,
+  and purge competitor product names from the repo and its history (the
+  owner: never name them on GitHub; this file and old commit messages do).
+* `main` is **1.4.0**: 1.3.0 plus the Arrange tools.
 
 * `main` is **1.3.0** (2026-10-13): 1.2.0 plus the Build Report (Stage 1 of the
   auto packer, merged from `autopack` by fast-forward). Zip sent to the owner.

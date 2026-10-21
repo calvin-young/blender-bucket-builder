@@ -689,8 +689,8 @@ class Monitor:
         ignore_hidden = self.ignore_hidden
         disabled = ignored = skipped = 0
         for obj in view_layer.objects:
-            if obj is None or obj.type != 'MESH':
-                continue
+            if obj is None or obj.type != 'MESH' or obj.get("bucket_builder_helper"):
+                continue          # (the snap wireframe is not part of the build)
             if obj.bucket_builder_ignore:
                 ignored += 1
                 left_out.add(_uid(obj))
