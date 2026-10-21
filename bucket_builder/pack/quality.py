@@ -18,6 +18,11 @@ with the part's translation.
   overlapping: the overlap counts, more the closer they are.
 * Wall face: a face whose normal is within 10 degrees of the x or y axis:
   its area counts.
+* Top face: a face whose normal is within 10 degrees of straight up
+  (parallel to the top of the bucket: the "capillary" or "meniscus"
+  defect, a cupped face).  Faces facing down do not matter.
+
+The rule IDs (PQ-05, PQ-06, PQ-07) are those of docs/PRINT_QUALITY.md.
 """
 
 import math
@@ -28,6 +33,7 @@ MIN_AREA = 2500.0           # mm^2: a flat face this large counts (50 x 50 mm)
 NEAR = 10.0                 # mm: facing faces closer than this count
 WALL_COS = math.cos(math.radians(10.0))
 FACING_COS = -math.cos(math.radians(5.0))
+TOP_COS = math.cos(math.radians(10.0))
 
 
 class Faces:
@@ -147,3 +153,21 @@ def assess(placed, near=NEAR, pairs_out=None):
                 if pairs_out is not None:
                     pairs_out.append((int(pid[a]), int(pid[b]), n[a].copy(), float(s[b]), float(ou * ov)))
     return pairs, a_pair, n_wall, a_wall
+
+
+def top_area(f):
+    """Area of the faces of f that face up (PQ-07): (count, area)."""
+    if f is None or not len(f):
+        return 0, 0.0
+    up = f.n[:, 2] > TOP_COS
+    return int(up.sum()), float(f.area[up].sum())
+
+
+def top_faces(placed):
+    """(faces facing up, their area) of placed (as for assess)."""
+    n, a = 0, 0.0
+    for _, f, _ in placed:
+        k, x = top_area(f)
+        n += k
+        a += x
+    return n, a

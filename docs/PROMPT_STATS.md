@@ -1,27 +1,52 @@
 # Collaboration log
 
-How much steering went into this project, kept so the owner's share of the
-work stays visible. Counts only: no prompt text. Updated at the end of each
-working session with `tools/prompt_stats.py` from the owner's ai-context
-repo. A long prompt is not better than a short one: read the numbers
-together with the steering list.
+How this project is made with AI help, and how much of it the owner
+steered. Counts and one-line summaries only, never prompt text. Updated at
+the end of each working session (`tools/prompt_stats.py` in the owner's
+ai-context repo counts prompts from Claude Code transcripts).
+
+## Disclosure
+
+- **Tools and models:** Claude Code with Claude Opus (4.x, then 5.5).
+- **What the AI does:** writes the code, the tests and the documents, runs
+  the tests (engine, Blender, window tests), commits and pushes.
+- **What the owner does:** sets the requirements, makes the design
+  decisions, brings what he knows from running MJF printers in production,
+  and tries the releases on his own builds and reports back.
+- **How AI work is marked:** every commit made by the AI ends with a
+  `Co-Authored-By: Claude ...` trailer and a link to the session.
+- **Accountability:** the maintainer publishes and answers for everything
+  in the repository.
 
 ## Sessions
 
-Counted from the transcripts that still exist. Sessions before 2026-10-14
-ran in cloud containers that are gone, so they cannot be counted; their
-steering is in the list below.
+Sessions before 2026-10-14 ran in cloud containers that are gone, so their
+prompts cannot be counted; their steering is in the list below. A steering
+line counts once, in the session it came up in.
 
-| Date | Tool | Prompts | Words | Median words | Prompts of 10 words or fewer |
-|---|---|---|---|---|---|
-| 2026-10-14 | Claude Code | 5 | 418 | 70 | 0 |
-| 2026-10-20 - 21 | Claude Code | 4 | 1305 | 186 | 0 |
+| Date | Tool and model | Prompts | Steering lines |
+|---|---|---|---|
+| before 2026-10-14 | Claude Code, Opus | not counted | 3 |
+| 2026-10-14 | Claude Code, Opus 5.5 | 5 | 0 |
+| 2026-10-16 - 19 | Claude Code, Opus 5.5 | not counted | 1 |
+| 2026-10-20 - 21 | Claude Code, Opus 5.5 | 5 | 13 |
 
 ## Steering
 
-What the owner decided, corrected or checked that the work would not have
-done on its own (newest first). `docs/TALLY.md` has the detail.
+What the owner decided, corrected, taught, tested or changed in scope that
+the work would not have done on its own, newest first. `docs/TALLY.md` has
+the detail.
 
+- 2026-10-21 [domain]: faces facing up get the capillary / meniscus defect;
+  faces facing down do not matter.
+- 2026-10-21 [domain]: height matters near the top of the volume, hardly
+  below it (157 vs 164 mm nobody cares; 377 vs 384 is a deal breaker).
+- 2026-10-21 [decide]: part quality against packing density as a dial;
+  sometimes offer choices (one bucket against two).
+- 2026-10-21 [scope]: print-quality knowledge in a document of its own, for
+  other projects and a repository of its own later.
+- 2026-10-21 [decide]: the collaboration log may be public without prompt
+  text; word counts say nothing.
 - 2026-10-21: large flat faces close together or parallel to the walls are a
   recipe for defects ("elephant skin"); the "huge and tiny" screenshot showed it.
 - 2026-10-21: two customer profiles (a service bureau that wants it quick, a

@@ -149,6 +149,8 @@ class Job:
         self.tiers = sorted({p.tier for p in parts})
         self.rng = random.Random(settings.seed if seed is None else seed)
         self.budget = settings.time_budget if time_budget is None else time_budget
+        self._budget0 = self.budget
+        self._extended = False
         self.log = []
         self.phase = 'greedy'
         self.progress = (0, len(self.copies))      # (placed, total) while the first layout is built
@@ -252,7 +254,30 @@ class Job:
         if self.s.stall_time and self.best is not None and self.phase == 'improving' and \
                 el - self._last_better >= self.s.stall_time:
             return True                     # (nothing better for a while: Effort Best stops here)
+        if el >= self.budget - keep and self._try_harder():
+            return False
         return el >= self.budget - keep
+
+    def _near_top(self):
+        """Whether the best layout leaves parts out or is close to the top
+        of the volume (within 3 % of its height): then a few millimeters
+        decide whether the job fits (PK-01)."""
+        if self.best is None or self.phase != 'improving':
+            return False
+        H = float(self.s.vhi[2] - self.s.vlo[2])
+        return getattr(self, '_best_left', 0) > 0 or getattr(self, '_best_h', 0.0) > 0.97 * H
+
+    def _try_harder(self):
+        """Add time once (Settings.near_top_extra) when the build is close
+        to the top or parts are left out."""
+        if self._extended or not self.s.near_top_extra or not self._budget0 or self.cancel or \
+                not self._near_top():
+            return False
+        self._extended = True
+        add = self.s.near_top_extra * self._budget0
+        self.budget += add
+        self.log.append('%6.1f s  close to the top or parts left out: %.0f s more' % (self.elapsed, add))
+        return True
 
     # ------------------------------------------------------------ scoring
     def _left(self, recs):
@@ -382,7 +407,19 @@ class Job:
         if not self.s.flat_rules or not self._any_faces():
             return 0.0
         pairs, a_pair, walls, a_wall = self.flat_report(lay)
-        return self.s.flat_pair_weight * a_pair + self.s.flat_wall_weight * a_wall
+        c = self.s.flat_pair_weight * a_pair + self.s.flat_wall_weight * a_wall
+        if self.s.flat_top_weight:
+            c += self.s.flat_top_weight * self._top_area(lay)
+        return c
+
+    def _top_area(self, lay):
+        """Area of the large flat faces of lay's parts that face up (PQ-07)."""
+        from . import quality
+        a = 0.0
+        for (i, c), r in lay.recs.items():
+            if r[0] != 'pin':
+                a += quality.top_area(self._faces(i, r[0]))[1]
+        return a
 
     def _any_faces(self):
         if self._has_faces is None:
@@ -448,6 +485,8 @@ class Job:
                 self.best_choice = dict(choice)
             self.version += 1
             self._last_better = self.elapsed
+            self._best_h = max(lay.bucket.height, self._cap_height(lay.bucket.volume))
+            self._best_left = sum(self._left(lay.recs).values())
             self.log.append('%6.1f s  %-10s height %.1f mm, %d left out%s'
                             % (self.elapsed, label, lay.bucket.height, sum(self._left(lay.recs).values()),
                                '' if old is None else ' (better)'))
@@ -1081,7 +1120,10 @@ class Job:
         if f is None:
             return 0.0
         wall = (np.abs(f.n[:, 0]) > quality.WALL_COS) | (np.abs(f.n[:, 1]) > quality.WALL_COS)
-        return self.s.flat_wall_weight * float(f.area[wall].sum())
+        c = self.s.flat_wall_weight * float(f.area[wall].sum())
+        if self.s.flat_top_weight:
+            c += self.s.flat_top_weight * quality.top_area(f)[1]
+        return c
 
     def _nudge(self, bucket, i, k, cell):
         """Greedy's choice for part i moved sideways away from large flat
@@ -1515,7 +1557,8 @@ class Job:
                 pairs, a_pair, walls, a_wall = self.flat_report(lay)
                 self.flat = (pairs, a_pair, walls, a_wall)
                 self.log.append('%6.1f s  flat faces %d pairs close together (%.0f mm2), %d parallel to a wall '
-                                '(%.0f mm2)' % (self.elapsed, pairs, a_pair, walls, a_wall))
+                                '(%.0f mm2), %.0f mm2 facing up' % (self.elapsed, pairs, a_pair, walls, a_wall,
+                                                                     self._top_area(lay)))
         yield from self._compact_phase()
 
     def _spread(self):

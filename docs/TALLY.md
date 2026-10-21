@@ -50,6 +50,25 @@ the sessions before; earlier items are summaries.
   printers (580, 5600): rules switched on and off by the printer profile.
 * Prompt statistics in each project (2026-10-21): `docs/PROMPT_STATS.md`;
   use the ai-context repo in this thread.
+* Part quality against packing density as a dial (2026-10-21): soft rules
+  scale with it, from "quality first" to "fit as many as possible, throw the
+  other rules out" (built in 1.4.3 as Part Quality). Faces facing up matter
+  (capillary / meniscus defect), faces facing down do not (1.4.3, at the
+  quality end). Height matters near the top of the volume, little below
+  it; try hard when close (1.4.3: height curve, extra time once).
+* Choices instead of one answer, e.g. one bucket at the cost of quality
+  against two buckets that keep it: "let's noodle on that" (design in
+  AUTOPACK §5.2, not built).
+* Case studies on his own buckets once a local machine is set up, to learn
+  the trade-offs.
+* Print-quality knowledge written down in a document of its own, to be
+  referenced by other projects and moved to its own repository later
+  (`docs/PRINT_QUALITY.md`, 2026-10-21).
+* Follow the ai-context conventions (AGENTS.md, DECISIONS.md and the rest)
+  on every branch; push to ai-context directly. The collaboration log may
+  be public without prompt text; word counts dropped (2026-10-21).
+* Commercial print-prep products are never named in the repository or in
+  commits (2026-10-21).
 * The "3D Printing" application template: "take a crack at it". Not started.
 * 3MF export: "the next project". Not started here.
 
@@ -79,6 +98,11 @@ the sessions before; earlier items are summaries.
   holding back "Build OK"; the packer takes interlocked pairs apart itself
   instead of asking.
 * Up to 8 helper processes for packing.
+* The dial's weights (facing pairs 0.002 q, wall faces 0.0008 q, faces up
+  0.0016 (q - 0.5), height far below the top 1 - 0.8 q, three times near
+  it, over the last 10 % of the height); faces up within 10 degrees count;
+  "close to the top" is within 3 % of the height; the extra time is the
+  time set, once. All first guesses for the case studies to correct.
 * Effort: Quick is 10 s of improving; Best gives up after 10 minutes without
   a better layout and stops at 2 hours at most; Best also restarts from
   scratch now and then.
@@ -96,10 +120,12 @@ the sessions before; earlier items are summaries.
 * Whether customers' parts need arbitrary angles of rotation.
 * Whether a family should be split when its members differ a lot (spacing
   by the largest member costs height).
-* Whether large flat faces parallel to the floor matter too (only walls
-  and facing pairs were mentioned).
-* Whether public project repos should show the prompt statistics, or only
-  private ones.
+* How the Goal choices Lowest Build and Even Layers should relate to the
+  Part Quality dial (they overlap; fold them into it?).
+* Whether the extra time near the top should be more than once, or be a
+  setting.
+* Which commit trailer to use for AI help: Claude Code's `Co-Authored-By`
+  or the kernel's `Assisted-by` (see ai-context, TEAM_BEST_PRACTICES 8).
 * How nested parts that are too dense in one layer should be handled
   (his idea: re-nest them farther apart; he asked to review first).
 * GPU for the packer: waits for his timing table.

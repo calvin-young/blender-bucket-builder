@@ -77,6 +77,28 @@ still open. The details are in `AGENTS.md` (Implementation notes).
 - Alternatives: a custom snapping modal (would fight Blender's own snapping).
 - Revisit if: Blender lets add-ons add snap targets.
 
+**The packer runs in a process of its own** (branch `autopack`)
+- Context: a packer in a thread of Blender's Python froze the interface (one GIL, many short NumPy calls).
+- Decision: `pack/worker.py` in Blender's own Python, reading a job folder and writing progress; parts move as results arrive.
+- Revisit if: never for the main loop; helper processes may grow.
+
+**Voxels and FFT correlation for placement, the exact engine as referee**
+- Context: hundreds of parts, arbitrary shapes, gaps that must hold.
+- Decision: conservative solids on a 1 mm grid, the gap as a dilation of one side; every layout is checked with the collision engine; a final compaction moves parts to the exact gap.
+- Alternatives: no-fit polygons (2D only), physics settling (slow, no guarantee).
+
+**Density over the height the parts fill** (the owner's correction)
+- Decision: volume of the parts over the bucket's area times their height from lowest to highest point; lifting the whole build changes nothing.
+
+**Print-quality rules in a document of their own** (`docs/PRINT_QUALITY.md`)
+- Context: the owner's experience of what packing does to parts is the project's real knowledge, and other tools need it too.
+- Decision: rules with stable IDs (PQ-, PK-), each with problem, cause, detection, avoidance, who cares, source and how firm its numbers are; code refers to the IDs. To move to a repository of its own once it has outside sources.
+
+**One dial between part quality and packing density**
+- Context: customers range from "quality first" to "as many parts as possible".
+- Decision: hard limits fixed; soft weights and the height curve scale with one Part Quality setting (`problem.dial_settings`).
+- Revisit if: the case studies on real buckets show the rules need separate controls.
+
 ## Tried and abandoned
 
 **Hiding the snap wireframe**
@@ -110,3 +132,5 @@ still open. The details are in `AGENTS.md` (Implementation notes).
 | The tilt-off-axis rule (large flat faces at least 20 degrees from every axis) | A first rule, to refine |
 | Sorting speed on a machine with 6 - 8 worker threads (estimated 2 - 4 s for 30 M triangles) | Estimate; not measured |
 | Disk cache of sorted meshes, fast / accurate switch, per-collection ignore | Offered; no decision |
+| The packer's weights, gaps and density limit | First guesses; to be corrected in case studies on real buckets |
+| What was asked and what was assumed, item by item | `docs/TALLY.md` |

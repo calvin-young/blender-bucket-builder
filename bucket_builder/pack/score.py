@@ -17,7 +17,7 @@ preset 'count' (Most Parts) the number of parts comes first instead:
 
 where
 
-    value = height_weight * packed height (mm)
+    value = height_weight * height_cost(packed height) (mm; see below)
             + spread_weight * spread (the coefficient of variation of the
               layer density, smoothed over 5 mm)
             + layer_weight * the squared excess over the soft per-layer cap
@@ -59,9 +59,29 @@ def layer_excess(profile, area, h, cap):
     return float((ex * ex).sum())
 
 
+def height_cost(height, settings):
+    """What a build this high costs, in mm (PK-01): a mm counts
+    `height_far` far below the top of the volume, rising evenly to
+    `height_top` over the last `height_band` of the volume's height, and
+    `height_top` above it.  With both 1: the height itself."""
+    far = getattr(settings, 'height_far', 1.0)
+    top = getattr(settings, 'height_top', 1.0)
+    if far == 1.0 and top == 1.0:
+        return height
+    H = float(settings.vhi[2] - settings.vlo[2])
+    band = max(1e-6, getattr(settings, 'height_band', 0.1) * H)
+    x0 = H - band
+    if height <= x0:
+        return far * height
+    x = min(height, H) - x0
+    c = far * x0 + far * x + (top - far) * x * x / (2.0 * band)
+    return c + top * max(0.0, height - H)
+
+
 def value(height, profile, settings, preset=None):
     wh, ws = PRESETS.get(preset or DEFAULT, PRESETS[DEFAULT])
-    v = wh * height
+    ws *= getattr(settings, 'spread_scale', 1.0)
+    v = wh * height_cost(height, settings)
     if ws:
         v += ws * spread(profile, height, settings.h)
     if settings.layer_weight:

@@ -242,8 +242,11 @@ Soft goals are folded into one **score** that solvers minimize:
 * parts placed, by tier (dominant: see below);
 * Z height (packed height);
 * layer-density penalty (§6.2);
-* orientation penalties: large up-facing flat areas (meniscus), cosmetic
-  faces (later);
+* orientation penalties: large up-facing flat areas (meniscus, PQ-07: built
+  in 1.4.3, `flat_top_weight`, counted in the score, in greedy's pose
+  score and in the Build Report; on at the quality end of the dial only),
+  cosmetic faces (later). Faces facing down do not matter (the owner,
+  2026-10-21);
 * optional: compactness (contact with neighbors), which helps later parts;
 * **flat-face rules** (the owner, 2026-10-21; built in 1.4.2,
   `pack/quality.py`): large flat faces of two parts parallel and close to
@@ -265,8 +268,46 @@ Soft goals are folded into one **score** that solvers minimize:
   the compaction leaves those parts alone. The Build Report counts both.
   Huge-and-tiny: two 150 mm housings 3 mm apart with a 300 mm plate 3 mm
   above them (157 mm) became housings 10 mm apart and the plate 10 mm
-  above (164 mm). Not yet: faces parallel to the floor (not asked), and
-  per-printer rules (§12).
+  above (164 mm). Not yet: per-printer rules (§12).
+
+The rules themselves (what goes wrong, why, how to detect and avoid it,
+who cares) are kept apart from this spec, with stable IDs, in
+`docs/PRINT_QUALITY.md`, so that other tools can use them.
+
+**The quality / efficiency dial and the height curve (1.4.3)**, from the
+owner (2026-10-21): customers sit anywhere between "part quality first"
+(more room, preferred orientations, even layers) and "fit as many parts
+as possible, throw the other rules out"; and a few millimeters of height
+matter only near the top of the volume (157 against 164 mm: nobody
+cares; 377 against 384 mm in a 380 mm volume: a deal breaker).
+`problem.dial_settings(q)` maps the panel's **Part Quality** (0 - 100 %,
+default 50) to the soft weights: facing pairs `0.002 q`, wall faces
+`0.0008 q`, faces facing up `0.0016 max(0, q - 0.5)`, layer spread
+`2 q` times the preset's, the final lift for even layers off below 5 %;
+the hard limits never change. The score's height term is
+`score.height_cost`: a millimeter costs `height_far = 1 - 0.8 q` far
+below the top, rising evenly to `height_top = 3` over the last 10 % of
+the volume's height (38 mm on a 5600), and 3 above it. At 50 % the flat
+and spread weights are those of 1.4.2, height far below the top counts
+0.6. **Trying harder near the top**: when the time set runs out while
+parts are left out or the best build is within 3 % of the volume's
+height, the job takes `near_top_extra` (1.0) times the time set once
+more (`Job._try_harder`, logged). Engine defaults (`Settings()`) are
+unchanged (linear height, no extra time); the operator and the command
+line (`--quality`) apply the dial. Measured on six ridges (80 x 80 mm
+flat bases, free turns): 0 % packs them in 26 mm with two bases facing
+up, 100 % in 43 mm with every base down.
+
+**Choices instead of one answer** (the owner, 2026-10-21, "let's noodle on
+that"): sometimes the operator should see, say, one bucket that fits
+everything at the cost of part quality and two buckets that keep the
+rules. Design, not built: the job keeps a small archive of layouts that
+are best on different axes (parts placed, height near the limit, the
+quality cost) instead of one best; the panel offers "Show alternatives"
+when the archive's ends differ in something that matters (a part left
+out, a bucket more, a rule broken). With several buckets (Stage 5) the
+same archive compares "N buckets, dial at 0" with "N + 1 buckets, dial at
+100".
 
 Tiers are lexicographic: no number of tier 2 parts outweighs one tier 1 part.
 Within a tier the score is a weighted sum. A "soft" limit becomes a penalty

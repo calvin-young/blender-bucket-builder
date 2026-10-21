@@ -30,7 +30,8 @@ from .problem import Part, Settings
 
 SETTINGS = ('gap', 'wall_gap', 'h', 'coarse', 'phases', 'z_step', 'max_density', 'layer_cap',
             'layer_weight', 'candidates', 'time_limit', 'time_budget', 'preset', 'seed', 'compact', 'spread_z',
-            'stall_time', 'restarts', 'flat_rules', 'flat_pair_weight', 'flat_wall_weight')
+            'stall_time', 'restarts', 'flat_rules', 'flat_pair_weight', 'flat_wall_weight',
+            'flat_top_weight', 'spread_scale', 'height_far', 'height_top', 'height_band', 'near_top_extra')
 
 
 def write_job(folder, parts, settings, locked=(), start=None):

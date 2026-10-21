@@ -710,6 +710,19 @@ technology-dependent rules, the two customer profiles for Stage 5.
 has `tools/prompt_stats.py`, PR #1 there). The owner's ai-context
 WORKING_STYLE prefers AGENTS.md and docs/DECISIONS.md; this repo has not
 been moved to that layout yet (its `prompts/setup-repo-docs.md` does it).
+**1.4.3 (2026-10-21)**: `main` (1.4.0: Arrange, the repo docs, US
+spelling) merged into `autopack`; CLAUDE.md is `@AGENTS.md` on both
+branches; the whole tree in US spelling. `docs/PRINT_QUALITY.md` started
+(rules PQ-01 - PQ-10, PK-01 - PK-05, the dial). Part Quality dial
+(`problem.dial_settings`, props `pack_quality`, CLI `--quality`),
+height curve (`score.height_cost`), faces facing up (PQ-07,
+`quality.top_area`, `flat_top_weight`, Build Report row "Flat Faces Facing
+Up"), extra time once near the top or with parts left out
+(`Job._try_harder`); spec AUTOPACK §5.2. Engine defaults unchanged; the
+operator and CLI apply the dial (50 % by default). Test
+`tests/test_pack_quality.py`. Next with the owner: case studies on his
+buckets (local machine), choices instead of one answer (design in §5.2),
+whether Lowest Build / Even Layers fold into the dial.
 Not done in Stage 3: the commercial packer
 comparison (needs the owner's baselines), compaction that makes room for
 parts left out (now it only tidies the final layout), a lattice / pattern

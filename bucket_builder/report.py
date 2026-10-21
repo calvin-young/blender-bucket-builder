@@ -260,6 +260,7 @@ def _final(parts, vlo, vhi, workers, cache, faces):
         if f is not None:
             placed.append((n, f, np.asarray(M, float)[:3, 3]))
     res.flat = quality.assess(placed) if placed else (0, 0.0, 0, 0.0)
+    res.top = quality.top_faces(placed) if placed else (0, 0.0)
     return res
 
 
@@ -291,4 +292,7 @@ def rows(rep):
             out.append(('Flat Faces Close', '%d pair%s' % (flat[0], '' if flat[0] == 1 else 's'), 'warn'))
         if flat[2]:
             out.append(('Flat Faces by Walls', '%d' % flat[2], ''))
+    top = getattr(rep, 'top', None)
+    if top is not None and top[0]:
+        out.append(('Flat Faces Facing Up', '%d' % top[0], ''))
     return out

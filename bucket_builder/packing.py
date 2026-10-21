@@ -66,6 +66,14 @@ def effort_settings(effort, seconds, hours, minutes):
 QUICK_SECONDS = 10.0
 
 
+def quality_settings(percent, keep_low=False):
+    """Settings for the Part Quality dial (percent) and Keep Parts Low."""
+    from .pack.problem import dial_settings
+    d = dial_settings(percent / 100.0)
+    d['spread_z'] = d['spread_z'] and not keep_low
+    return d
+
+
 def pack_mode(o, st):
     """How the packer may turn an object: its own setting, else its mesh's
     (the part list), else the panel's."""
@@ -260,7 +268,7 @@ class BUCKETBUILDER_OT_pack(Operator):
         s = Settings(vlo=vlo, vhi=vhi, gap=st.pack_gap, wall_gap=st.pack_wall_gap,
                      h=st.pack_cell, z_step=st.pack_z_step,
                      max_density=(st.pack_max_density / 100.0) or None,
-                     preset=st.pack_preset.lower(), spread_z=not st.pack_keep_low,
+                     preset=st.pack_preset.lower(), **quality_settings(st.pack_quality, st.pack_keep_low),
                      **effort_settings(st.pack_effort, st.pack_time, st.pack_best_hours, st.pack_stall_minutes))
         self._settings = s
         self._start = start if self.improve else None

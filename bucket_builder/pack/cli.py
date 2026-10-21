@@ -23,6 +23,13 @@ import numpy as np
 from . import meshio, metrics, printers
 
 
+def _quality(args):
+    from .problem import dial_settings
+    d = dial_settings(args.quality / 100.0)
+    d['spread_z'] = d['spread_z'] and not args.keep_low
+    return d
+
+
 def _effort(args):
     if args.effort == 'quick':
         return {'time_budget': min(args.time, 10.0)}
@@ -80,6 +87,8 @@ def build_parser():
                    help='quick: --time at most 10 s; best: until nothing better for --stall minutes '
                         '(default 10), at most --time')
     k.add_argument('--stall', type=float, default=10.0, help='minutes, with --effort best')
+    k.add_argument('--quality', type=float, default=50.0,
+                   help='part quality against packing density, 0 - 100 (default 50; see docs/PRINT_QUALITY.md)')
     k.add_argument('--keep-low', action='store_true',
                    help='leave parts as low as they go, even if the layers end up uneven')
     k.add_argument('--referee', action='store_true', help='check the result with the exact engine')
@@ -112,8 +121,8 @@ def pack_one(args, out):
     parts = parts_of(scene, args.mode, args.copies)
     s = Settings(vlo=vlo, vhi=vhi, gap=args.gap, wall_gap=args.wall_gap, h=args.cell,
                  z_step=args.z_step, max_density=(args.max_density / 100.0) or None,
-                 preset=args.goal, seed=args.seed, compact=not args.no_compact, spread_z=not args.keep_low,
-                 **_effort(args))
+                 preset=args.goal, seed=args.seed, compact=not args.no_compact,
+                 **_quality(args), **_effort(args))
     t_read = time.perf_counter() - t0
     first = []
 

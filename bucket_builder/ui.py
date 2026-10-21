@@ -510,6 +510,7 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
                              "bucket_builder_pack_part", rows=3, maxrows=6)
         col = _split(layout)
         col.prop(st, "pack_preset")
+        col.prop(st, "pack_quality", slider=True)
         col.prop(st, "pack_effort")
         if st.pack_effort == 'STANDARD':
             col.prop(st, "pack_time")
