@@ -72,7 +72,7 @@ def peak_mb():
 
 
 def grid(n):
-    """Cell size and cell centres for ``n`` parts filling the build volume."""
+    """Cell size and cell centers for ``n`` parts filling the build volume."""
     s = (VOLUME.prod() / n) ** (1.0 / 3.0)
     while True:
         dims = np.maximum(1, np.floor(VOLUME / s)).astype(int)
@@ -129,7 +129,7 @@ def exercise(w, mats, uid, rng, cell):
     while w.step():
         pass
     settle = time.perf_counter() - t0
-    print(f'  drag one part through its neighbours   {pcts(times)}   (~{np.mean(nb):.0f} neighbours; '
+    print(f'  drag one part through its neighbors   {pcts(times)}   (~{np.mean(nb):.0f} neighbors; '
           f'exact results {settle * 1000:.0f} ms after release)')
 
     axis = rng.normal(size=3)
@@ -220,10 +220,10 @@ def run(n_parts, tris, n_unique, limit_gb, rng):
     print(f'    first results after {t_first:.1f} s, every collision known after {t_known:.1f} s, the rest '
           f'is exact distances and regions')
     approx = sum(1 for pr in w.viol.values() if pr.approx)
-    print(f'    {len(w.pairs)} neighbouring pairs: {nc} collisions, {ncl} too close '
+    print(f'    {len(w.pairs)} neighboring pairs: {nc} collisions, {ncl} too close '
           f'({approx} with the distance not proven to 1 %), {npart} partly outside')
     report_memory(w)
-    # the part with the most neighbours near the middle of the volume
+    # the part with the most neighbors near the middle of the volume
     mid = 0.5 * VOLUME
     best = min(mats, key=lambda u: float(np.linalg.norm(mats[u][1][:3, 3] - mid)))
     exercise(w, mats, best, rng, cell)

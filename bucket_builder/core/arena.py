@@ -2,7 +2,7 @@
 """Growable NumPy storage shared by every monitored object.
 
 All bounding boxes, posed vertices and triangle index tables live in a few big
-arrays so that one vectorised gather can serve many object pairs at once.
+arrays so that one vectorized gather can serve many object pairs at once.
 """
 
 import bisect

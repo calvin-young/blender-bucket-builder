@@ -25,7 +25,7 @@ fitted in pieces of a millisecond or two, and its results are refreshed.
 
 Poses are the bulk of the memory (about 55 bytes per triangle each) and they
 are a cache: one is built when a pair involving the object is first solved,
-never for a part that has no neighbours, and the least recently used ones
+never for a part that has no neighbors, and the least recently used ones
 are dropped when ``cache_limit`` is reached.  A live edit never waits for a
 fit if there is any pose of the mesh to borrow.  Exact results, on the other
 hand, are always worked out with fitted poses: proving a clearance with the
@@ -252,8 +252,8 @@ class World:
 
     # ------------------------------------------------------------------ setup
     def set_scale(self, scene_size, viz_pad):
-        """Tolerances follow the size of the scene so behaviour is the same
-        whether one unit is a millimetre or a metre."""
+        """Tolerances follow the size of the scene so behavior is the same
+        whether one unit is a millimeter or a meter."""
         s = max(float(scene_size), 1e-9)
         changed = s != getattr(self, 'scene_size', s)
         self.scene_size = s
@@ -1108,7 +1108,7 @@ class World:
         self.O_LB[slot] = g.lbase
         self.adj[slot] = set()
         self._set_extents(slot)
-        # like a live edit: every neighbour gets a quick answer first (does it
+        # like a live edit: every neighbor gets a quick answer first (does it
         # collide?), the details follow.  A part dropped into a full build is
         # then judged within a frame or two instead of after a long first pass.
         self._mark(slot, True)
@@ -1712,7 +1712,7 @@ class World:
             per = max(dt - self._lite_c0 - self._lite_c1 * (n - nd), 0.25 * dt) / nd
         if nd:
             # quick to rise, slow to fall: the cost climbs as a part goes
-            # deeper into its neighbours, and an estimate that lags behind
+            # deeper into its neighbors, and an estimate that lags behind
             # shows as a stutter
             old = self._detail_cost
             self._detail_cost = per if per > old else 0.85 * old + 0.15 * per

@@ -164,7 +164,7 @@ def step_wait_ready():
     st = m.world.stats()
     log(f'first analysis finished {time.perf_counter() - S["t_enable"]:.2f} s after switching on:',
         m.status())
-    log(f'   {st["pairs"]} neighbouring pairs, {st["bytes"] / 1e6:.0f} MB cached')
+    log(f'   {st["pairs"]} neighboring pairs, {st["bytes"] / 1e6:.0f} MB cached')
     return 0.6
 
 
@@ -177,7 +177,7 @@ def target():
     return bpy.data.objects[S['target']]
 
 
-def neighbours():
+def neighbors():
     m = mon()
     w = m.world
     slot = w.slot(target().session_uid)
@@ -230,7 +230,7 @@ def move(phase, dx, dy, label=None):
 
     def record():
         m = mon()
-        n, worst = neighbours()
+        n, worst = neighbors()
         ph = S['phase'][phase]
         ph['steps'].append((n, worst, m.live_ms[-1] if m.live_ms else 0.0))
         ph['versions'].add(m.world.version)
@@ -255,7 +255,7 @@ def finish(phase):
         states = [s for _, s, _ in ph['steps']]
         nb = [n for n, _, _ in ph['steps']]
         log(f'{phase}: {len(ph["steps"])} steps, results changed on {len(ph["versions"])} of them; '
-            f'neighbours tracked {min(nb)}-{max(nb)}; '
+            f'neighbors tracked {min(nb)}-{max(nb)}; '
             f'steps colliding / near / clear: {states.count("COLLIDE")} / {states.count("near")} / '
             f'{states.count("ok")}')
         log(f'   live update per step: median {np.median(live):.1f} ms, p95 {np.percentile(live, 95):.1f}, '
@@ -292,7 +292,7 @@ def step_import_wait():
     if m.world.slot(ob.session_uid) is None or m.status()['busy']:
         STEPS.insert(0, step_import_wait)
         return 0.05
-    n, worst = neighbours()
+    n, worst = neighbors()
     w = m.world
     slot = w.slot(ob.session_uid)
     hits = sum(1 for o in w.adj[slot]
@@ -300,7 +300,7 @@ def step_import_wait():
     S['hits0'] = hits
     redraws = PREP['n'] - S['draws_import']
     log(f'verdict {time.perf_counter() - S["t_import"]:.2f} s after it appeared, {redraws} redraws later: '
-        f'it collides with {hits} of {n} neighbouring parts; status {m.status()}')
+        f'it collides with {hits} of {n} neighboring parts; status {m.status()}')
     # The work is a fraction of a second.  Showing every step of it used to
     # take a redraw per slice, and the redraws were most of the wait.
     assert redraws <= 8, f'{redraws} redraws while one part was being checked'

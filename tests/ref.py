@@ -142,7 +142,7 @@ def mesh_mesh_brute(VA, TA, VB, TB, chunk=2000):
     hiA = PA.max(1)
     loB = PB.min(1)
     hiB = PB.max(1)
-    # cheap vectorised lower bound to skip far pairs
+    # cheap vectorized lower bound to skip far pairs
     for i in range(len(PA)):
         gap = np.maximum(np.maximum(loA[i] - hiB, loB - hiA[i]), 0.0)
         lb = np.sqrt((gap * gap).sum(1))

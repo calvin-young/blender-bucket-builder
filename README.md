@@ -38,14 +38,20 @@ of it (50 parts; the new one lands on 33 of them):
 | ![Just imported](docs/images/import-into-full-build.png) | ![Being dragged out](docs/images/dragging-out.png) |
 
 Screenshots are from the automated window tests (`tests/blender_gui_test.py`,
-`tests/blender_gui_stress.py`), with test shapes sized in millimetres inside a
+`tests/blender_gui_stress.py`), with test shapes sized in millimeters inside a
 380 x 284 x 380 mm volume.
 
 The user guide is in [bucket_builder/README.md](bucket_builder/README.md).
 
+**Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) (how to report issues and
+send changes), [AGENTS.md](AGENTS.md) (setup, tests, layout and conventions,
+for people and AI assistants alike), [docs/DECISIONS.md](docs/DECISIONS.md)
+(what was decided and why, what was tried), and the
+[Issues](https://github.com/calvin-young/blender-bucket-builder/issues).
+
 ## Status
 
-Version 1.3.0. Declared for Blender 4.2 and newer. Its tests run on
+Version 1.4.0. Declared for Blender 4.2 and newer. Its tests run on
 **Blender 5.2.2** (Linux, software OpenGL), where:
 
 * the geometry engine agrees with brute-force references on random and
@@ -61,7 +67,7 @@ Version 1.3.0. Declared for Blender 4.2 and newer. Its tests run on
   memory limit, the warnings about unchecked geometry),
 * every panel, the list of problems and every menu is drawn against a
   stand-in for Blender's layout that rejects what a real one would,
-* the overlay is rendered off-screen and its colours sampled where the walls
+* the overlay is rendered off-screen and its colors sampled where the walls
   and the badge are,
 * in an interactive Blender window on a virtual display (`tests/gui_on_xvfb.sh`)
   a part dragged with simulated mouse input updates the overlay on every step
@@ -154,13 +160,13 @@ To build the zip from this repository:
   borrowed boxes is redone: what is on screen at rest does not depend on how
   the parts got there.
 * **Only what changed is recomputed.** Results are kept per pair of
-  neighbouring parts; when a part moves, only its own pairs are looked at.
+  neighboring parts; when a part moves, only its own pairs are looked at.
 * **No Python loops over triangles.** All pairs that need work are traversed
   together, level by level, in NumPy.
 * **A live step has a time budget.** Whether two parts collide is decided
   on every step. How much more each pair gets (the complete intersection
   curve, the hatched region, the proven clearance distance) follows the
-  measured cost: with a few neighbours every pair gets everything; when a part
+  measured cost: with a few neighbors every pair gets everything; when a part
   lands on dozens of others, most pairs are only *sketched* (one intersecting
   triangle pair proves a collision) and the detail fills in for as many as
   fit. Whatever was left out is completed exactly just after release.
@@ -189,7 +195,7 @@ To build the zip from this repository:
   time a result took to appear.
 * **Memory is bounded.** The fitted trees (55 bytes per triangle and part) are
   a cache with a limit; the least recently used are dropped and built again
-  when needed. A part without neighbours never gets one.
+  when needed. A part without neighbors never gets one.
 * **Colliding parts are shaded from a mesh uploaded once** per unique part and
   redrawn with the object's current matrix, so the cheapest answer (collides
   or not) costs nothing to draw while a part moves.
@@ -204,7 +210,7 @@ tests. Two things rule it out for the live path:
 * It reports overlapping triangles only. There is no tree-to-tree distance
   query, which the clearance check needs.
 
-Measured on the same machine, one step of dragging a part into its neighbour,
+Measured on the same machine, one step of dragging a part into its neighbor,
 collision check only (`tests/blender_bvhtree_compare.py`):
 
 | Triangles (both parts) | BVHTree: rebuild the moving tree + overlap | This add-on |
@@ -217,7 +223,7 @@ collision check only (`tests/blender_bvhtree_compare.py`):
 The add-on's figure also covers the complete intersection curve and the
 geometry the overlay draws. Both find the same intersecting triangle pairs,
 with one exception in the 64 steps of that test: a pair that touches along a
-millionth of a millimetre, which one counts and the other does not.
+millionth of a millimeter, which one counts and the other does not.
 
 ## Tests
 
@@ -262,13 +268,15 @@ With the add-on installed and enabled in Blender:
       props.py            settings, preferences, printer profiles
       ops.py              operators: navigation, isolating, ignoring, printer profiles, the report
       ui.py               sidebar panels, the list of problems, entries in Blender's own menus
-      icons.py            the coloured icons of the status box, and the report's profile picture
+      icons.py            the colored icons of the status box, and the report's profile picture
       report.py           the Build Report: parts from the world, results cached, worked out in a thread
       pack/               auto packer, no Blender imports: meshio, metrics, plot, cli (more on `autopack`)
     tests/
     tools/test-blender/   building Blender from source where it cannot be downloaded
-    CLAUDE.md             working notes: state, decisions, what is next
+    AGENTS.md             for contributors and AI agents: setup, conventions, working notes
+    CONTRIBUTING.md       how to report issues and send changes
+    CLAUDE.md             points Claude Code at AGENTS.md
 
-## Licence
+## License
 
 GPL-3.0-or-later, see [LICENSE](LICENSE).

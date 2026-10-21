@@ -24,7 +24,7 @@ def report(name, times, extra=''):
 
 
 def make_parts(rng, tris_per_part):
-    """A few part shapes in millimetres, roughly 40 mm across."""
+    """A few part shapes in millimeters, roughly 40 mm across."""
     k = max(8, int(np.sqrt(tris_per_part / 2.0)))
     parts = {
         'blob': meshes.blob(rng, 20.0, 2 * k, k, 0.25),
@@ -108,7 +108,7 @@ def drag(w, objs, uid, path, label):
     w.set_matrix(uid, M0)
     while w.step():
         pass
-    report(label, times, f'neighbours ~{np.mean(npairs):.0f}  frames OK/CLEAR/COLLIDE '
+    report(label, times, f'neighbors ~{np.mean(npairs):.0f}  frames OK/CLEAR/COLLIDE '
            f'{states[OK]}/{states[CLEAR]}/{states[COLLIDE]}  settle {settle:.0f} ms')
     return times
 
@@ -177,7 +177,7 @@ def storm(rng, n_parts=50, tris_small=100000, tris_big=400000, steps=60):
     M0 = meshes.matrix(meshes.rot(rng), (190.0, 142.0, 190.0))
     w.add_object('new', 'new', M0)
     t_add = time.perf_counter() - t0
-    # until every neighbour has its answer: the steps the add-on would take
+    # until every neighbor has its answer: the steps the add-on would take
     # between redraws (the longest of them is the longest freeze)
     first = []
     while True:
@@ -200,7 +200,7 @@ def storm(rng, n_parts=50, tris_small=100000, tris_big=400000, steps=60):
     st = w.stats()
     print(f'import storm: {n_parts} parts of ~{tris_small // 1000}k triangles, new part '
           f'{len(f) // 1000}k triangles ({st["triangles"] / 1e6:.1f} M in all, {st["bytes"] / 1e6:.0f} MB)')
-    print(f'  new part lands on {c} parts ({n} neighbours): added in {t_add * 1000:.0f} ms, judged '
+    print(f'  new part lands on {c} parts ({n} neighbors): added in {t_add * 1000:.0f} ms, judged '
           f'after {sum(first) * 1000:.0f} ms in {len(first)} steps (longest {max(first) * 1000:.0f} ms), '
           f'overlay load {overlay_load(w)}')
     times, coll, load, late = [], [], [], []
@@ -245,15 +245,15 @@ def main():
         print()
         w, objs = build_scene(rng, n_obj, tpp, spacing)
         uid = n_obj // 2
-        # a wandering drag that passes close to and through the neighbours
+        # a wandering drag that passes close to and through the neighbors
         steps = 240
         tt = np.linspace(0, 1, steps)
         path = np.stack([55 * np.sin(2 * np.pi * tt), 40 * np.sin(4 * np.pi * tt),
                          30 * np.sin(6 * np.pi * tt)], axis=1)
-        drag(w, objs, uid, path, 'drag one part through its neighbours')
-        # tiny motions around a spot where it is within clearance of a neighbour
+        drag(w, objs, uid, path, 'drag one part through its neighbors')
+        # tiny motions around a spot where it is within clearance of a neighbor
         jitter = np.cumsum(rng.normal(0, 0.05, (120, 3)), axis=0) + np.array([4.0, 0, 0])
-        drag(w, objs, uid, jitter, 'small moves near a neighbour')
+        drag(w, objs, uid, jitter, 'small moves near a neighbor')
         far = np.stack([np.zeros(60), np.zeros(60), 2000 + np.linspace(0, 100, 60)], axis=1)
         drag(w, objs, uid, far, 'drag far away from everything')
         spin(w, objs, uid, 60, 'rotate one part (re-fit + check)', rng)

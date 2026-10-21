@@ -33,7 +33,7 @@ done on its own (newest first). `docs/TALLY.md` has the detail.
   interlocks are checked.
 - 2026-10-20: interlocking: low priority, on by default, background only,
   never slowing anything, pairs remembered.
-- 2026-10-20: asked whether slightly different parts are recognised as alike
+- 2026-10-20: asked whether slightly different parts are recognized as alike
   (they were not: families); asked for buckets with much more varied parts.
 - 2026-10-20: asked which shapes pack better with every other copy turned
   over, and about L shapes that nest with an offset.
@@ -50,4 +50,4 @@ done on its own (newest first). `docs/TALLY.md` has the detail.
 - 2026-10-09: his lists after trying 1.1: two switches off in a new scene,
   ignored problems, the problem list, local view, isolate.
 - Before 2026-10-09: his list after the first trial: no collision distance, hidden
-  parts checked, isolate as a mode, only the exceeded walls coloured.
+  parts checked, isolate as a mode, only the exceeded walls colored.

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Exact triangle/triangle tests, vectorised with NumPy over K triangle pairs.
+"""Exact triangle/triangle tests, vectorized with NumPy over K triangle pairs.
 
 Layout: every array keeps the pair index on the LAST axis and the coordinate
 on the FIRST, so a stack of K triangles is ``(3 coords, 3 corners, K)``.  With

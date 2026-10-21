@@ -171,7 +171,7 @@ def main():
     drive(mon, 'switching monitoring on', parts=len(objs))
     s = mon.status()
     stats = mon.world.stats()
-    print(f'    {s["objects"]} parts checked, {stats["pairs"]} neighbouring pairs: {s["collisions"]} collisions, '
+    print(f'    {s["objects"]} parts checked, {stats["pairs"]} neighboring pairs: {s["collisions"]} collisions, '
           f'{s["clearance"]} too close, {s["partly_out"]} partly outside; {s["skipped"]} left out')
     print(f'    cached data {stats["bytes"] / 1e6:.0f} MB (limit {stats["cache_limit"] / 1e6:.0f} MB), '
           f'{stats["evictions"]} poses dropped for want of memory')

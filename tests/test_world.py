@@ -132,7 +132,7 @@ def random_pair_tests(rng):
         w.add_geom('b', vb, fb)
         sa = np.diag(rng.uniform(0.5, 1.5, 3)) if trial % 3 == 0 else np.eye(3)
         Ma = meshes.matrix(meshes.rot(rng) @ sa, rng.normal(0, 0.2, 3))
-        # place B at a range of separations, biased towards near-contact
+        # place B at a range of separations, biased toward near-contact
         direction = rng.normal(size=3)
         direction /= np.linalg.norm(direction)
         sb_ = np.eye(3) * (0.25 if trial % 7 == 0 else 1.0)     # small part: may end up inside
@@ -812,7 +812,7 @@ def sketch_tests(rng):
 
 
 def scale_tests(rng):
-    """The same build in millimetres and in metres must give the same answers."""
+    """The same build in millimeters and in meters must give the same answers."""
     parts = [meshes.blob(rng, 20.0, 24, 12, 0.3), meshes.torus(18.0, 6.0, 24, 12),
              meshes.grid_box((40.0, 30.0, 20.0), 6)]
     for trial in range(40):
@@ -839,7 +839,7 @@ def scale_tests(rng):
             assert s_mm[k][0] == s_m[k][0], (trial, k, s_mm[k], s_m[k])
             assert abs(s_mm[k][1] - s_m[k][1]) <= 2e-3 * max(s_mm[k][1], 1e-3), (trial, k, s_mm[k], s_m[k])
         assert {k: v[0] for k, v in o_mm.items()} == {k: v[0] for k, v in o_m.items()}, (trial, o_mm, o_m)
-    print('millimetre and metre scenes agree: ok')
+    print('millimeter and meter scenes agree: ok')
 
 
 def odd_input_tests():
@@ -961,7 +961,7 @@ def cache_tests(rng):
         assert lim.BOX.nbytes + lim.geom_bytes <= lim.cache_limit, (it, lim.BOX.nbytes)
     assert ref.evictions == 0 and lim.evictions > 20, lim.evictions
     assert len(ref._poses) > 12 and len(lim._poses) < len(ref._poses) // 2, (len(ref._poses), len(lim._poses))
-    # a part without neighbours and inside the volume never needs a pose
+    # a part without neighbors and inside the volume never needs a pose
     w = build(None)
     w.add_object('alone', 'blob', meshes.matrix(meshes.rot(rng)))
     w.add_object('far', 'tor', meshes.matrix(meshes.rot(rng), (40.0, 0.0, 0.0)))
@@ -1542,7 +1542,7 @@ def _first_cut(PA, PB, eps):
     key_a = (ga[:, 0] * dims[1] + ga[:, 1]) * dims[2] + ga[:, 2]
     order = np.argsort(key_a, kind='stable')
     ks = key_a[order]
-    # a triangle of A lies within one cell of its centre's cell, so B looks
+    # a triangle of A lies within one cell of its center's cell, so B looks
     # at the cells its box touches and one more on each side
     g0 = np.floor((blo - lo) / cell).astype(np.int64) - 1
     g1 = np.floor((bhi - lo) / cell).astype(np.int64) + 1
@@ -1578,7 +1578,7 @@ def _first_cut(PA, PB, eps):
 
 def near_coincident_tests(rng):
     """Large, finely tessellated surfaces that nearly coincide: a part and its
-    copy a fraction of a millimetre away, a shell closely inside another.
+    copy a fraction of a millimeter away, a shell closely inside another.
     Millions of their triangle pairs have overlapping boxes, far more than
     the search of one pass may look at, and the few it does look at are the
     twins, which never cut each other.  Before the exhaustive search existed
@@ -1587,7 +1587,7 @@ def near_coincident_tests(rng):
     all over."""
     v, f = meshes.blob(rng, 40.0, 320, 160, 0.3)
     s1, sf = meshes.uv_sphere(50.0, 320, 160)
-    s2, _ = meshes.uv_sphere(50.05, 320, 160)        # the same sphere scaled about its centre
+    s2, _ = meshes.uv_sphere(50.05, 320, 160)        # the same sphere scaled about its center
 
     def world(clear, enclosed=True):
         w = World()
@@ -1641,7 +1641,7 @@ def near_coincident_tests(rng):
           f'({dt:.2f} s in {steps} steps, longest {longest * 1000:.0f} ms; with and without the clearance '
           f'check; an independent grid search agrees after {tested:,} triangle pairs)')
 
-    # a shell in a slightly larger one, pushed off centre until it pokes through
+    # a shell in a slightly larger one, pushed off center until it pokes through
     for clear in (5.0, 0.0):
         for enclosed in (True, False):
             w = world(clear, enclosed)
@@ -1653,8 +1653,8 @@ def near_coincident_tests(rng):
             assert not pr.enclosed, 'two surfaces that cross are not one inside the other'
     print(f'  a sphere poking through one 0.05 larger: collision found ({dt:.2f} s)')
 
-    # ... and centred, where it touches nowhere (the outer one is the inner
-    # one scaled about its centre: every ray from there meets the inner one
+    # ... and centered, where it touches nowhere (the outer one is the inner
+    # one scaled about its center: every ray from there meets the inner one
     # first).  Inside counts as a collision; with that check off the pair is
     # only close, and saying so takes looking at every candidate.
     for clear, want in ((5.0, CLEAR), (0.0, OK)):
@@ -1663,11 +1663,11 @@ def near_coincident_tests(rng):
         w.add_geom('b', s2, sf)
         w.add_object('A', 'a', meshes.matrix(None, (100, 100, 100)))
         w.add_object('B', 'b', meshes.matrix(None, (100, 100, 100)))
-        pr, dt, steps, scan_steps, longest = run(w, want, ('centred', clear))
+        pr, dt, steps, scan_steps, longest = run(w, want, ('centered', clear))
         assert w.scans >= 1 and w.scan_hits == 0 and scan_steps >= 3, (w.scans, w.scan_hits, scan_steps)
         if want == CLEAR:
             assert 0.03 < pr.dist < 0.051, pr.dist
-    print(f'  the same sphere centred in the larger one (0.05 apart everywhere): no collision, said '
+    print(f'  the same sphere centered in the larger one (0.05 apart everywhere): no collision, said '
           f'after every candidate was looked at ({dt:.2f} s in {steps} steps, {scan_steps} of them '
           f'searching, longest {longest * 1000:.0f} ms)')
     w = world(5.0, True)
@@ -1675,7 +1675,7 @@ def near_coincident_tests(rng):
     w.add_geom('b', s2, sf)
     w.add_object('A', 'a', meshes.matrix(None, (100, 100, 100)))
     w.add_object('B', 'b', meshes.matrix(None, (100, 100, 100)))
-    pr = run(w, COLLIDE, 'centred, inside')[0]
+    pr = run(w, COLLIDE, 'centered, inside')[0]
     assert pr.enclosed == 1, pr.enclosed
 
     # the part is moved while the search is under way: the search is dropped
@@ -2272,7 +2272,7 @@ def group_move_tests(rng):
         return worst
 
     moves = kept = redone = crept = 0
-    for origin in (0.0, 300.0):       # around the origin, and where a millimetre scene has its parts
+    for origin in (0.0, 300.0):       # around the origin, and where a millimeter scene has its parts
         n_obj = 26
         objs = {}
         for i in range(n_obj):

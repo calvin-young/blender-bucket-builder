@@ -1,4 +1,4 @@
-"""Checks the vectorised triangle routines against the slow references."""
+"""Checks the vectorized triangle routines against the slow references."""
 
 import os
 import sys
@@ -13,7 +13,7 @@ import ref  # noqa: E402
 
 
 def run(P, Q, eps):
-    """Call the vectorised routines on (K, 3, 3) arrays; results back in that layout."""
+    """Call the vectorized routines on (K, 3, 3) arrays; results back in that layout."""
     Ps, Qs = tritri.to_soa(P), tritri.to_soa(Q)
     hit, seg_hit = tritri.tri_tri_intersect(Ps, Qs, eps)
     seg = np.zeros((len(P), 2, 3))
@@ -84,7 +84,7 @@ def main():
                 err = abs(got - rd)
                 worst = max(worst, err)
                 assert err < 1e-9, ('distance mismatch', spread, i, got, rd)
-                # reported closest points must realise the distance and lie on the triangles
+                # reported closest points must realize the distance and lie on the triangles
                 assert abs(np.linalg.norm(cp[i] - cq[i]) - got) < 1e-9
                 c = ref.closest_pt_on_tri(cp[i], P[i, 0], P[i, 1], P[i, 2])
                 assert np.linalg.norm(c - cp[i]) < 1e-9

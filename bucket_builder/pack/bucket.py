@@ -144,7 +144,7 @@ class Bucket:
 
     def _faces(self, pg, axis, sign=-1):
         """Flat offsets (in this grid) of the kernel cells that lead when the
-        part moves towards -axis (sign -1) or +axis (sign 1): set, with the
+        part moves toward -axis (sign -1) or +axis (sign 1): set, with the
         cell behind them not set."""
         key = ('faces', axis, sign, self.fine.shape)
         off = pg._coarse.get(key)
@@ -165,7 +165,7 @@ class Bucket:
         return off
 
     def slide(self, pg, b, axis, limit, sign=-1):
-        """How many cells (0 .. limit) a part that fits at b can move towards
+        """How many cells (0 .. limit) a part that fits at b can move toward
         -axis (sign -1) or +axis (1) and still fit.  Only the leading cells of
         its kernel can meet something new at each step."""
         if limit <= 0:

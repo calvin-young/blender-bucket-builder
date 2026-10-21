@@ -568,7 +568,7 @@ DONE = (0.3, 0.86, 0.4, 1.0)
 
 
 def badge_state(now=None):
-    """(title, detail, fraction or None, colour) of what to show, or None."""
+    """(title, detail, fraction or None, color) of what to show, or None."""
     now = time.perf_counter() if now is None else now
     if JOB['running']:
         done, total = JOB['done'], max(JOB['total'], 1)
@@ -610,7 +610,7 @@ def draw_badge():
         import gpu
         from gpu_extras.batch import batch_for_shader
         from . import overlay
-        title, detail, frac, colour = state
+        title, detail, frac, color = state
         context = bpy.context
         region = context.region
         ui = context.preferences.system.ui_scale
@@ -628,7 +628,7 @@ def draw_badge():
         sh.bind()
         sh.uniform_float("color", (0.08, 0.08, 0.08, 0.78))
         batch_for_shader(sh, 'TRIS', {"pos": quad}).draw(sh)
-        sh.uniform_float("color", colour[:3] + (1.0,))
+        sh.uniform_float("color", color[:3] + (1.0,))
         edge = np.array([[x0, y0], [x0 + 3 * ui, y0], [x0 + 3 * ui, y0 + h],
                          [x0, y0], [x0 + 3 * ui, y0 + h], [x0, y0 + h]], dtype=np.float32)
         batch_for_shader(sh, 'TRIS', {"pos": edge}).draw(sh)
@@ -636,7 +636,7 @@ def draw_badge():
         sh.uniform_float("color", (0.35, 0.35, 0.35, 0.9))
         batch_for_shader(sh, 'TRIS', {"pos": overlay._fan(cx, cy, r)}).draw(sh)
         if frac is not None and frac > 0:
-            sh.uniform_float("color", colour)
+            sh.uniform_float("color", color)
             batch_for_shader(sh, 'TRIS', {"pos": _wedge(cx, cy, r, min(frac, 1.0))}).draw(sh)
         tx = cx + r + 14 * ui
         overlay._text_shadow(True)

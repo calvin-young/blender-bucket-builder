@@ -85,7 +85,7 @@ def main():
     except KeyError:
         check(True, 'unknown printer is an error')
     code, text = run(['report', secret, '--volume', '100', '100', '100', '--center'])
-    check('1 inside, 0 partly outside, 4 outside' in text, 'a centred 100 mm volume holds one cube, and one touching its wall is outside: '
+    check('1 inside, 0 partly outside, 4 outside' in text, 'a centered 100 mm volume holds one cube, and one touching its wall is outside: '
           + [l for l in text.split('\n') if 'inside' in l][0].strip())
 
     # the sizes match the add-on's printer list (props needs bpy, so read the source)

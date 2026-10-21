@@ -12,7 +12,7 @@ the sessions before; earlier items are summaries.
   quality; the 5600, the 1200 and a 580 with a custom size. (1.0 - 1.2)
 * His list after the first trial (1.1.0): no collision distance; hidden
   parts checked unless Ignore Hidden Parts; isolate as a mode; only the
-  walls exceeded change colour. His lists of 2026-10-09 (1.2.0): two
+  walls exceeded change color. His lists of 2026-10-09 (1.2.0): two
   switches, both off in a new scene; ignored problems; the problem list.
 * Work pushed often and notes kept, because a session can stop at any time.
 * The auto packer, in stages, on the `autopack` branch (2026-10-12).
@@ -114,7 +114,7 @@ the sessions before; earlier items are summaries.
   parts at the array's pitch).
 * Partner grids for double lattices by flipping (twice as cheap).
 * The interlocking check (§8.9).
-* A line in the Pack panel saying what was recognised (families,
+* A line in the Pack panel saying what was recognized (families,
   patterns, pairs).
 * Several buckets per file (Stage 5), what-if, labels (Stages 6 - 7).
 * The performance list and the review items in `CLAUDE.md` (B, C).

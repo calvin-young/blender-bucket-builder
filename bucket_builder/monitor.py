@@ -66,7 +66,7 @@ ACTIVE_PAUSE = 0.02     # pause between background slices while the user is busy
 BOOST = 2.5             # background slices are this much longer while the user is not ...
 SHARE = 0.5             # ... or this share of what Blender itself takes for a pass of its main loop,
 MAX_SLICE = 0.2         # if that is more (a heavy scene on a slow graphics card), up to this
-REDRAW_MIN = 0.1        # while analysing, the viewport is redrawn at most this often ...
+REDRAW_MIN = 0.1        # while analyzing, the viewport is redrawn at most this often ...
 REDRAW_MAX = 1.0        # ... but this often at least, however long a redraw takes
 WORKER_POLL = 0.03      # how often finished worker jobs are looked for when nothing else is to do
 RESYNC_SECONDS = 1.5    # safety net: compare the scene with the mirror this often
@@ -329,7 +329,7 @@ class Monitor:
         if us.system != 'NONE' and abs(scale - 1.0) > 1e-9:
             return scale * 1000.0, "scene units"
         # Default scene scale: decide from the size of the parts.  Printable
-        # parts measured in metres are well below 1 unit; millimetre numbers
+        # parts measured in meters are well below 1 unit; millimeter numbers
         # are well above.
         w = self.world
         slots = list(w._slot_of.values())
@@ -340,7 +340,7 @@ class Monitor:
             return 1.0, "1 unit = 1 mm"
         if self._auto_mm == 1.0:
             return 1.0, "1 unit = 1 mm (detected)"
-        return 1000.0, "scene units, metres (detected)"
+        return 1000.0, "scene units, meters (detected)"
 
     def volume_box(self, st):
         """Build volume as (lo, hi) in scene units."""
@@ -454,7 +454,7 @@ class Monitor:
 
         Lengths are in scene units (the offset of the second part is turned
         into the first one's frame but keeps its size), so that one tolerance
-        fits whatever scale the objects carry: a part imported in metres with
+        fits whatever scale the objects carry: a part imported in meters with
         a scale of 0.001 is compared like any other."""
         w = self.world
         Ma = w.part_matrix(a)
@@ -690,8 +690,8 @@ class Monitor:
         ignore_hidden = self.ignore_hidden
         disabled = ignored = skipped = 0
         for obj in view_layer.objects:
-            if obj is None or obj.type != 'MESH':
-                continue
+            if obj is None or obj.type != 'MESH' or obj.get("bucket_builder_helper"):
+                continue          # (the snap wireframe is not part of the build)
             if obj.bucket_builder_ignore:
                 ignored += 1
                 left_out.add(_uid(obj))
@@ -910,7 +910,7 @@ class Monitor:
         """Hand unsorted meshes to the worker threads: those that results are
         waiting for first, the more the sooner.  While collisions are checked
         the others follow, the small ones first (sooner or later every part
-        meets a neighbour, and that should not be the moment its tree has to
+        meets a neighbor, and that should not be the moment its tree has to
         be made).  With only the build volume monitored nothing else is
         sorted: a part's place is known without its tree."""
         w = self.world
@@ -1298,7 +1298,7 @@ class Monitor:
         """The problems for the panel and for navigation, the most serious
         first: out of the build volume, collisions, clearance, wall gap.
         Problems the user ignores are in the list too (``ignored`` is 1, or 2
-        if for good): they stay where they are and are shown greyed."""
+        if for good): they stay where they are and are shown grayed."""
         ver = (self.world.version, self.move_serial, self.ignore_serial, self.pairs_on)
         if self._problems[0] == ver:
             return self._problems[1]

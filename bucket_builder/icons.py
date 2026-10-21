@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Small coloured icons for the status box of the sidebar.
+"""Small colored icons for the status box of the sidebar.
 
-Blender lets an add-on colour the text of a panel in one way only (red, for
-alerts), and its own icons take their colour from the theme.  So that the
-lines of the verdict have the colours they have in the viewport's badge,
+Blender lets an add-on color the text of a panel in one way only (red, for
+alerts), and its own icons take their color from the theme.  So that the
+lines of the verdict have the colors they have in the viewport's badge,
 these icons are drawn here, as pixels, when the add-on is switched on.
 (The list of problems uses Blender's own icons: see ui._KIND_ICON.)
 """
@@ -16,7 +16,7 @@ RED = (0.96, 0.22, 0.17)
 AMBER = (1.0, 0.72, 0.0)
 MAGENTA = (0.95, 0.25, 0.85)
 GREEN = (0.3, 0.86, 0.4)
-GREY = (0.62, 0.62, 0.62)
+GRAY = (0.62, 0.62, 0.62)
 
 _pcoll = None
 _ids = {}          # name -> the preview that holds the icon
@@ -64,14 +64,14 @@ def _shape(name, x, y):
 
 
 _COLOUR = {'cross': RED, 'ok': GREEN, 'warn': AMBER, 'box': MAGENTA, 'gap': AMBER, 'note': AMBER,
-           'dot': GREY}
+           'dot': GRAY}
 
 
 def pixels(name, size=SIZE):
     """An icon as float RGBA, (size, size, 4), the first row at the bottom.
-    The edge of the shape is one pixel of gradient wide.  The colours are
+    The edge of the shape is one pixel of gradient wide.  The colors are
     multiplied by the alpha, which is how Blender wants the pixels of an
-    icon: a colour with no alpha is not "nothing" to it but light that is
+    icon: a color with no alpha is not "nothing" to it but light that is
     added, and the icon comes out as a glowing square."""
     c = (np.arange(size) + 0.5) * (2.0 / size) - 1.0
     x, y = np.meshgrid(c, c)
@@ -127,7 +127,7 @@ def register():
         icon.image_pixels_float = np.zeros((PROFILE, PROFILE, 4), dtype=np.float32).ravel().tolist()
         _ids['profile'] = icon
     except Exception as ex:           # without them the sidebar uses Blender's own icons
-        print("Bucket Builder: coloured icons unavailable:", ex)
+        print("Bucket Builder: colored icons unavailable:", ex)
         _ids.clear()
 
 

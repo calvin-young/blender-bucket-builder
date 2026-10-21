@@ -259,7 +259,7 @@ def test_components():
 
 
 def test_properties_on_triangles():
-    print('triangles with colour properties')
+    print('triangles with color properties')
     xml = CUBE_XML.replace('<triangle v1="0" v2="2" v3="1"/>',
                            '<triangle v1="0" v2="2" v3="1" pid="1" p1="0"/>')
     model = ('<model %s><resources><object id="1">%s</object></resources>'

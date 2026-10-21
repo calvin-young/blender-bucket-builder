@@ -128,7 +128,7 @@ class Soup:
     """A part's triangles cut until no edge is longer than h, once, in the
     frame of its base matrix: every orientation of a part is a rotation of
     that frame, which keeps the edges as short, so turning the pieces is all
-    an orientation needs (cutting them was most of the time of voxelising).
+    an orientation needs (cutting them was most of the time of voxelizing).
     None of it for meshes whose pieces would take too much memory."""
     MAX_PIECES = 1_500_000
 
@@ -176,9 +176,9 @@ def surface_grid_soup(soup, R, h, pad, align='grid'):
 # ------------------------------------------------------------------ large meshes
 
 class Cloud:
-    """A mesh's surface as the centres of the cells (side hl, in its own
+    """A mesh's surface as the centers of the cells (side hl, in its own
     frame) that the surface lies in.  Made once per mesh; a turned copy is
-    then voxelised from these points, at a cost set by the part's size, not
+    then voxelized from these points, at a cost set by the part's size, not
     its triangle count (docs/AUTOPACK.md section 8.10)."""
 
     def __init__(self, verts, tris, hl):
@@ -197,7 +197,7 @@ def cloud_cell(h, sigma):
 
 def surface_grid_cloud(cloud, A, h, pad, align='grid'):
     """surface_grid from a Cloud: every point of a local cell lies within
-    sigma * hl * sqrt(3) / 2 of the turned centre, so the cells of that
+    sigma * hl * sqrt(3) / 2 of the turned center, so the cells of that
     box around it hold the turned surface (conservative)."""
     A = np.asarray(A, np.float64)
     sigma = float(np.linalg.svd(A, compute_uv=False)[0])
@@ -236,7 +236,7 @@ def _propagate(empty, out, axis):
 
 
 def outside(blocked):
-    """Empty cells connected (6-neighbours) to the grid's border through empty
+    """Empty cells connected (6-neighbors) to the grid's border through empty
     cells.  The border must be empty."""
     empty = ~blocked
     if _ndi is not None:
@@ -374,7 +374,7 @@ def dilate_gap(solid, gap, h):
 # ------------------------------------------------------------------ parts
 
 class PartGrid:
-    """One part in one orientation, voxelised.
+    """One part in one orientation, voxelized.
 
     ``origin`` is the corner of cell 0 in the posed part's frame (mm): the
     part placed with translation t puts cell 0 at origin + t.  ``solid`` and

@@ -109,21 +109,21 @@ def sidebar_free():
     return bc.overlay._state.get('sidebar', {}).get(view_area().as_pointer())
 
 
-def colour_mask(box, colour):
+def colour_mask(box, color):
     r, g, b = box[:, :, 0].astype(int), box[:, :, 1].astype(int), box[:, :, 2].astype(int)
-    if colour == 'red':
+    if color == 'red':
         return (r > 200) & (g < 90) & (b < 90)
-    if colour == 'amber':
+    if color == 'amber':
         return (r > 200) & (g > 130) & (g < 220) & (b < 80)
-    if colour == 'magenta':
+    if color == 'magenta':
         return (r > 180) & (g < 110) & (b > 150)
-    if colour == 'reddish':                       # a part shaded as colliding
+    if color == 'reddish':                       # a part shaded as colliding
         return (r > 150) & (r > g + 60) & (r > b + 60)
     return (g > 170) & (r < 120) & (b < 150)      # green
 
 
-def badge_box(colour, edge):
-    """Bounding box of the pixels of one colour in the bottom right corner of
+def badge_box(color, edge):
+    """Bounding box of the pixels of one color in the bottom right corner of
     the part of the viewport that ends at ``edge`` (pixels from the region's
     left): (count, distance of the rightmost one from that edge, of the
     lowest one from the bottom), or None without a virtual display to read."""
@@ -136,27 +136,27 @@ def badge_box(colour, edge):
     x0 = w.x + region.x
     y0 = px.shape[0] - 1 - (w.y + region.y)
     edge = int(round(edge))
-    m = colour_mask(px[y0 - 150:y0 + 1, x0 + edge - 520:x0 + edge], colour)
+    m = colour_mask(px[y0 - 150:y0 + 1, x0 + edge - 520:x0 + edge], color)
     if not m.any():
         return 0, None, None
     ys, xs = np.nonzero(m)
     return int(m.sum()), int(520 - 1 - xs.max()), int(150 - ys.max())
 
 
-def check_badge(colour, where, edge):
-    got = badge_box(colour, edge)
+def check_badge(color, where, edge):
+    got = badge_box(color, edge)
     if got is None:
         log('(no virtual display to read: the badge position is not checked)')
         return
     n, from_right, from_bottom = got
-    log(f'badge ({where}): {n} {colour} pixels in the corner, {from_right} px from its right edge, '
+    log(f'badge ({where}): {n} {color} pixels in the corner, {from_right} px from its right edge, '
         f'{from_bottom} px from its bottom')
-    assert n > 800, f'no {colour} badge in the bottom right corner ({where}): {n} px'
+    assert n > 800, f'no {color} badge in the bottom right corner ({where}): {n} px'
     assert from_right <= 45 and from_bottom <= 45, (where, from_right, from_bottom)
 
 
-def pixels_around(point, colour, size=14):
-    """How many pixels of a colour the screen shows around a point of the
+def pixels_around(point, color, size=14):
+    """How many pixels of a color the screen shows around a point of the
     scene (None without a virtual display)."""
     px = gui_common.screen_pixels()
     if px is None:
@@ -167,7 +167,7 @@ def pixels_around(point, colour, size=14):
     v = rv3d.perspective_matrix @ Vector((point[0], point[1], point[2], 1.0))
     x = w.x + region.x + int(round((v.x / v.w * 0.5 + 0.5) * region.width))
     y = px.shape[0] - 1 - (w.y + region.y + int(round((v.y / v.w * 0.5 + 0.5) * region.height)))
-    return int(colour_mask(px[y - size:y + size + 1, x - size:x + size + 1], colour).sum())
+    return int(colour_mask(px[y - size:y + size + 1, x - size:x + size + 1], color).sum())
 
 
 def pair_state(a, b):
@@ -639,7 +639,7 @@ def step_isolate_next_shot():
 
 
 def step_ignore():
-    # A problem that is ignored: its hatching goes, a small grey ring stays,
+    # A problem that is ignored: its hatching goes, a small gray ring stays,
     # and the verdict no longer counts it but says that something is ignored.
     before = pixels_around((230, 90, 66.5), 'amber', 30)
     assert before is None or before > 20, before

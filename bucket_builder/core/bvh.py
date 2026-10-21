@@ -112,7 +112,7 @@ def _levels(cx, cy, cz, order, size, stop=2, cancel=None):
     """Median splits of the aligned blocks of ``size`` elements, then of their
     halves, and so on while the blocks are larger than ``stop``.
 
-    All blocks of a level are split in one vectorised pass (they are the rows
+    All blocks of a level are split in one vectorized pass (they are the rows
     of a 2-D array), so the cost is a few NumPy calls per level, never a
     Python loop over nodes.  The arrays are permuted in place.
     """
@@ -190,9 +190,9 @@ def build_order(cx, cy, cz, cancel=None, threads=1):
     the longest side of each node.
 
     ``cx, cy, cz`` are contiguous float32 arrays with the triangle bounding-box
-    centres; they are used as scratch space.  ``cancel``, if given, is called
+    centers; they are used as scratch space.  ``cancel``, if given, is called
     now and then; when it returns true the sort is abandoned with
-    ``Cancelled``.  With ``threads`` > 1 the subtrees are shared out between
+    ``Canceled``.  With ``threads`` > 1 the subtrees are shared out between
     that many threads (the result does not depend on it).
     """
     n = cx.shape[0]
@@ -249,7 +249,7 @@ def order_mesh(verts, tris, cancel=None, threads=1):
     cols = [np.ascontiguousarray(verts[:, c]) for c in range(3)]
     cen = [np.empty(nt, dtype=np.float32) for _ in range(3)]
 
-    def centres(s0, e0):
+    def centers(s0, e0):
         def work():
             for s in range(s0, e0, CHUNK):
                 if cancel is not None and cancel():
@@ -269,7 +269,7 @@ def order_mesh(verts, tris, cancel=None, threads=1):
                     cen[c][s:e] = lo
         return work
 
-    _run([centres(s, e) for s, e in _ranges(nt, threads, CHUNK)])
+    _run([centers(s, e) for s, e in _ranges(nt, threads, CHUNK)])
     del cols
     order = build_order(cen[0], cen[1], cen[2], cancel, threads)
     del cen

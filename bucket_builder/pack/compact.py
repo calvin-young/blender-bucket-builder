@@ -82,7 +82,7 @@ class Compactor:
         return d
 
     def _room(self, j, ax, tops):
-        """How far part j may go towards -ax before it leaves the volume (or,
+        """How far part j may go toward -ax before it leaves the volume (or,
         down, before the build gets lower than the density limit allows)."""
         lo, hi = self._extent(j)
         if ax == 2:
@@ -99,7 +99,7 @@ class Compactor:
         self._settle()
 
     def move(self, j, ax, tops, deadline=None):
-        """Slide part j towards -ax as far as it goes; returns the distance.
+        """Slide part j toward -ax as far as it goes; returns the distance.
 
         The engine's distances are what it found, which a closer pair it has
         not proven absent may undercut (by about 1 %, more where it flags

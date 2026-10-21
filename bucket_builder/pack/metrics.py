@@ -17,7 +17,7 @@ Cost is linear in triangles, in chunks (a 20 M triangle part never needs more
 than a few hundred MB).  Copies of a part with the same orientation share the
 per-triangle work and only differ in a height offset.
 
-Units are whatever the meshes are in; the caller uses millimetres.
+Units are whatever the meshes are in; the caller uses millimeters.
 """
 
 import os
@@ -378,7 +378,7 @@ class Report:
     area: float = 0.0                 # build area
     density: float = None             # volume / (area * (height - bottom)): only the height the parts fill
     band: float = 1.0
-    z_mid: np.ndarray = None          # band centres, relative to the floor
+    z_mid: np.ndarray = None          # band centers, relative to the floor
     layer_volume: np.ndarray = None   # per band
     layer_density: np.ndarray = None  # per band: volume / (area * band)
     peak_layer: float = 0.0

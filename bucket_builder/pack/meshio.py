@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Read STL and 3MF files with NumPy, `zipfile` and `re` only (no `bpy`).
 
-Everything comes back in millimetres:
+Everything comes back in millimeters:
 
     scene = read('bucket.3mf')
     scene.meshes   {key: Mesh}          unique meshes (copies share one)

@@ -124,7 +124,7 @@ def main():
     pr = pair(mon, a, b)
     check(pr.nseg > 0 and pr.segs is not None, 'intersection curve available', pr.nseg)
     seg_world = pr.segs.reshape(-1, 3) + mon.world.O_T[mon.world.slot(a.session_uid)]
-    # spheres r=20 centred x=100 and x=135 meet on the plane x=117.5
+    # spheres r=20 centered x=100 and x=135 meet on the plane x=117.5
     check(abs(float(seg_world[:, 0].mean()) - 117.5) < 0.5, 'curve lies where the spheres meet',
           float(seg_world[:, 0].mean()))
 
@@ -222,7 +222,7 @@ def main():
     update()
     mon = settle()
     check(mon.world.stats()['unique_triangles'] == stats0['unique_triangles'],
-          'identical copy is recognised and shares geometry too')
+          'identical copy is recognized and shares geometry too')
 
     # ------------------------------------------------- visibility / ignoring
     # A hidden part is still in the build: it stays in the check unless the
@@ -352,7 +352,7 @@ def main():
     st.volume_size = (90.0, 284.0, 380.0)      # shrink X: A (80..120) now crosses x=90
     mon = settle()
     check(oob(mon, a) == PARTIAL, 'changing the volume re-evaluates the parts')
-    check(st.printer == 'Custom', 'hand-edited volume is labelled Custom', st.printer)
+    check(st.printer == 'Custom', 'hand-edited volume is labeled Custom', st.printer)
     st.use_volume = False
     mon = settle()
     check(not mon.world.oob, 'volume check can be switched off')
@@ -361,7 +361,7 @@ def main():
     st.volume_size = (380.0, 284.0, 380.0)
     mon = settle()
     lo, hi = mon.volume_box(st)
-    check(np.allclose(lo, (-190, -142, 0)) and np.allclose(hi, (190, 142, 380)), 'centred origin', (lo, hi))
+    check(np.allclose(lo, (-190, -142, 0)) and np.allclose(hi, (190, 142, 380)), 'centered origin', (lo, hi))
     st.volume_align = 'CORNER'
     mon = settle()
 
@@ -532,7 +532,7 @@ def main():
     # ----------------------------------------------------------------- units
     st.unit_mode = 'SCENE'
     mon = settle()
-    check(abs(mon.mm_per_unit - 1000.0) < 1e-9, 'scene units: default scene is metres', mon.mm_per_unit)
+    check(abs(mon.mm_per_unit - 1000.0) < 1e-9, 'scene units: default scene is meters', mon.mm_per_unit)
     sc.unit_settings.scale_length = 0.001
     st.unit_mode = 'AUTO'
     mon = settle()
@@ -552,7 +552,7 @@ def main():
     mon = settle()
     check(state(mon, a, b) == OK, 'lowering the clearance threshold clears it')
     check(badge(mon.status())[:2] == ('OK', 'Build OK'), 'and the build is fine', badge(mon.status()))
-    b.location.x = 140.01             # a hundredth of a millimetre apart
+    b.location.x = 140.01             # a hundredth of a millimeter apart
     update()
     mon = settle()
     check(state(mon, a, b) == CLEAR and not hasattr(st, 'collision_mm'),
@@ -578,7 +578,7 @@ def main():
     check(len(probs) >= 1 and probs[0]['kind'] == 'COLLIDE', 'problem list leads with the collision', probs[:1])
     s = mon.status()
     check(badge(s)[:2] == ('FAIL', '1 Collision Detected'), 'the verdict is a collision', badge(s))
-    check(abs(float(probs[0]['center'][0]) - 117.5) < 1.0, 'problem centre is at the interference')
+    check(abs(float(probs[0]['center'][0]) - 117.5) < 1.0, 'problem center is at the interference')
     r1 = bpy.ops.bucketbuilder.step_problem(direction=1)
     check(r1 == {'FINISHED'} and st.problem_index == 0, 'next-problem operator runs', (r1, st.problem_index))
     check(a.select_get() and b.select_get(), 'navigation selects the parts involved')
@@ -963,7 +963,7 @@ def main():
     check(level('CLEAR') == 1 and bpy.ops.bucketbuilder.count_all_problems() == {'FINISHED'}, 'back as it was')
     # Ignoring must hold whatever scale the objects carry: a part whose mesh
     # is a thousand times too large with an object scale of 0.001 (an STL in
-    # metres, imported with that scale) is where it failed half the time.
+    # meters, imported with that scale) is where it failed half the time.
     import mathutils
     a.data.transform(mathutils.Matrix.Scale(1000.0, 4))
     a.scale = (0.001, 0.001, 0.001)

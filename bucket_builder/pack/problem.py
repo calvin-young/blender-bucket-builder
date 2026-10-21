@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """What a packing run is given and what it gives back (docs/AUTOPACK.md §5).
 
-Plain data: meshes as `meshio.Mesh` (millimetres), matrices as 4 x 4 NumPy
+Plain data: meshes as `meshio.Mesh` (millimeters), matrices as 4 x 4 NumPy
 arrays (column vectors, p_world = M @ p)."""
 
 import math
@@ -155,7 +155,7 @@ def principal_frame(verts, tol=1e-6):
     machines: the same packing came out 66 mm high on one and 109 mm on
     another.  So: in such a plane the first axis is the one of the smallest
     bounding rectangle (a square part square to the axes), or for a round
-    outline where the shape bends most towards the third axis (the
+    outline where the shape bends most toward the third axis (the
     eigenvector of sum (v.n) v v^T in the plane: a saddle's rising
     direction), else the given x axis projected into the plane; signs by
     the third moment.  Three equal moments (a cube, a sphere) keep the
@@ -202,7 +202,7 @@ def principal_frame(verts, tol=1e-6):
             if lw[j] > lu[j] * (1 + 1e-9):
                 d = np.array([-d[1], d[0]])          # (the longer side first)
         else:
-            # ... and for a round outline, where it bends most towards the
+            # ... and for a round outline, where it bends most toward the
             # third axis (a saddle's rising direction)
             wt = c @ n
             q, V = np.linalg.eigh((P * wt[:, None]).T @ P)
@@ -250,7 +250,7 @@ def orientations(part, z_step=30.0):
         P = principal_frame(V)
         out = [G @ P @ base for G in cube_group()]
         # in an order that depends on the shape only, so that ties go the
-        # same way everywhere: lowest first, then by extent and centre, then
+        # same way everywhere: lowest first, then by extent and center, then
         # by the posed vertices themselves
         V0 = np.asarray(part.mesh.verts, float)
 

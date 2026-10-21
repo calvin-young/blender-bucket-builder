@@ -16,9 +16,9 @@ GRID = (0.7, 0.7, 0.7)
 BACK = (0.0, 0.0, 0.0)
 
 
-def _blend(img, mask, colour, alpha):
+def _blend(img, mask, color, alpha):
     a = (mask * alpha)[..., None]
-    img[..., :3] = img[..., :3] * (1.0 - a) + np.asarray(colour, np.float32) * a
+    img[..., :3] = img[..., :3] * (1.0 - a) + np.asarray(color, np.float32) * a
     img[..., 3:] = img[..., 3:] * (1.0 - a) + a
 
 

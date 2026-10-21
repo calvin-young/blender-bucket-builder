@@ -133,7 +133,7 @@ def render(mon, st, name, eye, target, is_ortho=False, ortho_scale=200.0, up=(0,
     img[:, :, 3] = 255
     path = os.path.join(OUT, name + '.png')
     write_png(path, img)
-    red, amber, magenta = colours(img)
+    red, amber, magenta = colors(img)
     print(f'  {name}: saved {path}  ({ms:.0f} ms)  red px {red}  amber px {amber}  magenta px {magenta}'
           f'  triangles: shading {drawn[0]}, hatching {drawn[1]}')
     LAST.update(img=img, matrix=proj @ view, drawn=drawn)
@@ -143,8 +143,8 @@ def render(mon, st, name, eye, target, is_ortho=False, ortho_scale=200.0, up=(0,
 LAST = {}
 
 
-def colours(img):
-    """Pixels in the collision, warning and out-of-volume colours."""
+def colors(img):
+    """Pixels in the collision, warning and out-of-volume colors."""
     red = int(((img[:, :, 0] > 200) & (img[:, :, 1] < 90) & (img[:, :, 2] < 90)).sum())
     amber = int(((img[:, :, 0] > 200) & (img[:, :, 1] > 130) & (img[:, :, 1] < 220) & (img[:, :, 2] < 80)).sum())
     magenta = int(((img[:, :, 0] > 180) & (img[:, :, 1] < 110) & (img[:, :, 2] > 150)).sum())
@@ -230,22 +230,22 @@ def main():
     assert a > 100, 'no clearance hatch visible'
     assert m > 300, 'no out-of-volume hatch visible'
     # the verdict sits in the bottom right corner: the most serious problem
-    # is the part outside the volume, so in that colour, with the collision
-    # in its own colour underneath
-    cr, _, cm = colours(corner(LAST['img']))
-    assert cm > 1500, f'no badge in the out-of-volume colour in the bottom right corner ({cm} px)'
-    assert cr > 60, f'the line about the collision is not in the collision colour ({cr} px)'
+    # is the part outside the volume, so in that color, with the collision
+    # in its own color underneath
+    cr, _, cm = colors(corner(LAST['img']))
+    assert cm > 1500, f'no badge in the out-of-volume color in the bottom right corner ({cm} px)'
+    assert cr > 60, f'the line about the collision is not in the collision color ({cr} px)'
     text = overlay.badge_text(mon.status())
     assert text[:2] == ('FAIL', '1 Part Outside Build Volume') and text[2][0] == '1 Collision Detected', text
-    assert colours(LAST['img'][H // 2 - 60:H // 2 + 60, :300])[0] == 0, 'something red at the left edge'
+    assert colors(LAST['img'][H // 2 - 60:H // 2 + 60, :300])[0] == 0, 'something red at the left edge'
     # Only the wall that the part goes through is marked: the middle of an
-    # upright edge of the x = 380 wall is drawn in the out-of-volume colour,
+    # upright edge of the x = 380 wall is drawn in the out-of-volume color,
     # that of an edge of the x = 0 wall in the volume's own.
     assert mon.walls()[0] == (False, False, False, True, False, False), mon.walls()
-    hit = colours(around((380, 0, 190)))[2]
+    hit = colors(around((380, 0, 190)))[2]
     calm = around((0, 0, 190))
     assert hit > 10, f'the wall that is exceeded is not marked ({hit} px)'
-    assert colours(calm)[2] == 0, 'a wall that nothing goes through is marked'
+    assert colors(calm)[2] == 0, 'a wall that nothing goes through is marked'
     assert int(((calm[:, :, 2] > 150) & (calm[:, :, 0] < 140)).sum()) > 5, 'the edge of the volume is missing'
     render(mon, st, 'collision_closeup', (150, -20, 150), (112, 110, 64))
     render(mon, st, 'clearance_closeup', (330, -10, 110), (230, 90, 68))
@@ -318,7 +318,7 @@ def main():
     mon = settle()
 
     # A problem that is ignored is not drawn and does not count; what is left
-    # of it is a small grey ring where it is.
+    # of it is a small gray ring where it is.
     ball_ring = next(q for q in mon.problems() if q['kind'] == 'COLLIDE')
     r_before, _, _ = render(mon, st, 'collision_counts', (150, -20, 150), (112, 110, 64))
     assert bpy.ops.bucketbuilder.ignore_problem(kind='P', a=ball_ring['names'][0],
@@ -328,9 +328,9 @@ def main():
     r_ignored, _, _ = render(mon, st, 'collision_ignored', (150, -20, 150), (112, 110, 64))
     assert LAST['drawn'] == [0, LAST['drawn'][1]] and r_ignored < 0.1 * r_before, (
         'an ignored collision is still drawn', LAST['drawn'], r_ignored, r_before)
-    grey = around(ball_ring['center'], 8)
-    assert int(((np.abs(grey[:, :, 0].astype(int) - grey[:, :, 1]) < 12) & (grey[:, :, 0] > 120)
-                & (grey[:, :, 0] < 200)).sum()) > 12, 'no grey ring where the ignored problem is'
+    gray = around(ball_ring['center'], 8)
+    assert int(((np.abs(gray[:, :, 0].astype(int) - gray[:, :, 1]) < 12) & (gray[:, :, 0] > 120)
+                & (gray[:, :, 0] < 200)).sum()) > 12, 'no gray ring where the ignored problem is'
     assert bpy.ops.bucketbuilder.count_all_problems() == {'FINISHED'} and mon.status()['collisions'] == 1
 
     # a warning only: the badge is an amber triangle
@@ -341,9 +341,9 @@ def main():
     text = overlay.badge_text(mon.status())
     assert text[0] == 'WARN' and 'Clearance Warning' in text[1], text
     render(mon, st, 'warning', (520, -330, 330), (180, 130, 60))
-    cr, ca, _ = colours(corner(LAST['img']))
+    cr, ca, _ = colors(corner(LAST['img']))
     assert ca > 800 and cr == 0, f'no amber badge in the corner ({ca} amber, {cr} red px)'
-    assert colours(around((380, 0, 190)))[2] == 0, 'a wall is still marked'
+    assert colors(around((380, 0, 190)))[2] == 0, 'a wall is still marked'
     # the wall gap: only the side of the inner box that a part is too close to
     st.use_wall_clearance = True
     bpy.data.objects['Cone'].location.x = 25.0        # base radius 22: 3 mm from the x = 0 wall
@@ -351,9 +351,9 @@ def main():
     mon = settle()
     assert mon.walls()[1] == (True, False, False, False), mon.walls()
     render(mon, st, 'wall_gap', (520, -330, 330), (180, 130, 60))
-    near = colours(around((5, 60, 0)))[1]             # bottom edge of the inner box, x low side
+    near = colors(around((5, 60, 0)))[1]             # bottom edge of the inner box, x low side
     assert near > 10, f'the side a part is too close to is not marked ({near} px)'
-    assert colours(around((250, 5, 0)))[1] == 0, 'a side nothing is close to is marked'
+    assert colors(around((250, 5, 0)))[1] == 0, 'a side nothing is close to is marked'
     st.use_wall_clearance = False
     bpy.data.objects['Cone'].location.x = 60.0
 

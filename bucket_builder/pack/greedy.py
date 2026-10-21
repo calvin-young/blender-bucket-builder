@@ -23,7 +23,7 @@ from . import metrics, voxel
 from .bucket import Bucket
 from .problem import Placement, Result, orientations
 
-CLOUD_FROM = 200_000          # triangles: larger meshes that turn are voxelised from a cloud
+CLOUD_FROM = 200_000          # triangles: larger meshes that turn are voxelized from a cloud
 CLOUD_MAX_CELLS = 300_000_000  # local cells: beyond this the cloud's grid is too big
 
 
@@ -167,13 +167,13 @@ class Greedy:
         self._poses[key] = p
         return p
 
-    TURN_FROM = 1_500_000     # cells: a grid this large is voxelised once; its quarter turns are made from it
+    TURN_FROM = 1_500_000     # cells: a grid this large is voxelized once; its quarter turns are made from it
 
     def _turned_grid(self, i, A):
         """A large part's grid in orientation A made from the grid of its
         first orientation, when A is that one turned by quarter turns about
         the axes (free rotation: always): its arrays permuted and flipped,
-        no voxelising (a large part cost seconds per orientation).  The
+        no voxelizing (a large part cost seconds per orientation).  The
         cells are still a superset of the part, but on a flipped axis the
         part's lowest point is no longer at the bottom of its lowest cell:
         up to a cell of slack there, which the exact compaction takes back
@@ -370,7 +370,7 @@ class Greedy:
         todo = []
         for k in (range(len(self.orients(i))) if allowed is None else allowed):
             if not self._may_fit(bucket, i, k):
-                continue                                    # (decided before voxelising it)
+                continue                                    # (decided before voxelizing it)
             p = self.pose(i, k)
             if p.same_as is not None and (allowed is None or p.same_as in allowed):
                 continue
@@ -450,7 +450,7 @@ class Greedy:
         return out
 
     def pin(self, bucket, mesh, M):
-        """A part exactly where it is (mm, 4 x 4), voxelised in the bucket's
+        """A part exactly where it is (mm, 4 x 4), voxelized in the bucket's
         own grid: (grid, cell, profile, volume, top)."""
         M = np.asarray(M, float)
         V = np.asarray(mesh.verts, float) @ M[:3, :3].T + M[:3, 3] - bucket.vlo

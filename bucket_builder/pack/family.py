@@ -50,8 +50,8 @@ def _canonical(part):
 
 
 def _picture(part, C, h):
-    """Coarse solid picture of the part posed by C (boolean array, centred
-    on its own centre of mass, in cells of h)."""
+    """Coarse solid picture of the part posed by C (boolean array, centered
+    on its own center of mass, in cells of h)."""
     from . import voxel
     g = voxel.voxelize(part.mesh.verts, part.mesh.tris, C, h, 0.0, align='min')
     return g.solid
@@ -68,7 +68,7 @@ def _turned(grid, G):
 
 
 def _overlap(a, b):
-    """Intersection over union of two pictures, centres of mass together."""
+    """Intersection over union of two pictures, centers of mass together."""
     ca = np.rint(np.argwhere(a).mean(0)).astype(int)
     cb = np.rint(np.argwhere(b).mean(0)).astype(int)
     lo = np.maximum(ca, cb)

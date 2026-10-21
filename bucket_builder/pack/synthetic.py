@@ -7,7 +7,7 @@ the add-on, so the speed measurement can run on the owner's machine.
 
 The 3MF files hold the parts side by side (not packed), one build item per
 copy, so the same buckets can be packed in commercial packers for a baseline.
-Every shape is a closed mesh in millimetres; none of them is anybody's
+Every shape is a closed mesh in millimeters; none of them is anybody's
 real part.
 """
 
@@ -59,7 +59,7 @@ def sphere(r, segs=48, rings=24, name='sphere', center=(0, 0, 0)):
 
 
 def cylinder(r, length, segs=24, name='cylinder'):
-    """Along z, centred on the origin."""
+    """Along z, centered on the origin."""
     ang = np.linspace(0, 2 * np.pi, segs, endpoint=False)
     bot = np.stack([r * np.cos(ang), r * np.sin(ang), np.full(segs, -length / 2)], 1)
     top = bot + [0, 0, length]
@@ -229,7 +229,7 @@ def prism(poly, depth, name='prism'):
         f += [(i, j, n + j), (i, n + j, n + i)]
     v = np.asarray(v)
     f = np.asarray(f)
-    c = v.mean(0)                                     # (convex: outward is away from the centre)
+    c = v.mean(0)                                     # (convex: outward is away from the center)
     T = v[f]
     nrm = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
     inward = ((T.mean(1) - c) * nrm).sum(1) < 0

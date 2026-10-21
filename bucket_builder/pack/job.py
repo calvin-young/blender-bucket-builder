@@ -20,7 +20,7 @@ What it tries, in this order:
    orientations by how well its copies pack together.
 3. **Greedy with the best few** orientations of every part (1, 2, 3).
 4. **Ruin and recreate** from the best layout so far: take some parts out
-   (the top layer, the tallest part and its neighbours, a region, or a few at
+   (the top layer, the tallest part and its neighbors, a region, or a few at
    random), put them and anything left over back in a shuffled order, let
    every part settle (down, back, left), and keep the result if it is better,
    or not much worse early on (threshold accepting).
@@ -48,7 +48,7 @@ class Layout:
 
     A record is (orientation, cell offset), or ('pin', cell) for a part
     that sits exactly where it was given (Improve Current Layout), off the
-    packer's grid: it is voxelised where it is and does not move unless the
+    packer's grid: it is voxelized where it is and does not move unless the
     improvement loop takes it out (and then it is placed again like any
     other).  `pin_of(q)` gives its (grid, cell, profile, volume, top)."""
 
@@ -105,7 +105,7 @@ class Layout:
             return self.pin_of(q)[0], b
         return self.g.pose(q[0], k).grid, b
 
-    def centre(self, q):
+    def center(self, q):
         g, b = self._grid(q)
         return np.asarray(b) + 0.5 * (g.s_lo + g.s_hi)
 
@@ -679,7 +679,7 @@ class Job:
     def _fam_env(self, F, k):
         """The envelope of the members of F in the reference's orientation k:
         (Envelope, {member: (orientation, shift)}).  Members are lined up by
-        the centres of their bounding boxes."""
+        the centers of their bounding boxes."""
         from . import pattern
         items, ks = [], []
         h = self.s.h
@@ -707,7 +707,7 @@ class Job:
             seen.add(c)
         pairs = []
         if len(F.members) > self.FAMILY_FULL:
-            return ks[:2], pairs              # (every member is voxelised per orientation: keep it short)
+            return ks[:2], pairs              # (every member is voxelized per orientation: keep it short)
         if cands:
             for ax in range(3):
                 kb = self._partner(F.ref, cands[0], ax)
@@ -1086,7 +1086,7 @@ class Job:
     def _nudge(self, bucket, i, k, cell):
         """Greedy's choice for part i moved sideways away from large flat
         faces it would face closely, if there is room (a part placed next
-        to a big flat neighbour gets the distance the rule wants before
+        to a big flat neighbor gets the distance the rule wants before
         smaller parts fill the space)."""
         from . import quality
         f = self._faces(i, k)
@@ -1424,7 +1424,7 @@ class Job:
             d = r.uniform(0.1, 0.35) * H
             out = [q for q in qs if lay.tops[q] > H - d]
             out = sorted(out, key=lambda q: -lay.tops[q])[:most]
-        elif kind < 0.6:                      # the tallest part and its neighbours
+        elif kind < 0.6:                      # the tallest part and its neighbors
             top = max(qs, key=lambda q: lay.tops[q])
             out = self._near(lay, top, qs, r.randint(2, max(2, min(most, 8))))
         elif kind < 0.85:                     # a region
@@ -1436,8 +1436,8 @@ class Job:
         return out
 
     def _near(self, lay, q0, qs, k):
-        c0 = lay.centre(q0)
-        d = sorted(qs, key=lambda q: float(np.sum((lay.centre(q) - c0) ** 2)))
+        c0 = lay.center(q0)
+        d = sorted(qs, key=lambda q: float(np.sum((lay.center(q) - c0) ** 2)))
         return d[:k]
 
     # ------------------------------------------------------------ the answer
