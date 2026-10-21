@@ -5,7 +5,7 @@
 bl_info = {
     "name": "Bucket Builder",
     "author": "Bucket Builder contributors",
-    "version": (1, 2, 0),
+    "version": (1, 4, 0),
     "blender": (4, 2, 0),
     "location": "3D Viewport > Sidebar > Bucket",
     "description": "Live collision, clearance and build-volume monitor for 3D-print build preparation",
@@ -16,12 +16,12 @@ if "bpy" in locals():
     # "Reload Scripts": refresh sub-modules, dependencies first
     import importlib
     for _name in ("core.tritri", "core.arena", "core.bvh", "core.narrow", "core.world", "core",
-                  "props", "icons", "monitor", "overlay", "ops", "ui"):
+                  "props", "icons", "monitor", "overlay", "ops", "arrange", "ui"):
         importlib.reload(importlib.import_module("." + _name, __package__))
 
 import bpy
 
-from . import icons, monitor, ops, overlay, props, ui
+from . import arrange, icons, monitor, ops, overlay, props, ui
 
 
 def _seed_later():
@@ -38,6 +38,7 @@ def register():
     props.register()
     icons.register()
     ops.register()
+    arrange.register()
     ui.register()
     overlay.register()
     monitor.register()
@@ -53,6 +54,7 @@ def unregister():
     monitor.unregister()
     overlay.unregister()
     ui.unregister()
+    arrange.unregister()
     ops.unregister()
     icons.unregister()
     props.unregister()

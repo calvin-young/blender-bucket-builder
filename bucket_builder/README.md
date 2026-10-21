@@ -226,6 +226,33 @@ Without Blender, `python3 tools/pack_report.py bucket.3mf --printer 5600`
 prints the same figures for a 3MF or STL file. Its output has no file or
 part names unless `--names` is given.
 
+### Arrange
+
+Tools for placing parts by hand. Each acts on every selected part on its
+own, changes only where the part is and how it is turned (never its mesh),
+and can be undone.
+
+* **Drop to Floor** (also **Ctrl+Down Arrow** in Object Mode): moves each
+  part straight down until it rests on the floor of the build volume.
+* **Minimize Box Volume**: turns the part so that its bounding box is as
+  small as it can be, with the shortest side upright.
+* **Minimize Height**: turns the part so that it is as low as it can be,
+  lying on a face of its outer shape, and turns its footprint to the
+  smallest rectangle.
+* **Tilt Off Axis**: turns the part so that its large flat faces are at
+  least 20 degrees away from every axis (so from the layers and from the
+  walls), which avoids stair-stepping on them; the larger a face, the more
+  it counts. The angle can be changed in the Adjust Last Operation panel. A
+  part without large flat faces is left as it is.
+* **Snap to Build Volume** (a switch): while it is on, parts snap to the
+  edges and corners of the build volume with Blender's own snapping (hold
+  Ctrl while moving). It adds a wireframe of the volume called "Build Volume
+  (snap)" that cannot be selected, is not rendered and is not checked; it
+  follows the volume when you change printer, and goes when you switch the
+  snapping off. If you have ticked "Snap onto Selectable Only" in Blender's
+  snapping options, untick it: the wireframe is not selectable. Leave it out
+  when you export the scene as a whole.
+
 ### Export
 
 **Export 3MF** is a placeholder: writing the build to a 3MF file comes in a

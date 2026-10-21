@@ -553,6 +553,23 @@ class BUCKETBUILDER_PT_units(_Base, Panel):
 # Export
 # ---------------------------------------------------------------------------
 
+class BUCKETBUILDER_PT_arrange(_Base, Panel):
+    bl_label = "Arrange"
+    bl_idname = "BUCKETBUILDER_PT_arrange"
+
+    def draw(self, context):
+        layout = self.layout
+        st = props.settings(context.scene)
+        col = layout.column(align=True)
+        col.operator("bucketbuilder.drop_to_floor", icon='TRIA_DOWN_BAR')
+        col = layout.column(align=True)
+        col.label(text="Orient")
+        col.operator("bucketbuilder.minimize_box", icon='SHADING_BBOX')
+        col.operator("bucketbuilder.minimize_height", icon='SORT_DESC')
+        col.operator("bucketbuilder.tilt_off_axis", icon='DRIVER_ROTATIONAL_DIFFERENCE')
+        layout.prop(st, "snap_to_volume", icon='SNAP_ON' if st.snap_to_volume else 'SNAP_OFF')
+
+
 class BUCKETBUILDER_PT_export(_Base, Panel):
     bl_label = "Export"
     bl_idname = "BUCKETBUILDER_PT_export"
@@ -574,6 +591,7 @@ CLASSES = (
     BUCKETBUILDER_PT_collisions,
     BUCKETBUILDER_PT_parts,
     BUCKETBUILDER_PT_volume,
+    BUCKETBUILDER_PT_arrange,
     BUCKETBUILDER_PT_report,
     BUCKETBUILDER_PT_options,
     BUCKETBUILDER_PT_display,

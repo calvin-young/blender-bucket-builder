@@ -146,6 +146,24 @@ def memory_limit(context=None):
 def _poke(self, context):
     from . import monitor
     monitor.on_settings_changed(context.scene if context else None)
+    _sync_snap(context)
+
+
+def _sync_snap(context):
+    """The snap wireframe follows the build volume (see arrange.sync_snap)."""
+    st = settings(context.scene) if context and context.scene else None
+    if st is None or not (st.snap_to_volume or _has_helper(context.scene)):
+        return
+    from . import arrange
+    try:
+        arrange.sync_snap(context.scene, context)
+    except Exception as ex:
+        print("Bucket Builder: snap wireframe:", ex)
+
+
+def _has_helper(scene):
+    from . import arrange
+    return arrange.find_helper(scene) is not None
 
 
 def _poke_enabled(self, context):
@@ -298,6 +316,12 @@ class BucketBuilderSettings(PropertyGroup):
         name="Size", description="Build volume in millimetres",
         size=3, subtype='XYZ', min=1.0, soft_max=1000.0, precision=1, step=100,
         default=DEFAULT_PROFILES[0][1], update=_poke_volume)
+    snap_to_volume: BoolProperty(
+        name="Snap to Build Volume",
+        description="While this is on, parts snap to the edges and corners of the build volume "
+                    "with Blender's own snapping (hold Ctrl while moving). It adds a wireframe "
+                    "of the volume that cannot be selected, is not rendered and is not checked",
+        default=False, update=lambda self, context: _sync_snap(context))
     volume_align: EnumProperty(
         name="Origin", description="Where the build volume sits relative to the scene origin",
         items=(('CORNER', "Corner", "The scene origin is the lower front left corner"),

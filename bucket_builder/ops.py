@@ -565,7 +565,7 @@ class BUCKETBUILDER_OT_ignore(Operator):
 
 def ignored_objects(scene):
     """The scene's objects that are left out of the checks on purpose."""
-    return [o for o in scene.objects if o.bucket_builder_ignore]
+    return [o for o in scene.objects if o.bucket_builder_ignore and not o.get("bucket_builder_helper")]
 
 
 class BUCKETBUILDER_OT_include(Operator):
