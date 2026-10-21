@@ -69,6 +69,26 @@ the sessions before; earlier items are summaries.
   be public without prompt text; word counts dropped (2026-10-21).
 * Commercial print-prep products are never named in the repository or in
   commits (2026-10-21).
+* Strike the passages he wanted gone from the old commits too (done 2026-10-21:
+  second history rewrite; the closed PR #1 still holds old commits).
+* The engines (core, pack) to become a package of their own one day;
+  Blender-specific code is fine elsewhere, but every Blender-only need of
+  the engines is to be flagged (AGENTS.md, Engine boundary; guarded by a
+  test).
+* One add-on, one branch: the packer merged into main (1.5.0); features
+  no longer asked for in separate threads.
+* Bucket-packing practices researched from published sources and added
+  to PRINT_QUALITY.md (packing only, not part design; published guidance
+  read as old and conservative).
+* Super users may need the underlying rule settings later; the Part
+  Quality dial is the start.
+* A list of differentiators, kept up to date (`docs/DIFFERENTIATORS.md`);
+  a comparison table maybe later.
+* Meniscus: within about 1 degree of flat (10 was far too generous).
+* Commit trailer left to Claude (Co-Authored-By kept); disclosure may say
+  plainly that the project is almost entirely AI-developed with little
+  code review; the owner polices UI and UX.
+* Screenshots of new features instead of loading each version.
 * The "3D Printing" application template: "take a crack at it". Not started.
 * 3MF export: "the next project". Not started here.
 

@@ -63,7 +63,8 @@ Blender from source where it cannot be downloaded.
       report.py              Build Report
     tests/                   engine tests, Blender tests, window tests, benchmarks
     benchmarks/private/      local-only; never committed (guarded by a test)
-    docs/                    AUTOPACK.md (packer spec), DECISIONS.md, images
+    docs/                    AUTOPACK.md (packer spec), PRINT_QUALITY.md (packing rules, sourced),
+                             DIFFERENTIATORS.md (keep current), DECISIONS.md, TALLY.md, PROMPT_STATS.md, images
     tools/                   command-line report, building Blender for tests
 
 ## Conventions
@@ -389,7 +390,14 @@ Last updated: 2026-10-21 (session 4).
 * `main` is **1.5.0** (2026-10-21): the Arrange tools (1.4.0) and the packer
   from the `autopack` branch (1.4.3, merged by fast-forward; the branch is
   retired, the owner asked for one line of development). The Pack panel is
-  closed by default and still labeled Experimental.
+  closed by default and still labeled Experimental. The history was
+  rewritten a second time the same day (filter-branch over `main` and the
+  tag v1.3.0) to strike from old versions of the spec and notes passages
+  the owner wanted gone; clones made before must be replaced again. The closed PR #1 on
+  GitHub still points at old commits (GitHub keeps pull request refs).
+* Keep `docs/DIFFERENTIATORS.md` current whenever a feature lands (the
+  owner presents the add-on to colleagues from it), and `docs/PRINT_QUALITY.md`
+  whenever the owner teaches a rule or a source is found.
 
 * `main` is **1.3.0** (2026-10-13): 1.2.0 plus the Build Report (Stage 1 of the
   auto packer, merged from `autopack` by fast-forward). Zip sent to the owner.

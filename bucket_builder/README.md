@@ -269,6 +269,8 @@ and can be undone.
 
 ### Pack (Experimental)
 
+![The Pack panel with the Part Quality slider, and the Build Report beside a packed build](../docs/images/pack-part-quality.png)
+
 **Pack** arranges the selected parts (or all visible parts when nothing is
 selected) in the build volume. Parts marked **Locked** stay where they are and
 the others are packed around them. When only some parts are selected, every

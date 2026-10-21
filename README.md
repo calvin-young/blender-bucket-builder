@@ -49,6 +49,11 @@ for people and AI assistants alike), [docs/DECISIONS.md](docs/DECISIONS.md)
 (what was decided and why, what was tried), and the
 [Issues](https://github.com/calvin-young/blender-bucket-builder/issues).
 
+**Background:** [docs/PRINT_QUALITY.md](docs/PRINT_QUALITY.md) (how packing
+affects the parts: the rules the packer follows, with their sources) and
+[docs/DIFFERENTIATORS.md](docs/DIFFERENTIATORS.md) (what the add-on does
+differently).
+
 ## Status
 
 Version 1.4.0. Declared for Blender 4.2 and newer. Its tests run on

@@ -8,13 +8,20 @@ ai-context repo counts prompts from Claude Code transcripts).
 ## Disclosure
 
 - **Tools and models:** Claude Code with Claude Opus (4.x, then 5.5).
-- **What the AI does:** writes the code, the tests and the documents, runs
-  the tests (engine, Blender, window tests), commits and pushes.
+- **How much is AI:** almost all of it. The code, the tests and the
+  documents are written by the AI, which also runs the tests (engine,
+  Blender, window tests), commits and pushes. The owner reviews little of
+  the code itself.
 - **What the owner does:** sets the requirements, makes the design
   decisions, brings what he knows from running MJF printers in production,
-  and tries the releases on his own builds and reports back.
-- **How AI work is marked:** every commit made by the AI ends with a
-  `Co-Authored-By: Claude ...` trailer and a link to the session.
+  tries the releases on his own builds and reports back, and polices the
+  interface and the user experience far more than the code. His focus is
+  the results, not the process.
+- **How AI work is marked:** commits are made by the AI and end with a
+  `Co-Authored-By: Claude ...` trailer naming the model, and a link to the
+  session. (Not `Assisted-by:`, which open-source projects such as the
+  Linux kernel use for patches a human wrote with some help: here the AI
+  is the main author.)
 - **Accountability:** the maintainer publishes and answers for everything
   in the repository.
 
@@ -29,7 +36,7 @@ line counts once, in the session it came up in.
 | before 2026-10-14 | Claude Code, Opus | not counted | 3 |
 | 2026-10-14 | Claude Code, Opus 5.5 | 5 | 0 |
 | 2026-10-16 - 19 | Claude Code, Opus 5.5 | not counted | 1 |
-| 2026-10-20 - 21 | Claude Code, Opus 5.5 | 5 | 13 |
+| 2026-10-20 - 21 | Claude Code, Opus 5.5 | 6 | 17 |
 
 ## Steering
 
@@ -37,6 +44,15 @@ What the owner decided, corrected, taught, tested or changed in scope that
 the work would not have done on its own, newest first. `docs/TALLY.md` has
 the detail.
 
+- 2026-10-21 [correct]: the meniscus needs a face within about a degree of
+  flat (10 degrees was far too generous).
+- 2026-10-21 [decide]: one add-on and one branch; the engines to become a
+  package of their own later, Blender-only needs flagged.
+- 2026-10-21 [scope]: published packing practices researched (packing only,
+  read as old and conservative); a running list of differentiators;
+  screenshots for review.
+- 2026-10-21 [decide]: disclosure to say plainly that the work is almost all
+  AI with little code review; the owner polices UI and UX.
 - 2026-10-21 [domain]: faces facing up get the capillary / meniscus defect;
   faces facing down do not matter.
 - 2026-10-21 [domain]: height matters near the top of the volume, hardly
