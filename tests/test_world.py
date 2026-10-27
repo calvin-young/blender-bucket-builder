@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Checks the collision world against brute force (every triangle pair)."""
 
 import os

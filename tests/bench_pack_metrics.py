@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Timing of pack.metrics on builds of the owner's sizes (docs/AUTOPACK.md 16).
 
     python3 tests/bench_pack_metrics.py [--small]

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Helpers shared by the tests that run in a Blender window."""
 
 import os

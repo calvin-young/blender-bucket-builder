@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Timing and memory at the sizes of real builds (NumPy only).
 
     python3 tests/bench_scale.py parts 20 1500000

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """What the add-on promises about the user's data, as checks.
 
     python3 tests/test_privacy.py

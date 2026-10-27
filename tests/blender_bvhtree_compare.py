@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Blender's mathutils.bvhtree.BVHTree against the add-on's engine.
 
 Two things are measured for a part being dragged into a neighbor:

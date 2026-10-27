@@ -1,287 +1,68 @@
-# Blender Bucket Builder
+# Bucket Builder
 
-**Bucket Builder** is a Blender add-on for preparing 3D-print builds, aimed at
-dense HP Multi Jet Fusion (MJF) builds.
-
-Its first tool is a live build check. Switch on what you want checked
-(collisions, the build volume, or both), then move, rotate and scale parts as
-usual. While you drag, the viewport shows:
-
-* where parts **collide** (red cross-hatching and the exact intersection curve),
-* where parts are closer than your **minimum clearance** (amber hatching and the
-  measured gap),
-* what reaches **outside the printer's build volume** (magenta hatching on just
-  the geometry that is out, and the wall it goes through in magenta),
-* which parts are at fault: every colliding part is **shaded red**,
-* optionally, parts that sit too close to the **side walls** of the volume,
-* the verdict in the corner of the viewport: a large **green tick** when there
-  are no collisions and every part is inside the volume, an amber triangle for
-  warnings, a red cross for what has to be fixed.
-
-Every problem is listed, the worst first; one click frames it, a magnifier
-shows its parts on their own, and a problem that is meant to be there can be
-ignored, for now or for good. Nothing in the scene is modified; everything is
-drawn on top of it.
+A Blender add-on for preparing dense 3D-print builds ("buckets"), aimed at HP Multi Jet Fusion. It
+checks a build live while you arrange it, reports on it, and can pack it for you.
 
 ![A part being dragged: the collision hatching follows it](docs/images/dragging.png)
+
+## Features
+
+- **Live build check.** As you move, rotate and scale parts, the viewport shows where they collide
+  (red hatching and the exact intersection curve), where they're closer than your minimum clearance
+  (amber), and what reaches outside the printer's build volume (magenta). A verdict sits in the
+  corner: a green tick when the build is good. Nothing in the scene is changed.
+- **Problem list.** Every problem is listed, worst first. One click frames it, a magnifier shows its
+  parts on their own, and a problem that's meant to be there can be ignored.
+- **Build Report.** Density, packed height and the density of every layer, also available from the
+  command line for a 3MF or STL file, without Blender.
+- **Arrange.** Drop to the floor, minimize the box or height, tilt off axis, snap into the volume.
+- **Pack (experimental).** Packs parts into the volume, trading density against part quality.
 
 | | |
 | --- | --- |
 | ![Colliding parts are shaded, the overlap is hatched](docs/images/collision.png) | ![A clean build](docs/images/build-ok.png) |
 | ![A problem's parts shown on their own](docs/images/isolated.png) | ![A part too close to a side wall](docs/images/wall-gap.png) |
 
-A large part imported into the middle of a full build, and being dragged out
-of it (50 parts; the new one lands on 33 of them):
-
-| | |
-| --- | --- |
-| ![Just imported](docs/images/import-into-full-build.png) | ![Being dragged out](docs/images/dragging-out.png) |
-
-Screenshots are from the automated window tests (`tests/blender_gui_test.py`,
-`tests/blender_gui_stress.py`), with test shapes sized in millimeters inside a
-380 x 284 x 380 mm volume.
-
-The user guide is in [bucket_builder/README.md](bucket_builder/README.md).
-
-**Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) (how to report issues and
-send changes), [AGENTS.md](AGENTS.md) (setup, tests, layout and conventions,
-for people and AI assistants alike), [docs/DECISIONS.md](docs/DECISIONS.md)
-(what was decided and why, what was tried), and the
-[Issues](https://github.com/calvin-young/blender-bucket-builder/issues).
-
-**Background:** [docs/PRINT_QUALITY.md](docs/PRINT_QUALITY.md) (how packing
-affects the parts: the rules the packer follows, with their sources) and
-[docs/DIFFERENTIATORS.md](docs/DIFFERENTIATORS.md) (what the add-on does
-differently).
-
-## Status
-
-Version 1.4.0. Declared for Blender 4.2 and newer. Its tests run on
-**Blender 5.2.2** (Linux, software OpenGL), where:
-
-* the geometry engine agrees with brute-force references on random and
-  hand-picked cases (also with every bound of its searches set absurdly
-  low), and with Blender's own `BVHTree.overlap` on which triangles
-  intersect,
-* 245 end-to-end checks pass inside Blender (live updates on move / rotate /
-  scale, moving a selection, mesh edits, modifiers, linked duplicates, hidden
-  parts, the two switches, the build volume and which of its walls are
-  exceeded, ignoring problems, printer profiles and libraries made by
-  versions 1.0 and 1.1, units, the wording of the verdict, undo, save and
-  reload, an export in between; and for large parts: worker threads, the
-  memory limit, the warnings about unchecked geometry),
-* every panel, the list of problems and every menu is drawn against a
-  stand-in for Blender's layout that rejects what a real one would,
-* the overlay is rendered off-screen and its colors sampled where the walls
-  and the badge are,
-* in an interactive Blender window on a virtual display (`tests/gui_on_xvfb.sh`)
-  a part dragged with simulated mouse input updates the overlay on every step
-  of the drag; the badge is found in the corner the sidebar leaves free; a
-  row of the list is clicked with the mouse; problems are isolated one after
-  the other with Blender's real local view; and undo, redo and delete,
-  triggered with simulated key presses, leave Blender standing
-  (`tests/blender_gui_undo.py`, see below),
-* version 1.2.0 installed over a 1.1.0 that is in use, in the same session,
-  keeps the settings and the user's printers and carries on
-  (`tests/blender_upgrade_test.py`).
-
-The owner runs it on Blender 5.2.0 on Windows with an NVIDIA GPU (OpenGL).
-Version 1.0.0 crashed Blender there: the add-on's timer read the dependency
-graph in the moment between an operator freeing objects and Blender
-rebuilding the graph. Since 1.0.1 the graph is brought up to date before the
-timer reads it; the crash is reproduced by the tests without that line.
-Version 1.1.0 was the interface as he asked for it after his first trial;
-1.2.0 is his second and third lists, and what an independent review of the
-code found (among it two cases in which a contact between parts was not
-reported). 1.3.0 adds the Build Report: density, packed height and the
-density of every layer, the first piece of the auto packer
-(`docs/AUTOPACK.md`); its figures agree with Blender's own volume
-calculation, and a command line tool gives the same report for a 3MF or
-STL file without Blender.
-
-Not yet tried: Blender 4.2 - 5.1 (the code compiles with Python 3.11, and
-every API it uses was looked up in the 4.2 source), macOS, the Vulkan and
-Metal backends.
-
-### Large builds
-
-Measured on a 2-core virtual machine without a GPU, where a single worker
-thread does the sorting (there is one for every two processor threads, up
-to eight). Version 1.1.0 and 1.2.0 in the same session:
-
-| 30 M triangles, 20 parts of 1.5 M (in Blender, memory limit 1.7 GB) | 1.1.0 | 1.2.0 |
-| --- | --- | --- |
-| Every part placed (the build volume judged) | 21.4 s | 2.4 s |
-| First collision results | 5.1 s | 2.8 s |
-| Verdict final | 23.4 s | 19.4 s |
-| Longest freeze while taking it in | 1.4 s | 0.16 s |
-| Dragging a part of 1.5 M triangles, per step | 10 ms | 6 ms |
-| Rotating it, per step | 16 ms | 27 ms |
-
-With 12 M triangles (8 parts): every part placed after 1.0 s instead of
-8.1 s, first results after 2.8 s instead of 4.6 s, verdict final after 8.4 s
-in both. The time to the final verdict is the sorting, which one thread does
-here. The engine alone, 180 M triangles (600 copies of 12 meshes, each in its
-own rotation, 2 GB): every collision known after 9 s, all distances after
-56 s, 12 ms per drag step (`tests/bench_scale.py`, measured with 1.0).
-
-"Longest freeze" is the longest the main thread was busy in one go, so the
-longest Blender would not respond. `tests/blender_bench_large.py` produces
-these figures.
+*Screenshots from the automated window tests: test shapes in a 380 x 284 x 380 mm volume.*
 
 ## Install
 
-Download or build `bucket_builder-1.3.0.zip`, then in Blender:
-Edit > Preferences > Get Extensions > the arrow in the top right >
-*Install from Disk*.
-
-To build the zip from this repository:
+Blender 4.2 or newer. Build the zip from this repository:
 
     blender --command extension build --source-dir bucket_builder --output-dir dist
 
+Then in Blender: Edit > Preferences > Get Extensions > the arrow at the top right > *Install from Disk*.
+
+## Use
+
+The [user guide](bucket_builder/README.md) covers the verdict, the problem list, the Build Report,
+Arrange and Pack, plus privacy and the limits worth knowing about.
+
 ## How it works
 
-    scene objects
-        -> broad phase: bounding boxes of the parts that changed against all others
-        -> narrow phase: both parts' bounding-volume trees, traversed together
-        -> exact triangle / triangle intersection and distance
-        -> viewport drawing
+A NumPy engine keeps one bounding-volume tree per unique mesh and applies each part's position at
+query time, so dragging a part rebuilds nothing, and only the pairs that changed are recomputed.
+Contacts are never left to a search that was cut short. [docs/ENGINE.md](docs/ENGINE.md) has the
+design, how it's tested, timings on builds of up to 180 M triangles, and why Blender's own BVHTree
+wasn't enough.
 
-* **One tree per unique mesh.** Triangles are sorted once into an implicit
-  bounding-volume tree. Copies of a part share it. Sorting costs about half a
-  microsecond per triangle; for large meshes it is done by worker threads,
-  which only ever see NumPy arrays.
-* **Moving is free.** A part's tree is stored without its translation; the
-  offset between two parts is applied while querying. Dragging a part
-  therefore rebuilds nothing.
-* **Rotating or scaling borrows.** New boxes for a rotated part cost about
-  45 ns per triangle, too much per mouse step for a large mesh. So while it is
-  edited the part keeps the boxes it had, and they are moved into the new
-  orientation as they are looked at (looser, so queries cost about twice as
-  much, but nothing is recomputed). Its triangles are posed from the mesh's
-  own vertices with the same expression a fitted tree is made with, so they
-  are bit-identical to it. A moment after the edit the boxes are fitted
-  again, in pieces of a millisecond or two, and what was worked out with
-  borrowed boxes is redone: what is on screen at rest does not depend on how
-  the parts got there.
-* **Only what changed is recomputed.** Results are kept per pair of
-  neighboring parts; when a part moves, only its own pairs are looked at.
-* **No Python loops over triangles.** All pairs that need work are traversed
-  together, level by level, in NumPy.
-* **A live step has a time budget.** Whether two parts collide is decided
-  on every step. How much more each pair gets (the complete intersection
-  curve, the hatched region, the proven clearance distance) follows the
-  measured cost: with a few neighbors every pair gets everything; when a part
-  lands on dozens of others, most pairs are only *sketched* (one intersecting
-  triangle pair proves a collision) and the detail fills in for as many as
-  fit. Whatever was left out is completed exactly just after release.
-* **Whether parts intersect is never left to a search that was cut short.**
-  Two fine meshes that nearly coincide (a part and its copy a fraction of a
-  triangle away) have millions of triangle pairs with overlapping boxes. The
-  search of one pass is bounded, and a live step has a budget for all its
-  pairs together, so that a dozen parts duplicated in place and nudged do
-  not stall a step for seconds. A pair that runs into a bound without a hit
-  is not called clear: it stays "checking" and is settled by an exhaustive
-  search that stops at the first cut and is done a slice at a time. A copy
-  lying exactly on its original is in contact, which is found at once.
-* **Nor is "do they touch" or "do they keep the clearance".** The proof of
-  the distance between two parts is bounded as well. Where it is cut short
-  and what it left out could still hold a contact, or a gap under the
-  clearance (a flange lying flat on a plate, two large faces at about the
-  clearance), the same exhaustive search goes through all of it.
-* **Nothing blocks.** Fitted trees are built in slices between redraws, and
-  pairs whose trees are ready are solved first, so the results of a new scene
-  appear as the work gets done.
-* **Background work paces itself by what the user is doing.** While they edit
-  or turn the view, its slices are short and come with pauses. While they
-  wait, slices are longer and follow each other directly, and the viewport is
-  asked to show progress about ten times a second, not after every slice: a
-  redraw of a heavy scene costs more than a slice, and used to be most of the
-  time a result took to appear.
-* **Memory is bounded.** The fitted trees (55 bytes per triangle and part) are
-  a cache with a limit; the least recently used are dropped and built again
-  when needed. A part without neighbors never gets one.
-* **Colliding parts are shaded from a mesh uploaded once** per unique part and
-  redrawn with the object's current matrix, so the cheapest answer (collides
-  or not) costs nothing to draw while a part moves.
+## Status
 
-### Why not `mathutils.bvhtree.BVHTree`
+**Version 1.5.0**, in production use by its first user. Tested on Blender 5.2. It's declared for
+4.2 and newer, but the versions in between haven't been tried yet.
 
-It was the starting point, and it is still used as an independent check in the
-tests. Two things rule it out for the live path:
+The add-on is developed almost entirely by an AI assistant (Claude), with little human code review.
+The maintainer sets the requirements, tests each build on real work, and reviews the behavior and
+the UI. [docs/PROMPT_STATS.md](docs/PROMPT_STATS.md) records how much human steering went in.
 
-* `BVHTree.overlap()` takes no transform, so both trees must be in world
-  space and a moving part's tree has to be rebuilt on every step of a drag.
-* It reports overlapping triangles only. There is no tree-to-tree distance
-  query, which the clearance check needs.
+## Contributing
 
-Measured on the same machine, one step of dragging a part into its neighbor,
-collision check only (`tests/blender_bvhtree_compare.py`):
-
-| Triangles (both parts) | BVHTree: rebuild the moving tree + overlap | This add-on |
-| ---: | ---: | ---: |
-| 6,000 | 1.4 ms | 3.6 ms |
-| 24,000 | 5.5 ms | 6.3 ms |
-| 98,000 | 26.9 ms | 8.0 ms |
-| 327,000 | 44.5 ms | 8.0 ms |
-
-The add-on's figure also covers the complete intersection curve and the
-geometry the overlay draws. Both find the same intersecting triangle pairs,
-with one exception in the 64 steps of that test: a pair that touches along a
-millionth of a millimeter, which one counts and the other does not.
-
-## Tests
-
-The engine needs only NumPy:
-
-    python3 tests/test_tritri.py     # triangle routines against slow references
-    python3 tests/test_world.py      # the collision world against brute force (about 10 minutes)
-    python3 tests/test_pack_meshio.py    # STL / 3MF readers
-    python3 tests/test_pack_metrics.py   # volume, layer profile, density against references
-    python3 tests/test_pack_cli.py       # python -m pack report, and that it prints no names
-    python3 tests/bench_pack_metrics.py  # report timings at 60 x 1 M and 5 x 20 M triangles
-    python3 tests/bench.py --quick   # timings on build-sized scenes (--storm: import into a full build)
-    python3 tests/bench_scale.py parts 20 1500000        # 30 M triangles
-    python3 tests/bench_scale.py instances 600 300000 12 2   # 180 M, 2 GB limit
-
-With the add-on installed and enabled in Blender:
-
-    blender --background --python tests/blender_test.py             # end to end
-    blender --background --python tests/blender_large_test.py       # large parts, memory, warnings
-    blender --background --python tests/blender_ui_test.py          # panels, menus, the report
-    blender --background --python tests/blender_report_test.py      # Build Report against bmesh volumes
-    blender --background --python tests/blender_gpu_test.py -- out  # overlay, off-screen PNGs
-    blender --background --python tests/blender_bvhtree_compare.py  # against BVHTree
-    blender --background --python tests/blender_bench_large.py -- 20 1500000   # timings, large build
-    tests/gui_on_xvfb.sh blender out                                # in a window: drag, badge, list, isolate
-    tests/gui_on_xvfb.sh blender out blender_gui_report.py          # the Build Report panel and its picture
-    tests/gui_on_xvfb.sh blender out blender_gui_undo.py            # undo, redo, delete in a window
-    tests/gui_on_xvfb.sh blender out blender_gui_stress.py          # a full build under the mouse
-    blender --background --python tests/blender_upgrade_test.py -- old.zip new.zip   # in an empty profile
-
-## Layout
-
-    bucket_builder/       the add-on (this folder is what gets zipped)
-      core/               NumPy engine, no Blender imports
-        tritri.py         exact triangle / triangle intersection and distance
-        bvh.py            implicit bounding-volume tree layout, sorting a mesh
-        arena.py          growable shared storage
-        world.py          objects, cached trees, incremental pair results, scheduling
-        narrow.py         batched tree traversal, regions, build-volume test
-      monitor.py          mirrors the Blender scene into the engine: handlers, timer, workers
-      overlay.py          viewport drawing
-      props.py            settings, preferences, printer profiles
-      ops.py              operators: navigation, isolating, ignoring, printer profiles, the report
-      ui.py               sidebar panels, the list of problems, entries in Blender's own menus
-      icons.py            the colored icons of the status box, and the report's profile picture
-      report.py           the Build Report: parts from the world, results cached, worked out in a thread
-      pack/               auto packer, no Blender imports: voxels, greedy, patterns, job, metrics, meshio, cli
-      packing.py          the Pack operator: runs the packer in a process of its own
-    tests/
-    tools/test-blender/   building Blender from source where it cannot be downloaded
-    AGENTS.md             for contributors and AI agents: setup, conventions, working notes
-    CONTRIBUTING.md       how to report issues and send changes
-    CLAUDE.md             points Claude Code at AGENTS.md
+[CONTRIBUTING.md](CONTRIBUTING.md) explains how to report issues and send changes. [AGENTS.md](AGENTS.md)
+covers setup, tests, layout and conventions, for people and AI assistants alike.
+[docs/DECISIONS.md](docs/DECISIONS.md) records why things are built this way, and bugs and plans are
+in [Issues](https://github.com/calvin-young/blender-bucket-builder/issues). Background reading:
+[PRINT_QUALITY.md](docs/PRINT_QUALITY.md) (how packing affects the parts, with sources),
+[AUTOPACK.md](docs/AUTOPACK.md) (the packer's spec) and [DIFFERENTIATORS.md](docs/DIFFERENTIATORS.md).
 
 ## License
 

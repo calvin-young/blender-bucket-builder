@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Checks pack.metrics against analytic volumes and an independent method.
 
     python3 tests/test_pack_metrics.py

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Screenshots of the Pack panel (Part Quality at 100 % and 0 %) and the
 Build Report beside a packed build of synthetic parts. Not a test: for
 reviewing the interface without loading Blender by hand.

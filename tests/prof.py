@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 import os, sys, time, cProfile, pstats
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))

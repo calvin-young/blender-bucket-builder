@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Greedy placement on the synthetic buckets, checked by the exact engine.
 
     python3 tests/bench_pack_greedy.py [bucket ...] [--h 1.0] [--coarse 4] [--candidates 8]

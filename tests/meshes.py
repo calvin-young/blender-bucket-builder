@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Procedural test meshes (vertices float64 (n,3), triangles int (m,3))."""
 
 import numpy as np

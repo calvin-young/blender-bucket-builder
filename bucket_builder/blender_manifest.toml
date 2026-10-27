@@ -11,6 +11,7 @@ website = "https://github.com/calvin-young/blender-bucket-builder"
 blender_version_min = "4.2.0"
 
 license = ["SPDX:GPL-3.0-or-later"]
+copyright = ["2026 Calvin Young"]
 tags = ["3D View", "Mesh"]
 
 [permissions]

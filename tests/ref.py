@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Slow, independent reference implementations used only by the tests."""
 
 import math

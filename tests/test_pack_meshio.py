@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Checks pack.meshio: STL (binary, ASCII), 3MF (units, transforms, instancing,
 components, production-extension paths, skipped object types).
 

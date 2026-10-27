@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The anytime packer (pack.job) on the synthetic buckets: the first greedy
 layout against the best one within the time budget, checked by the exact
 engine.

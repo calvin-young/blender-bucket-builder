@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The packer on the shape library (pack.synthetic.library).
 
     python3 tests/bench_pack_library.py [names] [--time 60] [--baseline] [--out dir]

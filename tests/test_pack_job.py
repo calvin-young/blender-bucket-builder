@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Checks of the anytime packer (pack.job) and what it relies on.
 
     python3 tests/test_pack_job.py

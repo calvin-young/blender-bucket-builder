@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Timing of the collision world on build-sized scenes (NumPy only)."""
 
 import os

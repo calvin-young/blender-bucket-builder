@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Packer speed on this machine (the code is bucket_builder/pack/timing.py;
 in Blender: Bucket sidebar > Pack > Advanced > Measure Packer Speed).
 

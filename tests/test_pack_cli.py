@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The report command: numbers, and that private names never reach its output.
 
     python3 tests/test_pack_cli.py

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The density report in Blender, against Blender's own volume calculation.
 
     BLENDER_USER_RESOURCES=... blender --background --python tests/blender_report_test.py

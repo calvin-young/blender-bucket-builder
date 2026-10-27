@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Interactive test in a real Blender window (run under a virtual display).
 
     blender --enable-event-simulate --python this_file -- <output directory>

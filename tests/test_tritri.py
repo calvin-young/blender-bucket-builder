@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Checks the vectorized triangle routines against the slow references."""
 
 import os

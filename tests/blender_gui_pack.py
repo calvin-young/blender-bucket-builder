@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The Pack panel in a real window: the operator runs modal, in a thread,
 with progress, and the parts end up packed.
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """End-to-end test inside Blender (run with: blender --background --python this_file).
 
 Exercises the add-on exactly as installed: registration, the dependency-graph

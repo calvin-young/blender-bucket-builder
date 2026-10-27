@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """A build-sized scene in a real Blender window.
 
 Dozens of dense parts fill the build volume; one of them is moved, rotated and

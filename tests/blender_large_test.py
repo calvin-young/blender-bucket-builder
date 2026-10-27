@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Large meshes inside Blender (run with: blender --background --python this_file).
 
 What the add-on does differently for parts too large to handle in one go:

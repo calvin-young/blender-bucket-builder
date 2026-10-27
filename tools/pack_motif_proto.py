@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Run from the repository root: python3 tools/pack_motif_proto.py
 """Prototype: double lattices (every other copy turned 180 degrees) and the
 plain lattice, on shapes chosen to need them.  Counts copies in a 5600 volume."""

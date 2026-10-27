@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The Build Report panel in a real window: figures, warning and profile picture.
 
     tests/gui_on_xvfb.sh <gui blender> <out dir> blender_gui_report.py

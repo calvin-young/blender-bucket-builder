@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Runs every panel and menu draw function against a checking stand-in for
 UILayout (background Blender has no window to draw in).
 

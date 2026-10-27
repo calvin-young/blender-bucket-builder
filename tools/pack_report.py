@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Density report of a 3MF/STL bucket without Blender: `python3 tools/pack_report.py -h`."""
 import os
 import sys

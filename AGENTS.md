@@ -44,11 +44,21 @@ Cursor and Gemini CLI read it directly.
     SDL_VIDEO_FORCE_EGL=1 bash tests/gui_on_xvfb.sh blender out [blender_gui_test.py|blender_gui_undo.py|blender_gui_stress.py]
     blender --background --python tests/blender_upgrade_test.py -- old.zip new.zip   # empty profile
 
+    # timings and comparisons
+    python3 tests/bench_pack_metrics.py  # report timings at 60 x 1 M and 5 x 20 M triangles
+    python3 tests/bench.py --quick       # build-sized scenes (--storm: import into a full build)
+    python3 tests/bench_scale.py parts 20 1500000             # 30 M triangles
+    python3 tests/bench_scale.py instances 600 300000 12 2    # 180 M, 2 GB limit
+    blender --background --python tests/blender_bvhtree_compare.py  # against BVHTree
+    blender --background --python tests/blender_bench_large.py -- 20 1500000   # timings, large build
+    SDL_VIDEO_FORCE_EGL=1 bash tests/gui_on_xvfb.sh blender out blender_gui_report.py   # Build Report panel
+
     # package
     blender --command extension build --source-dir bucket_builder --output-dir dist
 
-`README.md` (Tests) has more, `tools/test-blender/README.md` explains building
-Blender from source where it cannot be downloaded.
+How the engine works and how it was measured: [docs/ENGINE.md](docs/ENGINE.md).
+`tools/test-blender/README.md` explains building Blender from source where it
+cannot be downloaded.
 
 ## Layout
 

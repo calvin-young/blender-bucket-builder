@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Checks pack.voxel: conservative surfaces and solids, cavities, dilation
 against brute force, and that the NumPy and SciPy paths agree.
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The text Copy Report puts on the clipboard names no object, mesh, scene, file or folder.
 
     BLENDER_USER_RESOURCES=... blender --background --python tests/blender_privacy_test.py

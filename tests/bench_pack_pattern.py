@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The pattern solver against the bounding-box array (docs/AUTOPACK.md §8.4).
 
     python3 tests/bench_pack_pattern.py [--gap 2] [--cell 1]

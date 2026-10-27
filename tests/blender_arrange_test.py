@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The arrange tools (bucket_builder/arrange.py), in background Blender.
 
     blender --background --python tests/blender_arrange_test.py

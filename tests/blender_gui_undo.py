@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Undo, redo and delete in a real Blender window while the monitor runs.
 
     blender --enable-event-simulate --python this_file -- <output directory>

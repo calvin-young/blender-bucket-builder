@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Synthetic shapes and buckets: the module is in the add-on
 (bucket_builder/pack/synthetic.py); this is the command line.
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The Pack panel's operator in Blender, judged by the add-on's own monitor.
 
     BLENDER_USER_RESOURCES=... blender --background --python tests/blender_pack_test.py

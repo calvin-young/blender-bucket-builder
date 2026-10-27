@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Installing a new version over an older one that is in use, in the same
 Blender session: what "Install from Disk" does for someone who upgrades.
 

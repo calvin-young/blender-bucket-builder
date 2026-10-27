@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Checks of the pattern solver (pack.pattern) and its use in the job.
 
     python3 tests/test_pack_pattern.py

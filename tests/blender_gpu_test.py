@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Off-screen rendering test of the viewport overlay (background Blender with a GPU context).
 
 Compiles the add-on's shaders on the real GPU module, draws the overlay over a

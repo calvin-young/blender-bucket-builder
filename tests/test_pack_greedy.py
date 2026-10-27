@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Checks greedy placement: every layout passes the exact engine, cavities
 are used when they must be, the density limit, the walls, the rotation
 modes, and that the referee does catch a bad layout.

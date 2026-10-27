@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Fail if anything in benchmarks/private/ other than its README and .gitignore
 is tracked by git, or would be committed if staged with a plain `git add`.
 

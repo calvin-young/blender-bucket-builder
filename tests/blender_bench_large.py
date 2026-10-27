@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """How the add-on copes with a build of large parts, measured inside Blender.
 
     blender --background --python this_file -- [parts] [triangles per part] [copies] [memory GB]
