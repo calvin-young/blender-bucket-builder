@@ -125,6 +125,15 @@ maintainer's own agent commits and pushes to `main` directly (his choice).
 Everything, the packer included, is developed on `main` since 1.5.0
 (2026-10-21); the `autopack` branch was merged and retired.
 
+**Versions and tags:** every build handed to the owner gets a new version in
+`bucket_builder/blender_manifest.toml` and an annotated tag `vX.Y.Z` on that
+commit, pushed with it. That way a version number names exactly one state of
+the code. Tagged so far: v1.0.0 (731961d), v1.1.0 (c32cec6), v1.2.0 (ae5a8bf),
+v1.3.0 (bf63370). Not tagged: 1.3.90-1.4.x, the `autopack` branch's previews,
+where "1.4.0" was used on both lines and 1.4.3 never reached the manifest; and
+1.5.0, whose code kept changing after the version was set (e8fdc24 to
+0614ea1). The next build is 1.5.1.
+
 ## Implementation notes
 
 The short register of decisions is `docs/DECISIONS.md`. These are the details
@@ -554,8 +563,8 @@ and copies the table to the clipboard: the owner's `tools/pack_timing.py`
 failed because the add-on zip has no `tools/`. `synthetic.py` moved into
 `pack/` for that (benchmarks/synthetic.py re-exports it).
 autopack's manifest says **1.3.91** (1.3.90 was the first preview);
-1.3.0 -> 1.3.90 upgrade test passes. The tag v1.3.0 is local only (this
-session may not push tags or make releases).
+1.3.0 -> 1.3.90 upgrade test passes. (The tag v1.3.0 is now on GitHub; see
+"Versions and tags".)
 
 **The owner's first speed table (1.3.91, 2026-10-13)**: Windows 11, Intel
 Family 6 Model 170 (Meteor Lake), 22 logical CPUs, Blender's Python 3.13,
