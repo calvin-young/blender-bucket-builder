@@ -37,6 +37,7 @@ line counts once, in the session it came up in.
 | 2026-10-14 | Claude Code, Opus 5.5 | 5 | 0 |
 | 2026-10-16 - 19 | Claude Code, Opus 5.5 | not counted | 1 |
 | 2026-10-20 - 21 | Claude Code, Opus 5.5 | 6 | 17 |
+| 2026-10-26 | Claude Code, Opus 5.5 | 1 | 1 |
 
 ## Steering
 
@@ -44,6 +45,8 @@ What the owner decided, corrected, taught, tested or changed in scope that
 the work would not have done on its own, newest first. `docs/TALLY.md` has
 the detail.
 
+- 2026-10-26 [scope]: work moves to a local machine of the owner's (case
+  studies on his own buckets next).
 - 2026-10-21 [correct]: the meniscus needs a face within about a degree of
   flat (10 degrees was far too generous).
 - 2026-10-21 [decide]: one add-on and one branch; the engines to become a
