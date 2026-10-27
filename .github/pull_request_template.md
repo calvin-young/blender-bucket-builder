@@ -19,4 +19,4 @@
 - [ ] Tests added or updated, and they pass
 - [ ] User guide (`bucket_builder/README.md`) updated if behavior changed
 - [ ] No real data, real paths or credentials (synthetic files and placeholders only)
-- [ ] No commercial print-preparation products named
+- [ ] Other products named only for interoperability or measured comparisons, never as reverse-engineered

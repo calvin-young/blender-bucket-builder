@@ -80,8 +80,11 @@ Blender from source where it cannot be downloaded.
 * User-facing text: plain, short, US English spelling;
   the verdict's wording lives in one place, `overlay.summary`.
 * Commits: imperative subject, a body that says why.
-* Do not name commercial print-preparation products in the repository, its
-  docs or commit messages.
+* Commercial products may be named and benchmarked against openly, for
+  interoperability and our own test results (layouts, density, time). Never
+  suggest that we reverse-engineered or copied one: describe what we measured,
+  not how their software works inside (owner, 2026-10-26; replaces the earlier
+  rule that no such product is named).
 
 ## Engine boundary
 
@@ -103,6 +106,14 @@ runs the packer in Blender's own Python (`packing.python_exe`), which is
 the only place it needs Blender at run time. Expect the Blender packer and
 a later stand-alone one to differ in what they read and show, not in how
 they pack.
+
+## Where knowledge lives
+
+Work on this project moves between sessions and between AI assistants, so anything
+a future session needs is written into this repo and pushed. Nothing important may
+live only in a chat or in one assistant's memory. Current state and next steps go in
+this file, the reasons behind decisions and the approaches that were dropped go in
+`docs/DECISIONS.md`, and bugs and planned features go in GitHub Issues. Real data stays in the gitignored `benchmarks/private/` or outside the repo.
 
 ## Before you change things
 
@@ -396,6 +407,7 @@ Last updated: 2026-10-21 (session 4).
   (`git fast-export | scrub | fast-import`, script kept in the session's
   scratch space; 83 commits, `main`'s files unchanged). Every clone made
   before that must be replaced: fetch, then `git reset --hard origin/<branch>`.
+  (The naming rule itself was relaxed on 2026-10-26; see Conventions.)
 * `main` is **1.5.0** (2026-10-21): the Arrange tools (1.4.0) and the packer
   from the `autopack` branch (1.4.3, merged by fast-forward; the branch is
   retired, the owner asked for one line of development). The Pack panel is

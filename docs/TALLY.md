@@ -67,8 +67,9 @@ the sessions before; earlier items are summaries.
 * Follow the ai-context conventions (AGENTS.md, DECISIONS.md and the rest)
   on every branch; push to ai-context directly. The collaboration log may
   be public without prompt text; word counts dropped (2026-10-21).
-* Commercial print-prep products are never named in the repository or in
-  commits (2026-10-21).
+* Commercial print-prep products may be named and benchmarked against, with no
+  suggestion of reverse-engineering them (2026-10-26; replaced "never named",
+  2026-10-21).
 * Strike the passages he wanted gone from the old commits too (done 2026-10-21:
   second history rewrite; the closed PR #1 still holds old commits).
 * The engines (core, pack) to become a package of their own one day;
