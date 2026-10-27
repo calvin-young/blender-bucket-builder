@@ -406,14 +406,14 @@ Last updated: 2026-10-21 (session 4).
 * Tests at 1.3.0: everything listed for 1.2.0 below still passes, plus
   `blender_report_test.py`, `blender_gui_report.py`, `tests/test_pack_*.py`;
   `blender_upgrade_test.py` from 1.2.0 to 1.3.0 passes (1.2.0 zip: build from
-  37390cb).
+  ae5a8bf).
 * Tests at 1.2.0: `test_world.py` (about 10 minutes), 197 checks in
   `blender_test.py`, 48 in `blender_large_test.py`, the UI test (a stand-in
   layout that also runs the list's `draw_item`), the off-screen overlay
   test, and in a window `blender_gui_test.py` (with a real click on a row of
   the list), `blender_gui_undo.py`, `blender_gui_stress.py`,
   `blender_upgrade_test.py` from the 1.1.0 zip (`scratchpad/old_zips`, or
-  build it from b9e2464). `python3.11 -m compileall bucket_builder` passes
+  build it from c32cec6). `python3.11 -m compileall bucket_builder` passes
   (Blender 4.2 has Python 3.11).
 * The owner runs **Blender 5.2.0, Windows 11, NVIDIA GPU, OpenGL backend** on
   an HP ZBook Firefly 14 G11 with 32 GB. Performance > **Copy Report** is how
@@ -435,6 +435,11 @@ Last updated: 2026-10-21 (session 4).
 * Do not wait for a background job with `pgrep -f <its command line>` in the
   same command: it matches the waiting shell itself.
 * Not tested: Blender 4.2 - 5.1, macOS, Vulkan / Metal, a real GPU.
+* Notes above that point to `scratchpad/...` scripts (and the old zips in
+  `scratchpad/old_zips`) refer to the cloud sandboxes of the first
+  sessions; those are gone. Rebuild a script from its description if it is
+  needed; build old zips from the commits named (IDs as after the 2026-10-21
+  rewrite).
 * **What the add-on does with a user's data** (1.3.95, `autopack`): no network
   code or permission (the manifest asks only for the clipboard); Copy Report
   holds counts and timings only; the packer's job folder has numbered parts
@@ -767,9 +772,15 @@ solver (Stage 4) that would make the probes far cheaper.
 The owner still owes: Suzanne STLs at several subdivision levels,
 benchmark buckets.
 
-**A local machine is being set up (asked 2026-10-14)**: an old desktop of the
-owner's, to run the packer on bigger sets of buckets and compare with the commercial packer.
-Decided / told to him (checked against the docs that day):
+**A local machine (2026-10-26: ready)**: a desktop of the owner's dedicated to
+Claude, running **Ubuntu** with the Claude desktop app, for developing and
+testing his add-ons and running the packer on his own buckets (the case
+studies). The plan of 2026-10-14 below assumed Windows 11; on Ubuntu the
+commercial packer cannot run, so a comparison with it needs its layouts
+exported from a Windows machine (judged here with `python -m pack report`
+and `pack --referee`), or Windows elsewhere. The owner's buckets stay on that
+machine (`benchmarks/private/` or a folder outside the repo).
+The plan of 2026-10-14, for reference:
 
 * Windows 11 (the commercial packer is a Windows program; it is also where the add-on and
   Blender's Python run in production, and the pringles 66 vs 109 mm
