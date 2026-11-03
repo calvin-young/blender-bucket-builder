@@ -14,7 +14,7 @@ Cursor and Gemini CLI read it directly.
   height), Arrange tools (drop to floor, minimize box or height, tilt off axis,
   snap to the volume), and an automatic packer, still marked experimental
   (`docs/AUTOPACK.md`; print-quality rules in `docs/PRINT_QUALITY.md`).
-* **Status:** version 1.5.0, in production use by its first user. Declared for
+* **Status:** version 1.5.1, in production use by its first user. Declared for
   Blender 4.2 and newer; tested on Blender 5.2 (Linux, software OpenGL).
   Not yet tried: Blender 4.2 - 5.1, macOS, Vulkan / Metal, a real GPU.
 * **Runs in:** Blender's bundled Python (3.11 in 4.2) with NumPy, nothing else.
@@ -150,10 +150,11 @@ Everything, the packer included, is developed on `main` since 1.5.0
 `bucket_builder/blender_manifest.toml` and an annotated tag `vX.Y.Z` on that
 commit, pushed with it. That way a version number names exactly one state of
 the code. Tagged so far: v1.0.0 (731961d), v1.1.0 (c32cec6), v1.2.0 (ae5a8bf),
-v1.3.0 (bf63370). Not tagged: 1.3.90-1.4.x, the `autopack` branch's previews,
+v1.3.0 (bf63370), v1.5.1 (same code as main's 1.5.0, cut for the status page's download button). Not tagged: 1.3.90-1.4.x, the `autopack` branch's previews,
 where "1.4.0" was used on both lines and 1.4.3 never reached the manifest; and
 1.5.0, whose code kept changing after the version was set (e8fdc24 to
-0614ea1). The next build is 1.5.1.
+0614ea1). The next build is 1.5.2. Builds also get a GitHub pre-release with the zip
+attached, and a new download link on the Workbench row (ai-context, topics/workstation.md).
 
 ## Implementation notes
 
