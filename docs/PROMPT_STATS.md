@@ -25,6 +25,14 @@ ai-context repo counts prompts from Claude Code transcripts).
 - **Accountability:** the maintainer publishes and answers for everything
   in the repository.
 
+## Steering tally
+
+Little things the maintainer asked for or caught, what the status page shows. Counted by hand on 2026-11-03 from the "asked for" list in TALLY.md, so it is a lower bound.
+
+| Bugs found | UI tweaks | New features | Direction | Total |
+|---|---|---|---|---|
+| 3 | 6 | 14 | 30 | 53 |
+
 ## Sessions
 
 Sessions before 2026-10-14 ran in cloud containers that are gone, so their
