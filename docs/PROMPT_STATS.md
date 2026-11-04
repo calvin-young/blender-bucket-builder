@@ -27,11 +27,11 @@ ai-context repo counts prompts from Claude Code transcripts).
 
 ## Steering tally
 
-Little things the maintainer asked for or caught, what the status page shows. Counted by hand on 2026-11-03 from the "asked for" list in TALLY.md, so it is a lower bound.
+Little things the maintainer asked for or caught, what the status page shows. Counted by hand on 2026-11-03 from the "asked for" list in TALLY.md, then checked against a summary of the first cloud thread: three bugs and a feature it held that the list didn't, two more direction items, and the meniscus correction moved to bugs. Still a lower bound.
 
 | Bugs found | UI tweaks | New features | Direction | Total |
 |---|---|---|---|---|
-| 3 | 6 | 14 | 30 | 53 |
+| 7 | 6 | 15 | 31 | 59 |
 
 ## Sessions
 
