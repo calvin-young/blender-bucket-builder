@@ -29,7 +29,7 @@ Cursor and Gemini CLI read it directly.
     python3 tests/test_private_guard.py  # nothing from benchmarks/private/ is committed
     python3 tests/test_engine_boundary.py   # core/ and pack/ import nothing from Blender
     python3 tests/test_pack_voxel.py; python3 tests/test_pack_greedy.py; python3 tests/test_pack_pattern.py
-    python3 tests/test_pack_quality.py; python3 tests/test_pack_job.py   # the packer (job: about 20 minutes)
+    python3 tests/test_pack_quality.py; python3 tests/test_pack_stack.py; python3 tests/test_pack_job.py   # the packer (job: about 20 minutes)
     python3.11 -m compileall -q bucket_builder   # still valid for Blender 4.2's Python
 
     # in Blender: install the add-on into the profile BLENDER_USER_RESOURCES points to,

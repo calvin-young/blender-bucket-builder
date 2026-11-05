@@ -131,3 +131,29 @@ def find(parts, volumes, eligible):
         else:
             fams.append(Family(i, C))
     return [F for F in fams if len(F.members) >= 2]
+
+
+def join_rest(F, parts, rest, volumes, min_overlap=0.3):
+    """Turns that line up parts `rest` with family F, for a test that goes on
+    to compare them closely anyway: {part: linear map into F's frame}, for those
+    of about the same size whose picture overlaps at min_overlap or more."""
+    group = cube_group()
+    refs = F.members[:NEAREST]
+    C0 = {j: _canonical(parts[j]) for j in refs}
+    h = max(float((lambda W: (W.max(0) - W.min(0)).max())(np.asarray(parts[j].mesh.verts, float) @ C0[j].T)) for j in refs) / CELLS
+    pics = {j: _picture(parts[j], C0[j], h) for j in refs}
+    out = {}
+    for i in rest:
+        C = _canonical(parts[i])
+        if not any(max(volumes[i], volumes[j]) <= MAX_RATIO * min(volumes[i], volumes[j]) for j in refs):
+            continue
+        pi = _picture(parts[i], C, h)
+        best = None
+        for j in refs:
+            for G in group:
+                o = _overlap(pics[j], _turned(pi, G))
+                if best is None or o > best[0] + 1e-12:
+                    best = (o, j, G)
+        if best[0] >= min_overlap:
+            out[i] = F.align[best[1]] @ np.linalg.inv(C0[best[1]]) @ best[2] @ C
+    return out

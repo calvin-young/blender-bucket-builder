@@ -54,6 +54,8 @@ named here. A side-by-side comparison may follow later.
   lattices, including every other copy turned over (wedges, tees,
   triangles nest far closer that way), and parts that are different meshes
   but basically the same shape are recognized as a family and nested alike.
+  A family that nests goes into stacks, each pair at its own exact spacing and
+  alike parts side by side: 100 different chips lie in two stacks, as by hand.
 * **Always a valid answer, getting better.** The packer keeps the best
   layout found so far and the parts move as it improves; it can be stopped
   at any time. Every layout is checked by the exact collision engine, and

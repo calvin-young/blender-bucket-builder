@@ -43,6 +43,10 @@ from .greedy import Greedy
 from .problem import Placement, Result
 
 
+def len_members(F):
+    return len(F.members)
+
+
 class Layout:
     """Parts placed in a bucket that can be taken out again.
 
@@ -199,7 +203,7 @@ class Job:
         if self.done:
             return False
         if self._gen is None:
-            self._gen = self._work_parallel() if self.workers > 1 else self._work()
+            self._gen = self._with_stacks(self._work_parallel() if self.workers > 1 else self._work())
         t0 = time.perf_counter()
         self._t = t0
         try:
@@ -216,6 +220,81 @@ class Job:
         if self.cancel:
             self.done = True
         return not self.done
+
+    # ------------------------------------------------------------ stacks
+    STACK_MORE = 0.25         # of the time set: what a search gets once parts have stacked
+
+    def _stack_group(self):
+        """The copies that could be one stack, each with its turn into a common
+        frame: every copy of the build, one family or one part (None otherwise)."""
+        from . import family
+        if self.start or self.locked or len(self.copies) < self.PATTERN_FROM:
+            return None
+        if any(p.mode != 'free' for p in self.parts):
+            return None
+        if len(self.parts) == 1:
+            C = family._canonical(self.parts[0])
+            return [(q, C) for q in self.copies]
+        F = max(self._families(), key=len_members, default=None)
+        if F is None or len(F.members) < 0.5 * len(self.parts):
+            return None
+        rest = [i for i in range(len(self.parts)) if i not in F.align]
+        vols = [abs(float(metrics.mesh_stats(p.mesh)[0])) for p in self.parts]
+        align = dict(F.align)
+        align.update(family.join_rest(F, self.parts, rest, vols))
+        if len(align) < len(self.parts):
+            return None
+        return [((i, c), align[i]) for i, c in self.copies]
+
+    def _try_stacks(self):
+        from . import stack
+        group = self._stack_group()
+        if group is None:
+            return
+        if self.s.flat_rules and self.s.flat_pair_weight and any(self._has_flat_faces(i) for i in range(len(self.parts))):
+            return                  # (flat faces close together are what the print-quality rules avoid)
+        t0 = self.elapsed
+        got = stack.build([self.parts[q[0]].mesh for q, _ in group], [R for _, R in group],
+                          self.s.vlo, self.s.vhi, self.s.gap, self.s.wall_gap, log=self.log)
+        if got is None:
+            return
+        vol = sum(abs(float(metrics.mesh_stats(self.parts[q[0]].mesh)[0])) * abs(float(np.linalg.det(R))) for q, R in group)
+        area = float(np.prod((self.s.vhi - self.s.vlo)[:2]))
+        low = min(float((np.asarray(self.parts[q[0]].mesh.verts, float) @ got['matrices'][n][:3, :3].T)[:, 2].min()
+                        + got['matrices'][n][2, 3]) for n, (q, _) in enumerate(group)) - float(self.s.vlo[2])
+        density = vol / (area * (got['height'] - low))
+        if self.s.max_density and density > self.s.max_density:
+            self.log.append('%6.1f s  stacks     %s, %.1f mm, but %.1f %% dense, over the limit'
+                            % (self.elapsed, got['what'], got['height'], 100 * density))
+            return
+        self._stacks = {'M': {q: got['matrices'][n] for n, (q, _) in enumerate(group)}, 'height': got['height'],
+                        'volume': vol, 'density': density}
+        self.version += 1
+        self.log.append('%6.1f s  stacks     %s, %.1f mm, spacing %.1f mm (%.1f s)'
+                        % (self.elapsed, got['what'], got['height'], got['pitch'], self.elapsed - t0))
+        if self.budget is not None:
+            self.budget = min(self.budget, self.elapsed + self.STACK_MORE * self.budget)
+
+    def _has_flat_faces(self, i):
+        from . import quality
+        m = self.parts[i].mesh
+        return len(quality.flat_faces(m.verts, m.tris, np.eye(3))) > 0
+
+    def _with_stacks(self, work):
+        """Nesting stacks are tried first, the usual search after them; the
+        lower layout is the result."""
+        try:
+            self._try_stacks()
+        except Exception as ex:     # (the search below doesn't depend on this)
+            self.log.append('%6.1f s  stacks     failed: %s' % (self.elapsed, type(ex).__name__))
+            if os.environ.get('PACK_DEBUG'):
+                raise
+        yield
+        for _ in work:
+            yield
+            if getattr(self, '_stacks', None) is not None and self.budget is not None and self.elapsed >= self.budget:
+                work.close()        # (the search is only a second opinion here, and may run long)
+                return
 
     def run(self, on_update=None, slice_s=0.25):
         """Until done (or cancelled); on_update(job) whenever the best
@@ -1487,6 +1566,14 @@ class Job:
         """The best layout so far as a Result (or what the first greedy run
         has placed so far)."""
         res = Result()
+        st = getattr(self, '_stacks', None)
+        if st is not None and (self.best is None or self.cur is None or st['height'] < self._best_height()):
+            for (i, c), M in sorted(st['M'].items()):
+                k = self._match(i, M[:3, :3])
+                res.placements.append(Placement(i, c, np.array(M), -1 if k is None else k, None))
+            res.seconds, res.height, res.volume, res.density = self.elapsed, st['height'], st['volume'], st['density']
+            res.log = list(self.log)
+            return res
         recs = self.best if self.best is not None else (dict(self.cur.recs) if self.cur else {})
         b = self.cur.bucket if self.cur is not None else None
         for (i, c), (k, cell) in sorted(recs.items()):

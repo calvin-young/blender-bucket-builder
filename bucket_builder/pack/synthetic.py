@@ -104,8 +104,9 @@ def figurine(scale=1.0, name='figurine'):
     return merge([body, head, spear], name)
 
 
-def pringle(radius=30.0, curve=40.0, thick=2.0, rings=16, segs=48, name='pringle'):
-    """A saddle-shaped chip, `thick` thick: z = (x^2 - y^2) / (2 curve)."""
+def pringle(radius=30.0, curve=40.0, thick=2.0, rings=16, segs=48, name='pringle', oval=1.0):
+    """A saddle-shaped chip, `thick` thick: z = (x^2 - y^2) / (2 curve).  `oval`
+    narrows it along y, keeping the rise of its rim."""
     pts = [(0.0, 0.0)]
     for i in range(1, rings + 1):
         rr = radius * i / rings
@@ -114,6 +115,7 @@ def pringle(radius=30.0, curve=40.0, thick=2.0, rings=16, segs=48, name='pringle
             pts.append((rr * math.cos(a), rr * math.sin(a)))
     pts = np.array(pts)
     z = (pts[:, 0] ** 2 - pts[:, 1] ** 2) / (2 * curve)
+    pts[:, 1] *= oval
     n = len(pts)
     top = np.column_stack([pts, z + thick / 2])
     bot = np.column_stack([pts, z - thick / 2])

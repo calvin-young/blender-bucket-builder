@@ -618,6 +618,22 @@ and the referee. They are listed in the solver dropdown; `auto` picks one
 > sorting members so that neighbors are alike, were measured and gave
 > nothing.
 >
+> **Nesting stacks (2026-11-05, `pack/stack.py`).** That limit is what stacks
+> solve: a lattice has one spacing for all, a stack gives each pair its own.
+> Every part is seen along its thinnest axis as two height maps; a's top,
+> grown by the gap as a ball rolled over it, minus b's bottom gives the
+> spacing of that pair, for all pairs in a few array operations. A chain with
+> small spacings puts alike parts together, the exact engine then measures the
+> chain's spacings pair by pair, and it is cut into stacks and laid in the
+> volume on its side or upright, lowest build wins. It runs before the search
+> when every part of a build is one family (or one part in many copies), free
+> to turn, without large flat faces (the print-quality rules avoid those
+> close together), within the density limit; the lower of stacks and search
+> is the result. 100 different chips (`demo/chips`), 5600, gap 3: 102 mm in
+> two stacks lying side by side, as by hand, against 311 mm before; found in
+> 15 s. Not done: mixed builds (a family plus other parts), and a build over
+> the density limit (nesting makes it dense; stacks are then not used).
+>
 > **The shape library** (1.4.0, `synthetic.library()`,
 > `tests/bench_pack_library.py --baseline`): 60 s, 2 cores, one process,
 > no density limit, every layout clean by the referee; "greedy" is one copy
