@@ -33,6 +33,9 @@ numbers. Part counts, volumes and triangle counts survived Netfabb's export.
 
 How to read this:
 
+These chips ran on 1.5.1, as the table says. Nesting stacks (`pack/stack.py`, added the same day) took Bucket
+Builder to 154.8 mm on them, and to 102 mm in two stacks side by side on the chips of the new reel.
+
 * **It isn't a win over Netfabb's best.** Netfabb's 2021 help lists 3D Scanline,
   Monte Carlo, Gravity and Size Sorting. The menus of the installation we used
   offered only Simple Outbox Packing and 2D Packing, so those four have not been
