@@ -16,4 +16,9 @@ while [[ ${1:-} == --addon ]]; do
 done
 export DISPLAY=${DISPLAY:-:0} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 export BLENDER_USER_CONFIG=$U/config BLENDER_USER_SCRIPTS=$U/scripts BLENDER_USER_EXTENSIONS=$U/extensions
-exec "${BLENDER:-$HOME/apps/blender/5.2.3/blender}" "$@"
+BIN=${BLENDER:-$HOME/apps/blender/5.2.3/blender}
+# a fresh config opens on the Quick Setup splash, which would be in every shot
+if [[ ! -e $U/config/userpref.blend ]]; then
+  "$BIN" --background --python-expr "import bpy; bpy.context.preferences.view.show_splash = False; bpy.ops.wm.save_userpref()" > /dev/null
+fi
+exec "$BIN" "$@"

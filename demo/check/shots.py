@@ -17,13 +17,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path[:0] = [os.path.join(ROOT, "lib")]
 import capture as C  # noqa: E402
-from capture import frames, smooth, smoother, ease_out, orbit  # noqa: E402
+from capture import smooth, smoother, ease_out, orbit  # noqa: E402
 import parts as P  # noqa: E402
 
 OUT = os.path.join(ROOT, "cache", "check", "frames")
 BB = "bl_ext.user_default.bucket_builder"
 S = {}
 GREY = (0.78, 0.79, 0.81)
+STRETCH = 1.4                      # every move and pause, so the reel runs about 1:30
+
+
+def frames(seconds):
+    return C.frames(seconds * STRETCH)
+
 
 # the build: (name, maker, rotation in degrees, centre x, y on the floor of the 380 x 284 volume)
 BUILD = [
@@ -128,7 +134,6 @@ def setup_scene():
 POSE_A = orbit((10, 0, 0), 560, 54, 22)           # the whole build, sidebar on the right
 POSE_OUT = orbit((120, -60, 10), 330, 58, 30)     # the pulley going through the +X wall
 POSE_COL = orbit((-140, 22, 5), 215, 50, 8)       # bolt into gear
-POSE_CLR = orbit((102, 16, 6), 115, 46, 14)       # nut close to a knob
 POSE_WAL = orbit((160, 0, 5), 170, 50, 40)        # knob close to the wall
 POSE_REP = orbit((10, 0, 0), 600, 56, 22)
 
@@ -218,13 +223,17 @@ def seg_clearance():
     st().use_clearance = True
     n = ob("nut-01")
     S["nut_home"] = n.location.copy()
-    yield from camera(POSE_CLR, frames(1.3))
     k = ob("knob-01")
-    # stop the nut 1.8 mm short of the knob's bounding box (the clearance is 3 mm)
+    # stop the nut 1.8 mm short of the knob's bounding box (the clearance is 3 mm), on its
+    # centre line so that's the real gap
     lo_k, hi_k = world_box(k)
     lo_n, hi_n = world_box(n)
+    dx = 0.5 * (lo_k[0] + hi_k[0] - lo_n[0] - hi_n[0])
     dy = (hi_k[1] + 1.8) - lo_n[1]
-    yield from slide(n, n.location + Vector((0, dy, 0)), frames(2.6), ease=ease_out)
+    # nearly straight down: the nut comes in from behind the taller knob, which hid the gap from lower
+    gap_y = hi_k[1] + 0.9
+    yield from camera(orbit((lo_k[0] + 15.0, gap_y + 2.0, 6.0), 72, 16, 8), frames(1.3))
+    yield from slide(n, n.location + Vector((dx, dy, 0)), frames(2.6), ease=ease_out)
     yield from hold(frames(2.0))
 
 
@@ -247,7 +256,7 @@ def _goto_problem(direction=1):
     after = C.Pose.current()
     before.apply()
     # a little further out than Blender frames it, and from our angle
-    return orbit(after.target, max(after.dist * 1.6, 160), 52, 20)
+    return orbit(after.target, max(after.dist * 1.6, 160), 34, 20)
 
 
 def _row(pr):

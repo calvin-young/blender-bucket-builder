@@ -10,12 +10,13 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "lib"))
-from compose import Caption, Edit, Frames, Still, CROP, FPS, render, still, title_card  # noqa: E402
+from compose import Caption, Edit, Frames, Still, FPS, render, still, title_card  # noqa: E402
 from PIL import Image  # noqa: E402
 
 FR = os.path.join(ROOT, "cache", "check", "frames")
 OUT = os.path.join(ROOT, "out", "check.mp4")
-DATE = "October 2026"
+DATE = "November 2026"
+T = 1.4                 # shots.py's STRETCH: caption times below are in unstretched seconds
 
 
 def seg(name, **kw):
@@ -23,27 +24,26 @@ def seg(name, **kw):
 
 
 def _hero():
-    im = Image.open(os.path.join(FR, "e_collision", "0194.png")).crop(CROP)
-    return im.crop((330, 170, 1230, 1070))
+    last = sorted(os.listdir(os.path.join(FR, "e_collision")))[-1]
+    im = Image.open(os.path.join(FR, "e_collision", last)).convert("RGB")
+    return im.crop((330, 140, 1230, 1040))
 
 
-def title():
+def card():
+    """The first and the last frame of the video (PowerPoint shows one of them as its poster)."""
     return title_card("Bucket Builder", ["The live build check: collisions,", "clearance and the build volume"],
                       "Calvin Young", f"Made with Claude  ·  {DATE}", hero=_hero(), accent="info")
 
 
-def end_card():
-    return title_card("Bucket Builder", ["Open source (GPL-3.0), for Blender 4.2+",
-                                         "github.com/calvin-young/blender-bucket-builder"],
-                      "Version 1.5, in production use", f"Calvin Young  ·  Made with Claude  ·  {DATE}",
-                      hero=_hero(), accent="info")
+def cap(title, sub, accent, start, t0, **kw):
+    return Caption(title, sub, accent, start, t0 * T, **kw)
 
 
 EDIT = Edit(
     caption_x=20,
     clips=[
-        Still(title, 2.6, name="title"),
-        seg("a_intro", hold=3.0, fade_in=0.6),
+        Still(card, 3.0, name="title"),
+        seg("a_intro", hold=4.2, fade_in=0.6),
         seg("b_volume"),
         seg("c_outside"),
         seg("d_collisions_on"),
@@ -53,26 +53,26 @@ EDIT = Edit(
         seg("h_problems"),
         seg("i_ignore"),
         seg("j_fix"),
-        seg("k_report", hold=1.0),
-        Still(end_card, 3.0, fade_in=0.8, name="end"),
+        seg("k_report", hold=1.4),
+        Still(card, 3.5, fade_in=1.0, name="end"),
     ],
     captions=[
-        Caption("A build in Blender", "24 parts for one printer bucket, arranged by hand", "neutral", "a_intro", 0.5),
-        Caption("Build volume check", "The printer's volume (HP MJF 5600), live in the viewport", "info",
+        cap("A build in Blender", "24 parts for one printer bucket, arranged by hand", "neutral", "a_intro", 0.5),
+        cap("Build volume check", "The printer's volume (HP MJF 5600), live in the viewport", "info",
                 "b_volume", 0.6),
-        Caption("Outside the volume", "The part, and the wall it goes through, turn magenta", "magenta",
+        cap("Outside the volume", "The part, and the wall it goes through, turn magenta", "magenta",
                 "c_outside", 1.2),
-        Caption("Collision check on", "Build OK: no collisions, everything inside", "good", "d_collisions_on", 1.0),
-        Caption("Collisions", "Red hatching and the exact intersection curve, live while you drag", "bad",
+        cap("Collision check on", "Build OK: no collisions, everything inside", "good", "d_collisions_on", 1.0),
+        cap("Collisions", "Red hatching and the exact intersection curve, live while you drag", "bad",
                 "e_collision", 1.5),
-        Caption("Clearance", "Closer than 3 mm: amber, with the gap measured", "amber", "f_clearance", 1.4),
-        Caption("Wall gap", "Too close to a side wall of the build volume", "amber", "g_wallgap", 1.2),
-        Caption("Every problem listed, worst first", "Next frames it; the magnifier shows its parts on their own",
+        cap("Clearance", "Closer than 3 mm: amber, with the gap measured", "amber", "f_clearance", 1.4),
+        cap("Wall gap", "Too close to a side wall of the build volume", "amber", "g_wallgap", 1.2),
+        cap("Every problem listed, worst first", "Next frames it; the magnifier shows its parts on their own",
                 "info", "h_problems", 0.6),
-        Caption("Ignore what's meant to be", "The verdict counts what's left: 1 problem ignored", "neutral",
+        cap("Ignore what's meant to be", "The verdict counts what's left: 1 problem ignored", "neutral",
                 "i_ignore", 0.8),
-        Caption("Fixed: Build OK", "The checks only draw; nothing in the scene is changed", "good", "j_fix", 1.6),
-        Caption("Build Report", "Density, packed height and the density of every layer", "info", "k_report", 0.8),
+        cap("Fixed: Build OK", "The checks only draw; nothing in the scene is changed", "good", "j_fix", 1.6),
+        cap("Build Report", "Density, packed height and the density of every layer", "info", "k_report", 0.8),
     ],
 )
 

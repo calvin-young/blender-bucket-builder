@@ -31,7 +31,7 @@ Little things the maintainer asked for or caught, what the status page shows. Co
 
 | Bugs found | UI tweaks | New features | Direction | Total |
 |---|---|---|---|---|
-| 7 | 6 | 15 | 31 | 59 |
+| 7 | 9 | 15 | 31 | 62 |
 
 ## Sessions
 
@@ -41,6 +41,7 @@ line counts once, in the session it came up in.
 
 | Date | Tool and model | Prompts | Steering lines |
 |---|---|---|---|
+| 2026-11-05 | Claude Code (workstation), Opus 5.5 | 1 | 3 | The build-check demo reel: about 1:30, last frame matches the first, clearer clearance shot |
 | before 2026-10-14 | Claude Code, Opus | not counted | 3 |
 | 2026-10-14 | Claude Code, Opus 5.5 | 5 | 0 |
 | 2026-10-16 - 19 | Claude Code, Opus 5.5 | not counted | 1 |
@@ -53,6 +54,9 @@ What the owner decided, corrected, taught, tested or changed in scope that
 the work would not have done on its own, newest first. `docs/TALLY.md` has
 the detail.
 
+- 2026-11-05 [correct][ui]: reel: the camera angle hid the clearance gap; show it clearly.
+- 2026-11-05 [scope][ui]: reel: stretch to about 1:30.
+- 2026-11-05 [domain][ui]: reel: the last frame matches the first, as PowerPoint shows the last.
 - 2026-10-26 [decide]: other products may be named and benchmarked against
   openly, never with any suggestion that we reverse-engineered them.
 - 2026-10-26 [decide]: the AI is the main developer: push to `main`, no PRs

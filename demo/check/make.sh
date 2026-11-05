@@ -7,11 +7,17 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/.." && pwd)
 CACHE=$ROOT/cache/check
-BUCKET_BUILDER=${BUCKET_BUILDER:-$ROOT/../bucket_builder}
+TAG=${TAG:-v1.5.1}    # a released snapshot, so a reel never films work in progress
+ADDON=$CACHE/addon/$TAG
 mkdir -p "$CACHE"
 case ${1:-} in
   capture)
     shift
+    if [[ ! -d $ADDON/bucket_builder ]]; then
+      mkdir -p "$ADDON"
+      git -C "$ROOT/.." archive "$TAG" bucket_builder | tar -x -C "$ADDON"
+    fi
+    BUCKET_BUILDER=${BUCKET_BUILDER:-$ADDON/bucket_builder}
     # Full screen: a normal window can't reach 1920x1080 on a 1920x1080 desktop
     "$ROOT/lib/blender.sh" --addon bucket_builder="$BUCKET_BUILDER" \
       --window-fullscreen --python "$HERE/shots.py" -- "$@" ;;
