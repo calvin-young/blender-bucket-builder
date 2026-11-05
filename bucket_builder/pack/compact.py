@@ -14,6 +14,12 @@ so it moves by that much, measures again, and stops when the step is
 negligible.  The engine reports distances up to gap + REACH; parts further
 away than that allow a step of REACH.
 
+The engine only promises a verdict against its threshold: a distance under
+it that is flagged approximate is what it found, and the true one can be
+much smaller (test_compact_unproven: about 9 mm read, under 6 true).  So a
+second world with the threshold at the gap itself, as the referee sets it,
+decides whether a step is kept; the distances only size the steps.
+
 Every intermediate layout is valid, so the pass can stop at any time.
 """
 
@@ -43,10 +49,20 @@ class Compactor:
         self.M = [np.array(M, float) for _, M in items]
         self.meshes = [m for m, _ in items]
         self.n = len(items)
-        w = self.w = World()
         size = float(np.max(self.vhi - self.vlo))
+        self.w = self._world(items, locked, size, self.gap + self.reach)
+        # (a pair exactly at the gap passes: the threshold sits a hair below it)
+        self.v = self._world(items, locked, size, max(0.0, self.gap - 1e-6 * size))
+        self._settle()
+        self.moves = 0
+        self.travel = 0.0
+        self.solves = 0
+
+    @staticmethod
+    def _world(items, locked, size, clear):
+        w = World()
         w.set_scale(size, 0.5)
-        w.set_thresholds(0.0, self.gap + self.reach)
+        w.set_thresholds(0.0, clear)
         keys = {}
         for uid, (m, M) in enumerate(list(items) + list(locked)):
             k = keys.get(id(m))
@@ -54,14 +70,12 @@ class Compactor:
                 k = keys[id(m)] = 'm%d' % len(keys)
                 w.add_geom(k, np.asarray(m.verts, np.float64), np.asarray(m.tris))
             w.add_object(uid, k, np.asarray(M, float))
-        self._settle()
-        self.moves = 0
-        self.travel = 0.0
-        self.solves = 0
+        return w
 
     def _settle(self):
-        while self.w.step(budget=0.05):
-            pass
+        for w in (self.w, self.v):
+            while w.step(budget=0.05):
+                pass
         self.solves += 1
 
     def _extent(self, j):
@@ -81,6 +95,12 @@ class Compactor:
                 d = min(d, dist)
         return d
 
+    def too_close(self, j):
+        """Whether part j is closer than the gap to any other part (the
+        verdict of the world thresholded at the gap)."""
+        s = self.v.slot(j)
+        return any(s in key for key in self.v.viol)
+
     def _room(self, j, ax, tops):
         """How far part j may go toward -ax before it leaves the volume (or,
         down, before the build gets lower than the density limit allows)."""
@@ -96,16 +116,16 @@ class Compactor:
     def _place(self, j, ax, value):
         self.M[j][ax, 3] = value
         self.w.set_matrix(j, self.M[j])
+        self.v.set_matrix(j, self.M[j])
         self._settle()
 
     def move(self, j, ax, tops, deadline=None):
         """Slide part j toward -ax as far as it goes; returns the distance.
 
         The engine's distances are what it found, which a closer pair it has
-        not proven absent may undercut (by about 1 %, more where it flags
-        them approximate), so each step stops a margin short, and a step
-        after which the engine does find a pair under the gap is halved
-        until it does not (or undone)."""
+        not proven absent may undercut, so each step stops a margin short,
+        and a step after which the part is too close (too_close) is halved
+        until it is not (or undone)."""
         went = 0.0
         margin = 0.01 * self.gap + 0.005
         for _ in range(MAX_STEPS):
@@ -117,11 +137,11 @@ class Compactor:
             x0 = self.M[j][ax, 3]
             self._place(j, ax, x0 - step)
             tries = 0
-            while self.nearest(j) < self.gap and tries < 6:
+            while self.too_close(j) and tries < 6:
                 step *= 0.5
                 self._place(j, ax, x0 - step)
                 tries += 1
-            if self.nearest(j) < self.gap:
+            if self.too_close(j):
                 self._place(j, ax, x0)
                 break
             went += step

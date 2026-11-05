@@ -240,6 +240,29 @@ def test_compact():
               % (trial, gap, c.moves, c.travel, r.height, top, v.ok))
 
 
+def test_compact_unproven():
+    print('compaction does not trust a distance the engine has not proven')
+    from pack import compact
+    # A fine sphere and a figurine: past the gap the engine's clearance
+    # world reads about 9 mm for this pair where it is under 6 (flagged
+    # approximate); the old compaction slid the figurine to 1.8 mm.
+    sph, fig = S.sphere(30, 256, 128), S.figurine(2.0)
+    rng = np.random.default_rng(11)
+    for _ in range(2):
+        Q, _r = np.linalg.qr(rng.normal(size=(3, 3)))
+    if np.linalg.det(Q) < 0:
+        Q[:, 0] *= -1
+    M = np.eye(4)
+    M[:3, :3] = Q
+    v = fig.verts @ Q.T
+    M[:3, 3] = (45.0 - v[:, 0].min(), -(v[:, 1].min() + v[:, 1].max()) / 2, -(v[:, 2].min() + v[:, 2].max()) / 2)
+    vlo, vhi, gap = (-100, -100, -100), (200, 100, 100), 6.0
+    c = compact.Compactor([(fig, M)], vlo, vhi, gap, 0.0, locked=[(sph, np.eye(4))])
+    went = c.move(0, 0, [1e9])
+    r = referee.check([('a', sph, np.eye(4)), ('b', fig, c.M[0])], vlo, vhi, gap)
+    check(r.ok and went > 5.0, 'moved %.1f mm toward the sphere, referee clean (%s)' % (went, r.ok))
+
+
 def test_start_off_grid():
     print('a layout off the grid is kept, pinned; a bad one is mended')
     desc, parts, kw = S.buckets()['keycaps']
@@ -387,6 +410,7 @@ if __name__ == '__main__':
     test_start(*kc)
     test_cancel_and_locked()
     test_compact()
+    test_compact_unproven()
     test_start_off_grid()
     test_tiers()
     test_spread()
