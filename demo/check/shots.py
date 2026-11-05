@@ -219,6 +219,23 @@ def seg_collision():
     yield from hold(frames(2.0))
 
 
+def seg_hero():
+    """A close-up of the collision for the title card: not in the timeline."""
+    sp = C.space()
+    keep = C.Pose.current(), sp.show_region_ui, st().show_hud, sp.overlay.show_text, sp.overlay.show_floor
+    sp.show_region_ui = False
+    st().show_hud = False
+    sp.overlay.show_text = False
+    sp.overlay.show_floor = False
+    sp.overlay.show_axis_x = sp.overlay.show_axis_y = False
+    orbit((-183, 30, 10), 118, 52, 18).apply()
+    yield 0.5
+    yield
+    pose, sp.show_region_ui, st().show_hud, sp.overlay.show_text, sp.overlay.show_floor = keep
+    sp.overlay.show_axis_x = sp.overlay.show_axis_y = True
+    pose.apply()
+
+
 def seg_clearance():
     st().use_clearance = True
     n = ob("nut-01")
@@ -330,6 +347,7 @@ SEGMENTS = [
     ("c_outside", seg_outside),
     ("d_collisions_on", seg_collisions_on),
     ("e_collision", seg_collision),
+    ("z_hero", seg_hero),
     ("f_clearance", seg_clearance),
     ("g_wallgap", seg_wallgap),
     ("h_problems", seg_problems),

@@ -10,7 +10,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "lib"))
-from compose import Caption, Edit, Frames, Still, FPS, render, still, title_card  # noqa: E402
+from compose import Caption, Edit, Frames, Still, FPS, hero_card, render, still  # noqa: E402
 from PIL import Image  # noqa: E402
 
 FR = os.path.join(ROOT, "cache", "check", "frames")
@@ -23,16 +23,13 @@ def seg(name, **kw):
     return Frames(os.path.join(FR, name), **kw)
 
 
-def _hero():
-    last = sorted(os.listdir(os.path.join(FR, "e_collision")))[-1]
-    im = Image.open(os.path.join(FR, "e_collision", last)).convert("RGB")
-    return im.crop((330, 140, 1230, 1040))
-
-
 def card():
     """The first and the last frame of the video (PowerPoint shows one of them as its poster)."""
-    return title_card("Bucket Builder", ["The live build check: collisions,", "clearance and the build volume"],
-                      "Calvin Young", f"Made with Claude  ·  {DATE}", hero=_hero(), accent="info")
+    im = Image.open(os.path.join(FR, "z_hero", "0000.png")).convert("RGB")
+    return hero_card(im.crop((0, 100, 1692, 1052)), "Bucket Builder",
+                     ["The live build check: collisions,", "clearance and the build volume"],
+                     "Calvin Young", [f"Made with Claude  ·  {DATE}", "github.com/calvin-young/blender-bucket-builder"],
+                     accent="info")
 
 
 def cap(title, sub, accent, start, t0, **kw):
