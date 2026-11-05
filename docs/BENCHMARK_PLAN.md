@@ -196,3 +196,24 @@ described as a comparison with Netfabb's simple packer.
   terms.
 * **Follow-ups:** access to Netfabb's 3D packers, Magics and Fusion; the interlocking
   check; the location of the Araújo data set.
+
+## 9. Access and terms (checked 2026-11-05; not legal advice)
+
+* **Netfabb.** Run without a license, any edition falls back to the free
+  feature set; our 2021.1 install says "not licensed" and offers only Simple
+  Outbox and 2D packing. No Autodesk-hosted 2019 installer was found, and
+  third-party copies were not used. The current Premium has a 30-day trial
+  through an Autodesk account. Autodesk's General Terms (§9) limit trials to
+  30 days of non-commercial evaluation by one person, and forbid reverse
+  engineering, including studying an offering's algorithms or internals. No
+  benchmarking clause was found in them.
+* **Fusion.** 30-day trial; Arrange is not in the personal edition.
+* **Magics.** Evaluation licenses go through Materialise or a reseller. The
+  2025 EULA (§5.3) limits them to 30 days, to test whether the software suits
+  the customer's own needs, and forbids reverse engineering (§7.5). No
+  benchmarking or publication clause was found.
+* **SmartStream 3D Build Manager.** Offers no printer without a Command Center
+  connection (its default volume is 248 mm tall), and its auto-pack spacing is
+  5 mm at least. Its license text has not been read yet.
+* For this project: compare layouts we measure, never describe how another
+  program works inside (AGENTS.md, Conventions).
