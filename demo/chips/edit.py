@@ -40,7 +40,7 @@ def captions():
         Caption("Now dump them out", f"{G['n']} chips, and every one is a different mesh", "magenta", "e_dump", 1.2, "e_dump", None),
         Caption("This is how most packers handle it", f"Simulated: any orientation, dropped in. {B['h']:.0f} mm, nearly the whole bucket", "bad", "f_bad", 0.5, "f_bad", None),
         Caption("This algorithm recognizes similar shapes and how they nest", f"Each pair at its own exact gap: {G['h']:.0f} mm high, packed in {G['s']:.0f} s", "good", "h_good", 0.5, "h_good", None),
-        Caption("Every one of these chips is a unique mesh", "Not one part repeated 100 times, which is all that simple nesting can handle", "amber", "i_unique", 0.3, "i_unique", None),
+        Caption("Every one of these chips is a unique mesh", "Not one part repeated 100 times, the easy case for nesting", "amber", "i_unique", 0.3, "i_unique", None),
         Caption("The same result as packing it by hand", f"{G['h']:.0f} mm, two stacks side by side, no collisions", "good", "j_ok", 0.6, "j_ok", None),
     ]
 
