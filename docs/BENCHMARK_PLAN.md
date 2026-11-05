@@ -217,3 +217,27 @@ described as a comparison with Netfabb's simple packer.
   5 mm at least. Its license text has not been read yet.
 * For this project: compare layouts we measure, never describe how another
   program works inside (AGENTS.md, Conventions).
+
+## 10. Synthetic hand-packed builds (2026-11-05)
+
+`benchmarks/hand_builds.py` writes two builds whose layout is made by
+construction, the way a person packs by hand, and fits one bucket;
+`tools/pack_vs_hand.py` asks a packer to repack the same parts in the same
+floor and height, at the gap the layout itself keeps, and counts the parts in
+the first bucket. Every layout below was checked by the referee.
+
+| Build | By hand | Bucket Builder fixed | Bucket Builder free | Netfabb 2021 Simple Outbox (unlicensed) |
+|---|---|---|---|---|
+| troughs: 51 nested shells, 235 mm, gap 2 | 51 | 40 | 45 | 12 |
+| housing: open box and 22 parts inside it, 300 mm, gap 6 | 23 | 22 (the box left out) | 22 (the box left out) | 20 (the box left out) |
+| housing, height 302 mm | 23 | 23 | 23 | |
+
+Bucket Builder: 1 mm cells, 300 s budget (the job doubles it when parts are
+left out). Netfabb: voxel 1 mm, no rotation, gap and height as above.
+
+* **Troughs** is the hard case: thin walls nested at a 2 mm gap, where a grid
+  that adds a cell or two to every gap loses part of every stack.
+* **Housing** is hard for us only because the box is as tall as the build:
+  the grid cannot place a part within two cells of the volume's height
+  (issue #23). With 2 mm to spare everything goes in, the small parts inside
+  the box.
