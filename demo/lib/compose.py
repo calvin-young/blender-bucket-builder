@@ -101,9 +101,24 @@ class Caption:
 
 
 @dataclass
+class Panel:
+    """A generated picture (callable -> RGBA, picklable) over the footage, like a caption;
+    end=None: to the end of the start clip."""
+    make: object
+    start: str = ""
+    t0: float = 0.0
+    end: str = None
+    t1: float = None
+    x: int = 20
+    y: int = 120
+    fade: float = 0.3
+
+
+@dataclass
 class Edit:
     clips: list
     captions: list = field(default_factory=list)
+    panels: list = field(default_factory=list)
     caption_x: object = "center"     # or a left edge in pixels (to keep clear of a corner badge)
 
     def layout(self):
@@ -124,6 +139,17 @@ class Edit:
             e = idx[cap.end or cap.start]
             b = starts[e] + (self.clips[e].n if cap.t1 is None else int(round(cap.t1 * FPS)))
             spans.append((a, b, cap))
+        return spans
+
+    def panel_spans(self):
+        starts, _ = self.layout()
+        idx = {c.name: k for k, c in enumerate(self.clips)}
+        spans = []
+        for p in self.panels:
+            a = starts[idx[p.start]] + int(round(p.t0 * FPS))
+            e = idx[p.end or p.start]
+            b = starts[e] + (self.clips[e].n if p.t1 is None else int(round(p.t1 * FPS)))
+            spans.append((a, b, p))
         return spans
 
 
@@ -232,6 +258,7 @@ def hero_card(hero, name, lines, byline, footer, accent="amber", x=110):  # foot
 # ------------------------------------------------------------------ render
 
 _EDIT = None
+_panel_cache = {}
 
 
 def _init(edit):
@@ -256,6 +283,15 @@ def _compose(f):
             a = min(1.0, (i + 1) / max(k, 1))
             base = Image.blend(base, im, a * a * (3 - 2 * a))
     frame = base.convert("RGBA")
+    for a, b, p in edit.panel_spans():
+        if a <= f < b:
+            k = max(1, int(round(p.fade * FPS)))
+            im = _panel_cache.setdefault(id(p), p.make())
+            alpha = min(1.0, (f - a + 1) / k, (b - f) / k)
+            if alpha < 1.0:
+                im = im.copy()
+                im.putalpha(im.getchannel("A").point(lambda v: int(v * alpha)))
+            frame.alpha_composite(im, (p.x, p.y))
     for a, b, cap in edit.caption_spans():
         if a <= f < b:
             k = max(1, int(round(cap.fade * FPS)))
