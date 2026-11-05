@@ -62,14 +62,12 @@ def pack_bucket(parts, s, workers, curve, t_all):
 
 
 def remaining(parts, res):
-    left = {}
-    for p, _, _ in res.unplaced:
-        left[id(p)] = left.get(id(p), 0) + 1
-    out = []
-    for p in parts:
-        if id(p) in left:
-            out.append(Part(p.name, p.mesh, left[id(p)], p.mode, base=p.base))
-    return out
+    """Copies not placed, per part (Placement.part indexes the parts given to the job)."""
+    placed = [0] * len(parts)
+    for pl in res.placements:
+        placed[pl.part] += 1
+    return [Part(p.name, p.mesh, p.quantity - n, p.mode, base=p.base)
+            for p, n in zip(parts, placed) if p.quantity > n]
 
 
 def main():
@@ -82,6 +80,7 @@ def main():
     ap.add_argument('--gap', type=float, help='default: the closest pair by hand')
     ap.add_argument('--wall-gap', type=float, help='default: the closest to a side wall by hand, 5 mm at most')
     ap.add_argument('--height', type=float, help='default: the height used by hand')
+    ap.add_argument('--goal', default='count', choices=('count', 'overnight', 'rush', 'quality'))
     ap.add_argument('--workers', type=int, default=8)
     ap.add_argument('--cell', type=float, default=1.0)
     ap.add_argument('--max-buckets', type=int, default=6)
@@ -103,7 +102,7 @@ def main():
     parts = parts_of(scene, a.mode, 1)
     total = sum(p.quantity for p in parts)
     vol_all = metrics.measure(items, vlo, vhi).volume
-    out = {'label': a.label, 'mode': a.mode, 'time': a.time, 'parts': total, 'hand': hand, 'gap': gap,
+    out = {'label': a.label, 'mode': a.mode, 'goal': a.goal, 'time': a.time, 'parts': total, 'hand': hand, 'gap': gap,
            'wall': wall, 'height': height, 'volume_mm3': vol_all, 'buckets': []}
     print('%s  %d parts, %s mode, %.0f s; by hand: height %.1f, closest %s, wall %.1f, collisions %d, outside %d; '
           'test: gap %.1f, wall %.1f, height %.1f'
@@ -113,7 +112,7 @@ def main():
     t0 = time.perf_counter()
     todo = parts
     for b in range(a.max_buckets):
-        s = Settings(vlo=vlo2, vhi=vhi2, gap=gap, wall_gap=wall, h=a.cell, max_density=None, preset='count', seed=b,
+        s = Settings(vlo=vlo2, vhi=vhi2, gap=gap, wall_gap=wall, h=a.cell, max_density=None, preset=a.goal, seed=b,
                      time_budget=a.time, **dial_settings(0.0))
         curve = []
         res = pack_bucket(todo, s, a.workers, curve, time.perf_counter())
