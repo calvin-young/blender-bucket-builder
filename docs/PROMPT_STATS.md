@@ -41,7 +41,7 @@ line counts once, in the session it came up in.
 
 | Date | Tool and model | Prompts | Steering lines |
 |---|---|---|---|
-| 2026-11-05 | Claude Code (workstation), Opus 5.5 | 1 | 3 | The build-check demo reel: about 1:30, last frame matches the first, clearer clearance shot |
+| 2026-11-05 | Claude Code (workstation), Opus 5.5 | 1 | 3 |
 | before 2026-10-14 | Claude Code, Opus | not counted | 3 |
 | 2026-10-14 | Claude Code, Opus 5.5 | 5 | 0 |
 | 2026-10-16 - 19 | Claude Code, Opus 5.5 | not counted | 1 |
