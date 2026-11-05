@@ -20,8 +20,6 @@ sys.path[:0] = [os.path.join(ROOT, "lib")]
 import capture as C  # noqa: E402
 from capture import frames, smoother, orbit  # noqa: E402
 import parts as P  # noqa: E402
-sys.path.insert(0, HERE)
-import inputs  # noqa: E402
 
 CACHE = os.path.join(ROOT, "cache", "pack")
 OUT = os.path.join(CACHE, "frames")
@@ -345,12 +343,49 @@ def seg_voxels():
     PV = orbit((0, 0, 0), 210, 58, 28)
     PV.apply()
     S["demo"] = (solid_mesh, solid, halo)
-    yield from hold(frames(1.0))
-    solid_mesh.hide_set(True)
-    solid.hide_set(False)
-    n = frames(3.4)
+    # the smooth part first, with time to see its curves
+    n = frames(2.4)
     p = C.Pose.current()
-    q = orbit((0, 0, 0), 190, 44, 56)
+    q = orbit((0, 0, 0), 200, 56, 40)
+    for i in range(n):
+        p.lerp(q, (i + 1) / n).apply()
+        yield
+    # then it turns to cubes, layer by layer, from the floor up (the cubes always cover the part)
+    nz = pg.solid.shape[2]
+    layers = []
+    for k in range(nz):
+        g = pg.solid.copy()
+        g[:, :, k + 1:] = False
+        if not g[:, :, k].any():
+            continue
+        o = _cells_mesh("demo-layer-%03d" % k, g, h, org, (0.88, 0.50, 0.30))
+        o.hide_set(True)
+        layers.append(o)
+    n = frames(4.2)
+    p = C.Pose.current()
+    q = orbit((0, 0, 0), 180, 50, 56)
+    shown = None
+    for i in range(n):
+        u = (i + 1) / n
+        p.lerp(q, smoother(u)).apply()
+        o = layers[min(len(layers) - 1, int(u * len(layers)))]
+        if o is not shown:
+            o.hide_set(False)
+            if shown is not None:
+                shown.hide_set(True)
+            shown = o
+        yield
+    shown.hide_set(True)
+    solid.hide_set(False)
+    solid_mesh.hide_set(True)
+    for o in layers:
+        me_ = o.data
+        bpy.data.objects.remove(o)
+        bpy.data.meshes.remove(me_)
+    # a slow look at it: all cubes now, and the bore still open
+    n = frames(2.8)
+    p = C.Pose.current()
+    q = orbit((0, 0, 0), 165, 44, 74)
     for i in range(n):
         p.lerp(q, smoother((i + 1) / n)).apply()
         yield
@@ -395,242 +430,34 @@ def seg_even():
     yield from hold(frames(3.4))
 
 
-def _ridges(name):
-    """The 24 ridges of a dial layout, as objects (added or moved)."""
-    sys.path.insert(0, os.path.join(ROOT, "..", "bucket_builder"))
-    from pack import meshio
-    shift = Matrix.Translation((-0.5 * VOL[0], -0.5 * VOL[1], 0.0))
-    items = meshio.read(os.path.join(CACHE, name + ".3mf")).items
-    return items, [shift @ Matrix(np.asarray(it.matrix).tolist()) for it in items]
-
-
-def seg_dial():
-    """Part Quality: the dial at 0 % and 100 %, on parts where it shows."""
-    s = st()
-    for objs in S["kind"].values():                 # (removed, not hidden: hidden parts are still checked)
-        for o in objs:
-            bpy.data.objects.remove(o)
-    S["kind"] = {}
-    C.only_panels(importlib.import_module(BB + ".ui"),
-                  ["BUCKETBUILDER_PT_main", "BUCKETBUILDER_PT_pack"], "BUCKETBUILDER_PT")
-    s.report_density = False
-    s.detect_collisions = False
-    items, M0 = _ridges("dial0")
-    _, M1 = _ridges("dial100")
-    m = items[0].mesh
-    me = bpy.data.meshes.new("ridge")
-    me.from_pydata(m.verts.tolist(), [], m.tris.tolist())
-    me.update()
-    ridges = []
-    for k, M in enumerate(M0):
-        o = bpy.data.objects.new("ridge-%02d" % (k + 1), me)
-        o.matrix_world = M
-        o.color = _base_color(M)
-        bpy.context.scene.collection.objects.link(o)
-        ridges.append(o)
-    s.pack_quality = 0
-    orbit((0, 0, 20), 640, 52, 20).apply()
-    yield 1.0
-    yield from hold(frames(3.4))
-    s.pack_quality = 100
-    n = frames(2.0)
-    A = [o.matrix_world.copy() for o in ridges]
-    for i in range(n):
-        t = smoother((i + 1) / n)
-        for o, a, b in zip(ridges, A, M1):
-            loc = a.translation.lerp(b.translation, t)
-            loc.z += 70.0 * 4 * t * (1 - t)
-            o.matrix_world = Matrix.Translation(loc) @ a.to_quaternion().slerp(b.to_quaternion(), t).to_matrix().to_4x4()
-        yield
-    for o, b in zip(ridges, M1):
-        o.matrix_world = b
-        o.color = _base_color(b)
-    yield 1.0
-    yield from hold(frames(3.4))
-    for o in ridges:
-        bpy.data.objects.remove(o)
-    bpy.data.meshes.remove(me)
-
-
-def _base_color(M):
-    """Amber when the flat base (the ridge's local -Z) faces up."""
-    up = (M.to_3x3() @ Vector((0, 0, -1))).z > 0.9
-    return (0.95, 0.62, 0.15, 1.0) if up else (0.62, 0.66, 0.72, 1.0)
-
-
-def _hue(k):
-    """A colour of its own for each mesh."""
-    import colorsys
-    return (*colorsys.hsv_to_rgb((k * 0.61803) % 1.0, 0.62, 0.9), 1.0)
-
-
-def seg_can():
-    """The chips: stacked in a can, poured into a pile (simulated once by make.sh pour)."""
-    s = st()
-    s.monitor_volume = False
-    s.detect_collisions = False
-    C.space().show_region_ui = False
-    sc = bpy.context.scene
-    d = np.load(os.path.join(CACHE, "pour.npz"))
-    Fr, Ca = d["chips"], d["can"]
-    R, H = float(d["R"]), float(d["H"])
-    chips = []
-    for k, m in enumerate(inputs.chip_meshes()):
-        me = bpy.data.meshes.new("chip-%03d" % (k + 1))
-        me.from_pydata(m.verts.tolist(), [], m.tris.tolist())
-        me.update()
-        for p in me.polygons:
-            p.use_smooth = True
-        o = bpy.data.objects.new(me.name, me)
-        o.color = _hue(k)
-        sc.collection.objects.link(o)
-        chips.append(o)
-    S["chips"] = chips
-    # the can: a plain open cylinder with a floor and a band
-    n, v, f = 64, [], []
-    for i in range(n):
-        a = 2 * np.pi * i / n
-        for z, r in ((0, R), (H, R), (H, R - 1.0), (1.0, R - 1.0)):
-            v.append((r * np.cos(a), r * np.sin(a), z))
-    for i in range(n):
-        j = (i + 1) % n
-        for c in range(4):
-            e = (c + 1) % 4
-            f.append((4 * i + c, 4 * j + c, 4 * j + e, 4 * i + e))
-    me = bpy.data.meshes.new("can")
-    me.from_pydata(v, [], f + [tuple(4 * i for i in reversed(range(n)))] + [tuple(4 * i + 3 for i in range(n))])
-    me.update()
-    for p in me.polygons:
-        p.use_smooth = True
-    can = bpy.data.objects.new("can", me)
-    can.color = (0.72, 0.13, 0.13, 1.0)
-    sc.collection.objects.link(can)
-    S["can"] = can
-    p0 = orbit((-180, -480, 220), 1500, 68, 14)
-    p1 = orbit((-120, -500, 110), 1350, 58, 8)
-    p0.apply()
-    for k, o in enumerate(chips):
-        o.matrix_world = Matrix(Fr[0, k].tolist())
-    can.matrix_world = Matrix(Ca[0].tolist())
-    yield 0.5
-    yield from hold(frames(0.7))
-    T = len(Fr)
-    for fr in range(T):
-        for k, o in enumerate(chips):
-            o.matrix_world = Matrix(Fr[fr, k].tolist())
-        can.matrix_world = Matrix(Ca[fr].tolist())
-        p0.lerp(p1, smoother((fr + 1) / T)).apply()
-        yield
-    yield from hold(frames(0.6))
-
-
-def seg_chips():
-    """The packer's layout for those chips (fam.3mf, from the CLI), replayed like the first."""
-    sys.path.insert(0, os.path.join(ROOT, "..", "bucket_builder"))
-    from pack import meshio
-    shift = Matrix.Translation((-0.5 * VOL[0], -0.5 * VOL[1], 0.0))
-    chips = S["chips"]
-    moves = []
-    for it in meshio.read(os.path.join(CACHE, "fam.3mf")).items:
-        k = int(it.name.split("#")[0].split("-")[1]) - 1
-        o = chips[k]
-        moves.append((o, o.matrix_world.copy(), shift @ Matrix(np.asarray(it.matrix).tolist())))
-    moves.sort(key=lambda c: c[2].translation.z)
-    bpy.data.objects.remove(S.pop("can"))
-    n, each = frames(5.0), frames(1.0)
-    begin = {c[0]: int((n - each) * k / len(moves)) for k, c in enumerate(moves)}
+def seg_clear():
+    """The parts go, top layer first, leaving the empty volume for the chip reel to pick up in the same
+    place (chips/shots.py): the view and where the volume's middle is on screen go in last_view.json."""
+    import json
+    from bpy_extras.view3d_utils import location_3d_to_region_2d as project
+    st().detect_collisions = False
+    parts = [o for k in S["kind"].values() for o in k]
+    parts.sort(key=lambda o: -o.matrix_world.translation.z)
+    M0 = {o: o.matrix_world.copy() for o in parts}
+    n, each = frames(1.5), frames(0.5)
+    begin = {o: int((n - each) * i / len(parts)) for i, o in enumerate(parts)}
     p0 = C.Pose.current()
-    p1 = orbit((0, 0, 100), 860, 62, 28)
+    p1 = orbit((0, 0, 150), 1100, 66, 20)
     for i in range(n):
         p0.lerp(p1, smoother((i + 1) / n)).apply()
-        for o, A, B in moves:
+        for o in parts:
             t = smoother(min(1.0, max(0.0, (i - begin[o]) / each)))
-            loc = A.translation.lerp(B.translation, t)
-            loc.z += 140.0 * 4 * t * (1 - t)
-            o.matrix_world = Matrix.Translation(loc) @ A.to_quaternion().slerp(B.to_quaternion(), t).to_matrix().to_4x4()
+            if t >= 1.0:
+                o.hide_viewport = True
+            else:
+                o.matrix_world = M0[o] @ Matrix.Scale(max(1 - t, 0.001), 4)
         yield
-    st().monitor_volume = True
-    st().detect_collisions = True
-    C.space().show_region_ui = True
-    yield from settled()
-    p0 = C.Pose.current()
-    yield from camera(orbit(p0.target, p0.dist * 0.85, 70, 62), frames(3.6))
-
-
-def seg_hero():
-    """A close-up of the nested chips for the title card: not in the timeline."""
-    s = st()
-    sp = C.space()
-    keep = C.Pose.current(), sp.show_region_ui, s.monitor_volume, s.detect_collisions
-    sp.show_region_ui = False
-    s.show_hud = False
-    s.monitor_volume = False
-    s.detect_collisions = False
-    sp.overlay.show_text = False
-    sp.overlay.show_floor = False
-    sp.overlay.show_axis_x = sp.overlay.show_axis_y = False
-    orbit(*HERO_POSE).apply()
-    yield 1.5
-    yield
-    pose, sp.show_region_ui, s.monitor_volume, s.detect_collisions = keep
-    s.show_hud = True
-    sp.overlay.show_text = True
-    sp.overlay.show_floor = True
-    sp.overlay.show_axis_x = sp.overlay.show_axis_y = True
-    pose.apply()
-
-
-HERO_POSE = ((-110, -60, 150), 400, 62, 30)
-
-
-def seg_wedges():
-    """Half the copies turned over: 300 wedges (wedges.3mf, from the CLI)."""
-    sys.path.insert(0, os.path.join(ROOT, "..", "bucket_builder"))
-    from pack import meshio
-    for o in S.pop("chips"):
-        bpy.data.objects.remove(o)
-    shift = Matrix.Translation((-0.5 * VOL[0], -0.5 * VOL[1], 0.0))
-    items = meshio.read(os.path.join(CACHE, "wedges.3mf")).items
-    m = items[0].mesh
-    me = bpy.data.meshes.new("wedge")
-    me.from_pydata(m.verts.tolist(), [], m.tris.tolist())
-    me.update()
-    s = st()
-    s.detect_collisions = False
-    s.monitor_volume = False
-    wedges = []
-    colors, palette = {}, [(0.90, 0.60, 0.25, 1.0), (0.28, 0.62, 0.72, 1.0), (0.55, 0.72, 0.35, 1.0), (0.72, 0.45, 0.72, 1.0)]
-    for k, it in enumerate(items):
-        o = bpy.data.objects.new("wedge-%02d" % (k + 1), me)
-        B = shift @ Matrix(np.asarray(it.matrix).tolist())
-        # each orientation its own color: the turned-over partners show
-        key = tuple(int(round(v)) for row in B.to_3x3() for v in row)
-        o.color = colors.setdefault(key, palette[len(colors) % len(palette)])
-        bpy.context.scene.collection.objects.link(o)
-        A = Matrix.Translation((-760 + 80 * (k % 20), -560 + 80 * (k // 20), 480.0))
-        o.matrix_world = A
-        wedges.append((o, A, B))
-    orbit((0, 0, 220), 1900, 62, 20).apply()
-    yield 0.5
-    order = sorted(wedges, key=lambda c: c[2].translation.z)
-    n, each = frames(3.2), frames(0.8)
-    begin = {c[0]: int((n - each) * k / len(order)) for k, c in enumerate(order)}
-    p0 = C.Pose.current()
-    p1 = orbit((0, 0, 80), 760, 62, 30)
-    for i in range(n):
-        p0.lerp(p1, smoother((i + 1) / n)).apply()
-        for o, A, B in wedges:
-            t = smoother(min(1.0, max(0.0, (i - begin[o]) / each)))
-            loc = A.translation.lerp(B.translation, t)
-            o.matrix_world = Matrix.Translation(loc) @ A.to_quaternion().slerp(B.to_quaternion(), t).to_matrix().to_4x4()
-        yield
-    for o, _A, B in wedges:
-        o.matrix_world = B
-    s.monitor_volume = True
-    s.detect_collisions = True
-    yield from settled()
-    p0 = C.Pose.current()
-    yield from camera(orbit(p0.target, p0.dist * 0.85, 70, 62), frames(2.6))
+    yield from hold(frames(0.3))
+    a, r = C.view3d()
+    P = Vector((0, 0, 190))
+    c = project(r, C.rv3d(), P)
+    with open(os.path.join(CACHE, "last_view.json"), "w") as f:
+        json.dump({"point": list(P), "pixel": [c.x + r.x, c.y + r.y]}, f)
 
 
 def lerp_d(a, b, t):
@@ -648,11 +475,7 @@ SEGMENTS = [
     ("e_report", seg_report),
     ("f_density", seg_density),
     ("f2_even", seg_even),
-    ("g_dial", seg_dial),
-    ("h_can", seg_can),
-    ("h2_chips", seg_chips),
-    ("z_hero", seg_hero),
-    ("i_wedges", seg_wedges),
+    ("g_clear", seg_clear),
 ]
 
 if __name__ == "__main__":

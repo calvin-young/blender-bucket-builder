@@ -57,10 +57,8 @@ def seg(name, **kw):
 
 def card():
     """The first and the last frame of the video (PowerPoint shows one of them as its poster)."""
-    im = Image.open(os.path.join(CACHE, "hero.png")).convert("RGB")     # a full bucket, zoomed out (make.sh hero)
-    return hero_card(im, "Bucket Builder",
-                     ["Automatic packing: nesting,", "even layers and full buckets"],
-                     "Calvin Young", [f"Made with Claude  ·  {DATE}"])
+    im = Image.open(os.path.join(chipreel.FR, "z_hero", "0000.png")).convert("RGB")
+    return hero_card(im, "Auto Packer", ["Nesting like shapes,", "even layers, exact gaps"], "Calvin Young", [f"Made with Claude  ·  {DATE}"])
 
 
 # ------------------------------------------------------------------ data shown as pictures
@@ -185,8 +183,8 @@ EDIT = Edit(
         seg("e_report"),
         seg("f_density"),
         seg("f2_even"),
-        *chipreel.clips(),
-        seg("i_wedges", fade_in=0.4),
+        seg("g_clear"),
+        *chipreel.clips(wedges=True, fade_in=1.0),
         Still(card, 3.5, fade_in=1.0, name="end"),
     ],
     captions=[
@@ -201,9 +199,9 @@ EDIT = Edit(
         Caption("Build OK", f"{float(F['height']):.0f} mm high, {F['density']} % dense, no collisions: {seconds(float(F['seconds']))}",
                 "good", "d_result", 0.3),
         Caption("How it searches: voxels", "Every part becomes a grid (shown at 2 mm); open cavities stay empty for others to nest in",
-                "info", "d2_voxels", 0.2, "d2_voxels", 4.3),
+                "info", "d2_voxels", 1.0, "d2_voxels", 9.3),
         Caption("Grown by the gap", "If two grown parts share no cell, they really are at least 3 mm apart", "info",
-                "d2_voxels", 4.5),
+                "d2_voxels", 9.5),
         Caption("One FFT tests every position at once", "Green: where one more gear could go on this floor, among the parts in white",
                 "info", "fit", 0.3),
         Caption("Then the real meshes", "A BVH collision engine pushes parts to the exact gap and checks every pair", "good",
@@ -220,9 +218,7 @@ EDIT = Edit(
                 "good", "f2_even", 5.8, "f2_even", 8.4),
         Caption("Not something we've seen in other packers", "Heat is believed to concentrate in a crowded layer",
                 "good", "f2_even", 8.6),
-        *chipreel.captions(),
-        Caption("Half of them turned over", f"{WED['n']} wedges nested in pairs, one color each way: {WED['h']:.0f} mm, {seconds(WED['s'])}", "amber",
-                "i_wedges", 0.3),
+        *chipreel.captions(wedges=WED),
     ],
     panels=[
         Panel(panel_keep, "f2_even", 0.6, "f2_even", 5.6, x=20, y=120),

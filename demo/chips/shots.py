@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The chip reel, played live in Blender. See chips/make.sh."""
 import importlib
+import json
+import math
 import os
 import sys
 
@@ -81,7 +83,7 @@ def setup_scene():
     s.show_hud = False
     s.volume_align = "CENTER_XY"
     place_can(Matrix.Translation(HOME))
-    S["lid"].matrix_world = Matrix.Translation(HOME + Vector((0, 0, L.H_CAN)))
+    S["lid"].matrix_world = lid_seat(Matrix.Translation(HOME))
     bpy.context.view_layer.update()
     return 2.0
 
@@ -105,8 +107,9 @@ def camera(pose, n):
         yield
 
 
-POSE_LABEL = orbit(HOME + Vector((0, 0, 325)), 290, 88, 2)
-POSE_LABEL2 = orbit(HOME + Vector((0, 0, 285)), 400, 85, -4)
+POSE_LABEL = orbit(HOME + Vector((0, 0, 275)), 300, 88, 2)
+POSE_LABEL2 = orbit(HOME + Vector((0, 0, 265)), 400, 85, -4)
+POSE_START = orbit((0, 0, 150), 1100, 66, 20)        # as the packing reel's last shot ends (pack/shots.py)
 POSE_CAN = orbit(HOME + Vector((60, 0, 230)), 920, 80, 0)
 POSE_TOP = orbit(HOME + Vector((10, 0, 340)), 640, 64, -6)
 POSE_WIDE = orbit(Vector((-170, -20, 170)), 1330, 68, 8)
@@ -184,42 +187,127 @@ def frame_box():
     return o
 
 
-# ------------------------------------------------------------------ the can, and packing it by hand
+def wobble(t, seed, amount=1.0):
+    """A hand's unsteadiness at time t (seconds): (offset, rotation), small and slow."""
+    def n(k, *freqs):
+        return sum(math.sin(2 * math.pi * q * t + 2.1 * (seed + k) + q) for q in freqs) / len(freqs)
+    off = Vector((3.2 * n(1, 0.7, 1.4, 3.1), 3.2 * n(2, 0.9, 1.7, 2.7), 2.4 * n(3, 0.8, 2.3))) * amount
+    rot = Matrix.Rotation(math.radians(1.1) * amount * n(4, 0.6, 1.9), 4, 'X') @ Matrix.Rotation(math.radians(1.1) * amount * n(5, 0.8, 2.1), 4, 'Y')
+    return off, rot
+
+
+def can_at(pos, amount, t, seed=0, lean=None):
+    off, rot = wobble(t, seed, amount)
+    M = Matrix.Translation(pos + off) @ rot
+    return M @ lean if lean is not None else M
+
+
+def lid_seat(can_matrix):
+    return can_matrix @ Matrix.Translation((0, 0, L.H_CAN))
+
+
+def match_packing_reel():
+    """The same place on screen as the packing reel's last frame, whose window has a title bar and
+    header this one doesn't: move the view so that the build volume lands on the same pixels."""
+    path = os.path.join(ROOT, "cache", "pack", "last_view.json")
+    S["start"] = POSE_START
+    if not os.path.exists(path):
+        return
+    want = json.load(open(path))
+    from bpy_extras.view3d_utils import location_3d_to_region_2d as project
+    a, r = C.view3d()
+    pose = POSE_START
+    for _ in range(4):
+        pose.apply()
+        bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)     # (the view's matrix is only updated by a draw)
+        yield 0.1
+        rv = C.rv3d()
+        c = project(r, rv, Vector(want["point"]))
+        d = Vector(want["pixel"]) - Vector((c.x + r.x, c.y + r.y))
+        right = rv.view_rotation @ Vector((1, 0, 0))
+        up = rv.view_rotation @ Vector((0, 1, 0))
+        per_mm = (project(r, rv, pose.target + right * 10.0) - project(r, rv, pose.target)).length / 10.0
+        pose = C.Pose(pose.target - (right * d.x + up * d.y) / per_mm, pose.dist, pose.quat)
+    C.log("view matched to the packing reel: off by", d.length, "px")
+    S["start"] = pose
+
+
+# ------------------------------------------------------------------ the can comes in, and packing it by hand
+
+def seg_in():
+    """Only the empty volume at first, in the same place as at the end of the reel before; then the can
+    is carried in from off screen and set down."""
+    S["volume"] = frame_box()
+    yield from match_packing_reel()
+    pose = S["start"]
+    pose.apply()
+    S["can"].matrix_world = Matrix.Translation(HOME + Vector((-1500, -300, 200)))
+    place_can(S["can"].matrix_world)
+    S["lid"].matrix_world = lid_seat(S["can"].matrix_world)
+    yield from warm(45)
+    yield from hold(frames(0.9))
+    a, b = pose, POSE_WIDE
+    n = frames(2.7)
+    start = HOME + Vector((-1500, -300, 200))
+    for i in range(n):
+        u = (i + 1) / n
+        p = smoother(u)
+        a.lerp(b, smoother(min(1.0, u * 1.15))).apply()
+        pos = start.lerp(HOME, p)
+        pos.z = HOME.z + 200 * (1 - smoother(min(1.0, u / 0.92))) + 26 * math.sin(math.pi * min(1.0, u / 0.92))
+        M = can_at(pos, 1.0 - smoother(max(0.0, (u - 0.8) / 0.2)), u * n / 30.0)
+        lean = Matrix.Rotation(math.radians(9) * (1 - p) * (1 - p), 4, 'Y')
+        M = M @ lean
+        place_can(M)
+        S["lid"].matrix_world = lid_seat(M)
+        yield
+    place_can(Matrix.Translation(HOME))
+    S["lid"].matrix_world = lid_seat(Matrix.Translation(HOME))
+    yield from hold(frames(0.5))
+
 
 def seg_label():
-    POSE_LABEL.apply()
-    frame_box().hide_viewport = True
-    yield from warm(45)
-    n = frames(2.6)
+    yield from camera(POSE_LABEL, frames(1.8))
+    n = frames(2.2)
     a, b = POSE_LABEL, POSE_LABEL2
     for i in range(n):
         a.lerp(b, (i + 1) / n).apply()
         yield
-    yield from camera(POSE_CAN, frames(2.2))
+    yield from camera(POSE_CAN, frames(1.6))
 
 
 def seg_lid():
+    """A hand steadies the can, another works the lid loose and sets it down beside it."""
     lid = S["lid"]
-    yield from camera(POSE_TOP, frames(1.0))
-    p0 = lid.matrix_world.translation.copy()
-    p1 = p0 + Vector((0, 0, 70))
-    p2 = HOME + Vector((-190, -150, 11))
-    n = frames(1.7)
+    yield from camera(POSE_TOP, frames(0.9))
+    side = HOME + Vector((-185, -150, 11))
+    n = frames(2.8)
     for i in range(n):
-        t = smoother((i + 1) / n)
-        if t < 0.3:
-            pos = p0.lerp(p1, t / 0.3)
-            tilt = 0.25 * (t / 0.3)
-        else:
-            u = (t - 0.3) / 0.7
-            pos = p1.lerp(p2, u)
-            pos.z += 110 * 4 * u * (1 - u)
-            tilt = 0.25 * (1 - u)
-        lid.matrix_world = Matrix.Translation(pos) @ Matrix.Rotation(tilt, 4, 'Y')
+        t = i / n
+        sec = i / 30.0
+        # the can moves as the lid is worked, and is steady again once it is off
+        strain = smoother(min(1.0, t / 0.12)) * (1 - smoother(max(0.0, (t - 0.42) / 0.2)))
+        C_ = can_at(HOME, 0.9 * strain, sec, seed=7)
+        place_can(C_)
+        if t < 0.38:                                 # rocking it loose, one side, then the other
+            u = t / 0.38
+            rock = math.radians(5.0) * u * math.sin(2 * math.pi * 2.6 * sec)
+            rock2 = math.radians(3.0) * u * math.sin(2 * math.pi * 1.9 * sec + 1.0)
+            L_ = lid_seat(C_) @ Matrix.Translation((0, 0, 7.0 * u * u)) @ Matrix.Rotation(rock, 4, 'Y') @ Matrix.Rotation(rock2, 4, 'X')
+            S["off"] = L_.translation.copy()
+        else:                                        # off, carried across, and put down
+            u = smoother((t - 0.38) / 0.62)
+            pos = S["off"].lerp(side, u)
+            pos.z += 70 * 4 * u * (1 - u)
+            tilt = math.radians(16) * 4 * u * (1 - u)
+            off, rot = wobble(sec, 3, 0.8 * (1 - u))
+            L_ = Matrix.Translation(pos + off) @ rot @ Matrix.Rotation(tilt, 4, 'Y')
+        lid.matrix_world = L_
         yield
-    S["volume"].hide_viewport = False
-    yield from hold(frames(0.5))
-    yield from camera(POSE_WIDE, frames(1.6))
+    place_can(Matrix.Translation(HOME))
+    lid.matrix_world = Matrix.Translation(side)
+    yield from hold(frames(0.3))
+    yield from camera(POSE_WIDE, frames(1.5))
 
 
 def _group_motion(group, t, rise):
@@ -238,6 +326,10 @@ def _group_motion(group, t, rise):
     mid = start.lerp(end, fly)
     mid.z += 90 * 4 * fly * (1 - fly)
     R = Quaternion().slerp(Q, fly)
+    if 0.0 < t < 1.0:                                # (carried by a hand, set down gently)
+        off, rot = wobble(t * 3.5, group[0] % 7, 1.0 * math.sin(math.pi * t) ** 0.5)
+        mid = mid + off
+        R = rot.to_quaternion() @ R
     open_ = smoother(max(0.0, (t - 0.72) / 0.28))
     out = {}
     Rm = R.to_matrix()
@@ -381,7 +473,6 @@ def seg_good():
 
 def seg_unique():
     """Close, to see that they are all different."""
-    sp = C.space()
     S["volume"].hide_viewport = True
     yield from camera(POSE_CLOSE, frames(1.8))
     n = frames(3.4)
@@ -389,11 +480,7 @@ def seg_unique():
     for i in range(n):
         a.lerp(POSE_CLOSE2, (i + 1) / n).apply()
         yield
-    sp.overlay.show_wireframes = True
-    sp.overlay.wireframe_threshold = 1.0
-    sp.overlay.wireframe_opacity = 0.35
-    yield from hold(frames(1.6))
-    sp.overlay.show_wireframes = False
+    yield from hold(frames(0.8))
 
 
 def seg_ok():
@@ -414,17 +501,87 @@ def seg_ok():
     yield from hold(frames(3.2))
 
 
+def seg_wedges():
+    """On to another kind of nesting, in one continuous shot: the chips go, 300 wedges come in."""
+    from pack import meshio
+    s = st()
+    s.show_hud = False
+    s.detect_collisions = False
+    s.monitor_volume = False
+    S["volume"].hide_viewport = False
+    chips = S["chips"]
+    items = meshio.read(os.path.join(ROOT, "cache", "pack", "wedges.3mf")).items
+    m = items[0].mesh
+    me = bpy.data.meshes.new("wedge")
+    me.from_pydata(m.verts.tolist(), [], m.tris.tolist())
+    me.update()
+    me.materials.append(bpy.data.materials["chip"])
+    wedges, colors = [], {}
+    palette = [(0.90, 0.50, 0.12, 1.0), (0.12, 0.55, 0.78, 1.0)]
+    for k, it in enumerate(items):
+        o = bpy.data.objects.new("wedge-%03d" % (k + 1), me)
+        B = Matrix.Translation(BOX) @ Matrix(np.asarray(it.matrix).tolist())
+        key = tuple(int(round(v)) for row in B.to_3x3() for v in row)   # each orientation its own color
+        o.color = colors.setdefault(key, palette[len(colors) % len(palette)])
+        bpy.context.scene.collection.objects.link(o)
+        A = Matrix.Translation((-760 + 80 * (k % 20), 500 + 80 * (k // 20), 1500.0))
+        o.matrix_world = A
+        o.hide_viewport = True                  # (until it comes in: up there it would cast a shadow)
+        wedges.append((o, A, B))
+    # the chips lift out, stack by stack, as the wedges start to come in
+    leave = sorted(range(len(chips)), key=lambda k: -chips[k].matrix_world.translation.x)
+    A_ch = {k: chips[k].matrix_world.copy() for k in leave}
+    B_ch = {k: Matrix.Translation(A_ch[k].translation + Vector((-200, 900, 1300))) @ A_ch[k].to_3x3().to_4x4() for k in leave}
+    order = sorted(wedges, key=lambda c: c[2].translation.z)
+    n, each = frames(4.2), frames(0.9)
+    begin = {c[0]: int(frames(0.9) + (n - frames(0.9) - each) * j / len(order)) for j, c in enumerate(order)}
+    go = {k: int(frames(1.1) * j / len(leave)) for j, k in enumerate(leave)}
+    p0 = C.Pose.current()
+    p1 = orbit((0, 0, 110), 860, 66, 26)
+    for i in range(n):
+        p0.lerp(p1, smoother((i + 1) / n)).apply()
+        for k in leave:
+            t = smoother(min(1.0, max(0.0, (i - go[k]) / frames(0.9))))
+            chips[k].matrix_world = Matrix.Translation(A_ch[k].translation.lerp(B_ch[k].translation, t)) @ A_ch[k].to_3x3().to_4x4()
+        for o, A, B in wedges:
+            if i >= begin[o]:
+                o.hide_viewport = False
+            t = smoother(min(1.0, max(0.0, (i - begin[o]) / each)))
+            loc = A.translation.lerp(B.translation, t)
+            o.matrix_world = Matrix.Translation(loc) @ A.to_quaternion().slerp(B.to_quaternion(), t).to_matrix().to_4x4()
+        yield
+    for o, _A, B in wedges:
+        o.hide_viewport = False
+        o.matrix_world = B
+    for o in chips:
+        o.hide_viewport = True
+    S["volume"].hide_viewport = True
+    s.monitor_volume = True
+    s.detect_collisions = True
+    yield from warm(6.0)
+    s.show_hud = True
+    p0 = C.Pose.current()
+    yield from camera(orbit(p0.target, p0.dist * 0.85, 70, 62), frames(2.6))
+    yield from hold(frames(0.4))
+
+
 def seg_hero():
     """A still for the title card: not in the timeline."""
     st().show_hud = False
     st().monitor_volume = False
     st().detect_collisions = False
+    back = C.Pose.current()
     orbit(Vector((-70, -60, 62)), 300, 74, 42).apply()
     yield from warm(3.0)
     yield
+    back.apply()
+    st().monitor_volume = True
+    st().detect_collisions = True
+    yield from warm(1.0)
 
 
 SEGMENTS = [
+    ("t_in", seg_in),
     ("a_label", seg_label),
     ("b_lid", seg_lid),
     ("c_hand", seg_hand),
@@ -436,6 +593,7 @@ SEGMENTS = [
     ("i_unique", seg_unique),
     ("j_ok", seg_ok),
     ("z_hero", seg_hero),
+    ("k_wedges", seg_wedges),
 ]
 
 if __name__ == "__main__":

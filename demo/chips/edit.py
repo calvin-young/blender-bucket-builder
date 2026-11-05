@@ -26,28 +26,34 @@ def pack_log(name):
             "n": int(re.search(r"placed\s+(\d+)", t).group(1))}
 
 
-def clips():
+def clips(wedges=False, fade_in=0.6):
     def seg(name, **kw):
         return Frames(os.path.join(FR, name), **kw)
-    return [seg("a_label", fade_in=0.6), seg("b_lid"), seg("c_hand"), seg("d_back"), seg("e_dump"), seg("f_bad"),
-            seg("g_undo"), seg("h_good"), seg("i_unique"), seg("j_ok")]
+    out = [seg("t_in", fade_in=fade_in), seg("a_label"), seg("b_lid"), seg("c_hand"), seg("d_back"), seg("e_dump"), seg("f_bad"),
+           seg("g_undo"), seg("h_good"), seg("i_unique"), seg("j_ok")]
+    return out + [seg("k_wedges")] if wedges else out
 
 
-def captions():
+def captions(wedges=None):
     G, B = pack_log("good"), pack_log("bad")
-    return [
+    out = [
+        Caption("The \u201cPringle\u201d Problem: Nesting Like Shapes", "", "amber", "t_in", 1.2, "a_label", 1.4),
         Caption("This is how you'd pack this build by hand", "Half the can laid on its side, the other half next to it", "info", "c_hand", 0.6, "c_hand", None),
-        Caption("Now dump them out", f"{G['n']} chips, and every one is a different mesh", "magenta", "e_dump", 1.2, "e_dump", None),
+        Caption("Now dump them out", f"{G['n']} Pringles, and every one is a different mesh", "magenta", "e_dump", 3.5, "e_dump", None),
         Caption("This is how most packers handle it", f"Simulated: any orientation, dropped in. {B['h']:.0f} mm, nearly the whole bucket", "bad", "f_bad", 0.5, "f_bad", None),
         Caption("This algorithm recognizes similar shapes and how they nest", f"Each pair at its own exact gap: {G['h']:.0f} mm high, packed in {G['s']:.0f} s", "good", "h_good", 0.5, "h_good", None),
-        Caption("Every one of these chips is a unique mesh", "Not one part repeated 100 times, the easy case for nesting", "amber", "i_unique", 0.3, "i_unique", None),
+        Caption("Every one of these Pringles is a unique mesh", "Not one part repeated 100 times, the easy case for nesting", "amber", "i_unique", 0.3, "i_unique", None),
         Caption("The same result as packing it by hand", f"{G['h']:.0f} mm, two stacks side by side, no collisions", "good", "j_ok", 0.6, "j_ok", None),
     ]
+    if wedges:
+        out += [Caption("Other shapes nest another way", "Wedges pair up when every other one is turned over", "info", "k_wedges", 0.2, "k_wedges", 3.6),
+                Caption("Half of them turned over", f"{wedges['n']} wedges nested in pairs, one color each way: {wedges['h']:.0f} mm, packed in {wedges['s']:.0f} s", "amber", "k_wedges", 3.8)]
+    return out
 
 
 def card():
     im = Image.open(os.path.join(FR, "z_hero", "0000.png")).convert("RGB")
-    return hero_card(im, "Bucket Builder", ["Auto packing: 100 different chips,", "nested as if by hand"], "Calvin Young", [f"Made with Claude  ·  {DATE}"])
+    return hero_card(im, "Auto Packer", ["100 different Pringles,", "nested as if by hand"], "Calvin Young", [f"Made with Claude  ·  {DATE}"])
 
 
 EDIT = Edit(caption_x=20, clips=[Still(card, 3.0, name="title")] + clips() + [Still(card, 3.5, fade_in=1.0, name="end")], captions=captions(), panels=[])

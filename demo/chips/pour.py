@@ -13,7 +13,7 @@ import sys
 
 import bpy
 import numpy as np
-from mathutils import Matrix, Vector
+from mathutils import Matrix, Quaternion, Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -27,9 +27,9 @@ FLOOR_Z = 8.0                       # (shots.py)
 STEP = float(CAN_Z.max()) / 99      # chips in the stack
 SPOT = Vector((-40.0, -560.0, 0.0))  # the middle of where they land
 HOME = Vector((-430.0, -40.0, 0.0))  # where the can stands
-TILT_END, SLIDE_FROM = 40, 34
-CLEAR_AGE = 6                       # frames before a falling chip touches the others
-EVERY = 2                           # frames between chips
+TILT_END, SLIDE_FROM = 100, 84
+CLEAR_AGE = 9                       # frames before a falling chip touches the others
+EVERY = 1.7                         # frames between chips, on average
 SETTLE = 50
 
 meshes = CH.chip_meshes(rings=6, segs=24)
@@ -43,8 +43,8 @@ bpy.ops.rigidbody.world_add()
 w = sc.rigidbody_world
 w.substeps_per_frame = 30
 w.solver_iterations = 25
-sc.gravity = (0, 0, -9810.0)
-LAST = TILT_END + N * EVERY + SETTLE
+sc.gravity = (0, 0, -3800.0)          # (large chips: real gravity looks like they are thrown)
+LAST = int(TILT_END + N * EVERY + SETTLE + 40)
 w.point_cache.frame_start, w.point_cache.frame_end = 1, LAST + 5
 
 
@@ -90,39 +90,73 @@ for k, m in enumerate(meshes):
     b.collision_margin = 0.3
     b.friction = 0.8
     b.restitution = 0.0
-    b.linear_damping = 0.45
-    b.angular_damping = 0.45
+    b.linear_damping = 0.6
+    b.angular_damping = 0.7
     b.mass = 0.02
     b.kinematic = True
     b.collision_collections = layers(HELD)
     chips.append(ob)
 spin = [float(a) for a in rng.uniform(-0.3, 0.3, N)]
-kick = [Matrix.Rotation(float(rng.uniform(-0.6, 0.6)), 4, 'X') @ Matrix.Rotation(float(rng.uniform(-0.6, 0.6)), 4, 'Y')
+kick = [Matrix.Rotation(float(rng.uniform(-0.35, 0.35)), 4, 'X') @ Matrix.Rotation(float(rng.uniform(-0.35, 0.35)), 4, 'Y')
         for _ in range(N)]
 
 
+def noise(f, seed, freqs=(0.7, 1.3, 2.9)):
+    """A hand's unsteadiness: a few slow sines, -1 to 1."""
+    return sum(math.sin(2 * math.pi * q * f / 30.0 + 2.1 * seed + q) for q in freqs) / len(freqs)
+
+
+def shake(f):
+    """Flicks of the wrist while it pours, about twice a second, stronger near the end."""
+    if f < TILT_END - 10:
+        return 0.0
+    grow = min(1.0, (f - TILT_END + 10) / (N * EVERY))
+    return (0.35 + 0.65 * grow) * math.sin(2 * math.pi * 2.2 * f / 30.0) ** 3
+
+
 def can_matrix(f):
-    """Lifted and tipped, swung over the landing spot while it pours, then put down to the side."""
+    """Picked up, carried over the landing spot leaning more and more, tipped until the chips slide,
+    shaken a little to keep them coming, then set back down. Never quite still: a hand holds it."""
     t = min(1.0, (f - 1) / TILT_END)
     t = t * t * (3 - 2 * t)
-    theta = math.radians(122) * t
-    p = (f - TILT_END) / (N * EVERY)
-    swing = Vector((70 * math.sin(4.2 * max(p, 0)), 45 * math.sin(2.7 * max(p, 0) + 0.7), 0))
-    mouth = SPOT + swing + Vector((0, 0, 230.0))
+    theta = math.radians(112) * t ** 1.3
+    p = max(0.0, (f - TILT_END) / (N * EVERY))
+    theta += math.radians(14) * min(1.0, p)               # (steeper as it empties)
+    drift = Vector((50 * math.sin(2.1 * p), 30 * math.sin(1.4 * p + 0.7), 0))
+    mouth = SPOT + drift + Vector((0, 0, 215.0))
     a = Vector((math.sin(theta), 0, math.cos(theta)))
-    base0 = HOME.copy()
     pour_base = mouth - H * a
-    base = base0.lerp(pour_base, t)
-    done = max(0.0, min(1.0, (f - (TILT_END + N * EVERY + 5)) / 35.0))
+    base = HOME.lerp(pour_base, t)
+    lift = 60 * 4 * t * (1 - t)                           # (up off the table first)
+    base = base + Vector((0, 0, lift))
+    done = max(0.0, min(1.0, (f - (TILT_END + N * EVERY + 12)) / 42.0))
+    hand = 1.0
     if done > 0:
         done = done * done * (3 - 2 * done)
         theta *= 1 - done
-        base = base.lerp(base0, done)
-    return Matrix.Translation(base) @ Matrix.Rotation(theta, 4, 'Y')
+        base = base.lerp(HOME, done) + Vector((0, 0, 50 * 4 * done * (1 - done)))
+        hand = 1 - done
+    on = min(1.0, f / 12.0) * hand
+    sh = shake(f) * hand
+    base = base + on * Vector((3.5 * noise(f, 1), 3.5 * noise(f, 2), 3.0 * noise(f, 3))) + a * (9.0 * sh)
+    return (Matrix.Translation(base) @ Matrix.Rotation(theta + on * math.radians(1.3) * noise(f, 4) + math.radians(3.0) * sh, 4, 'Y')
+            @ Matrix.Rotation(on * math.radians(1.6) * noise(f, 5), 4, 'X'))
+
+
+SLID = {}
+
+
+def slid(f):
+    """How far the stack has slid along the can: in fits and starts, with the shaking."""
+    if f in SLID:
+        return SLID[f]
+    v = 0.0 if f <= SLIDE_FROM else STEP / EVERY * (0.45 + 1.1 * abs(shake(f)) ** 0.7)
+    SLID[f] = (slid(f - 1) if f > 1 else 0.0) + v
+    return SLID[f]
 
 
 def stack_z(k, f):
-    return FLOOR_Z + LOW + float(CAN_Z[k]) + max(0.0, f - SLIDE_FROM) * STEP / EVERY
+    return FLOOR_Z + LOW + float(CAN_Z[k]) + slid(f)
 
 
 released = {}
@@ -133,17 +167,25 @@ for f in range(1, LAST + 1):
     can_out[f - 1] = np.array(M)
     for k, ob in enumerate(chips):
         if k in released:
-            if f - released[k] == CLEAR_AGE:
+            age = f - released[k]
+            if age == CLEAR_AGE:
+                # (overlapping hulls push apart hard when they start to touch: damped until they have)
                 ob.rigid_body.collision_collections = layers(FLOOR)
+                ob.rigid_body.linear_damping = 0.985
+                ob.rigid_body.angular_damping = 0.985
+            elif age == CLEAR_AGE + 16:
+                ob.rigid_body.linear_damping = 0.6
+                ob.rigid_body.angular_damping = 0.7
             continue
         z = stack_z(k, f)
-        if z >= H - 2.0:                     # at the mouth: let go, a little askew
-            ob.matrix_world = M @ Matrix.Translation((0, 0, z + 45.0)) @ Matrix.Rotation(spin[k], 4, 'Z') @ kick[k]
+        # (it leans out as it comes to the mouth, and then just falls: no jump, or it would be shot out)
+        lean = max(0.0, min(1.0, (z - (H - 40.0)) / 50.0))
+        tilt = Quaternion().slerp(kick[k].to_quaternion(), lean).to_matrix().to_4x4()
+        ob.matrix_world = M @ Matrix.Translation((0, 0, z)) @ Matrix.Rotation(spin[k] * min(1.0, f / 40.0), 4, 'Z') @ tilt
+        if z >= H + 8.0:                     # past the mouth: let go
             ob.rigid_body.kinematic = False
             ob.rigid_body.collision_collections = layers(FALLING)
             released[k] = f
-        else:
-            ob.matrix_world = M @ Matrix.Translation((0, 0, z)) @ Matrix.Rotation(spin[k] * min(1.0, f / 40.0), 4, 'Z')
     sc.frame_set(f)
     bpy.context.view_layer.update()
     for k, ob in enumerate(chips):
