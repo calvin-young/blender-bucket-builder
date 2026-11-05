@@ -31,7 +31,7 @@ Little things the maintainer asked for or caught, what the status page shows. Co
 
 | Bugs found | UI tweaks | New features | Direction | Total |
 |---|---|---|---|---|
-| 7 | 9 | 15 | 31 | 62 |
+| 7 | 13 | 17 | 33 | 70 |
 
 ## Sessions
 
@@ -54,6 +54,14 @@ What the owner decided, corrected, taught, tested or changed in scope that
 the work would not have done on its own, newest first. `docs/TALLY.md` has
 the detail.
 
+- 2026-11-05 [correct][ui]: packing reel: show how long each pack took in the captions.
+- 2026-11-05 [scope][feature]: packing reel: pour chips from a can in a physics simulation, in different colors, to show families.
+- 2026-11-05 [scope][feature]: packing reel: explain the logic with some technical detail and more MJF guidance.
+- 2026-11-05 [correct][ui]: packing reel: a cut at about 10 s where it starts packing, then shows a different pack.
+- 2026-11-05 [decide][direction]: highlight PQ-04, even layers, as no other commercial packer does that as far as he's aware, and the quality dial.
+- 2026-11-05 [decide][direction]: where the video says experimental, say in development; don't change the add-on for it.
+- 2026-11-05 [decide][ui]: match the build-check reel's title card to Crosscut's.
+- 2026-11-05 [decide][ui]: keep the packing and rearranging animations as they are.
 - 2026-11-05 [correct][ui]: reel: the camera angle hid the clearance gap; show it clearly.
 - 2026-11-05 [scope][ui]: reel: stretch to about 1:30.
 - 2026-11-05 [domain][ui]: reel: the last frame matches the first, as PowerPoint shows the last.
