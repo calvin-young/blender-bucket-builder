@@ -4,6 +4,7 @@
 #   demo/pack/make.sh pack                 # every layout the reel shows (CLI, ~1 min)
 #   demo/pack/make.sh pour                 # simulate the can pouring the chips (~1 min)
 #   demo/pack/make.sh capture [seg ...]    # play the segments in Blender, save frames
+#   demo/pack/make.sh hero                 # the title card's picture: a full bucket
 #   demo/pack/make.sh edit                 # cards, captions, cross-fades -> out/pack.mp4
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -43,8 +44,14 @@ case ${1:-} in
     # Full screen: a normal window can't reach 1920x1080 on a 1920x1080 desktop
     "$ROOT/lib/blender.sh" --addon bucket_builder="$BUCKET_BUILDER" \
       --window-fullscreen --python "$HERE/shots.py" -- "$@" ;;
+  hero)
+    # the title card's picture: a full bucket (735 parts), zoomed out
+    (cd "$ADDON/bucket_builder" && python3 -m pack pack "$CACHE/unpacked.3mf" --copies 5 --volume 380 284 380 --mode free \
+       --gap 3 --wall-gap 5 --names --referee --time 180 --effort quick --out "$CACHE/hero.3mf") > "$CACHE/hero.log"
+    BUCKET_BUILDER=${BUCKET_BUILDER:-$ADDON/bucket_builder}
+    "$ROOT/lib/blender.sh" --addon bucket_builder="$BUCKET_BUILDER" --window-fullscreen --python "$HERE/hero.py" ;;
   edit)
     python3 "$HERE/edit.py" ;;
   *)
-    sed -n 3,8p "$0"; exit 1 ;;
+    sed -n 3,9p "$0"; exit 1 ;;
 esac

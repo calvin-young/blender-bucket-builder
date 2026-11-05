@@ -28,7 +28,7 @@ def card():
     im = Image.open(os.path.join(FR, "z_hero", "0000.png")).convert("RGB")
     return hero_card(im.crop((0, 100, 1692, 1052)), "Bucket Builder",
                      ["The live build check: collisions,", "clearance and the build volume"],
-                     "Calvin Young", [f"Made with Claude  ·  {DATE}", "github.com/calvin-young/blender-bucket-builder"],
+                     "Calvin Young", [f"Made with Claude  ·  {DATE}"],
                      accent="info")
 
 

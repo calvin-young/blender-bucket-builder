@@ -7,6 +7,7 @@
 The numbers in the captions come from the capture (cache/pack/facts.json)
 and the packs' logs (make.sh pack).
 """
+import importlib.util
 import json
 import os
 import re
@@ -20,6 +21,10 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "lib"))
 from compose import Caption, Edit, Frames, Panel, Still, FPS, H, W, font, gradient, hero_card, render, still  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location("chipreel", os.path.join(ROOT, "chips", "edit.py"))
+chipreel = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(chipreel)
 
 CACHE = os.path.join(ROOT, "cache", "pack")
 FR = os.path.join(CACHE, "frames")
@@ -39,7 +44,7 @@ def pack_log(name):
             "n": int(re.search(r"placed\s+(\d+)", t).group(1))}
 
 
-D0, D12, KEEP, Q0, Q100, FAM, WED = (pack_log(n) for n in ("d0", "d12", "keep", "dial0", "dial100", "fam", "wedges"))
+D0, D12, KEEP, WED = (pack_log(n) for n in ("d0", "d12", "keep", "wedges"))
 
 
 def seconds(x):
@@ -52,10 +57,10 @@ def seg(name, **kw):
 
 def card():
     """The first and the last frame of the video (PowerPoint shows one of them as its poster)."""
-    im = Image.open(os.path.join(FR, "z_hero", "0000.png")).convert("RGB")
-    return hero_card(im.crop((0, 100, 1692, 1052)), "Bucket Builder",
-                     ["Automatic packing: nesting, even", "layers and print quality"],
-                     "Calvin Young", [f"Made with Claude  ·  {DATE}", "github.com/calvin-young/blender-bucket-builder"])
+    im = Image.open(os.path.join(CACHE, "hero.png")).convert("RGB")     # a full bucket, zoomed out (make.sh hero)
+    return hero_card(im, "Bucket Builder",
+                     ["Automatic packing: nesting,", "even layers and full buckets"],
+                     "Calvin Young", [f"Made with Claude  ·  {DATE}"])
 
 
 # ------------------------------------------------------------------ data shown as pictures
@@ -180,9 +185,7 @@ EDIT = Edit(
         seg("e_report"),
         seg("f_density"),
         seg("f2_even"),
-        seg("g_dial", hold=2.6, fade_in=0.4),
-        seg("h_can", fade_in=0.4, fit=8.0),
-        seg("h2_chips"),
+        *chipreel.clips(),
         seg("i_wedges", fade_in=0.4),
         Still(card, 3.5, fade_in=1.0, name="end"),
     ],
@@ -217,16 +220,7 @@ EDIT = Edit(
                 "good", "f2_even", 5.8, "f2_even", 8.4),
         Caption("Not something we've seen in other packers", "Heat is believed to concentrate in a crowded layer",
                 "good", "f2_even", 8.6),
-        Caption("One dial: Part Quality 0 %", f"Fit the most: {Q0['h']:.0f} mm, but 16 large flat faces up (amber), {seconds(Q0['s'])}",
-                "amber", "g_dial", 0.3, "g_dial", 3.6),
-        Caption("Part Quality 100 %", f"{Q100['h']:.0f} mm, every base down: no meniscus defect, {seconds(Q100['s'])}", "good",
-                "g_dial", 5.6, "g_dial", 8.2),
-        Caption("It weighs what you'd weigh", "Flat faces apart, off the walls, not up; height counts most near the top",
-                "info", "g_dial", 8.4),
-        Caption(f"{FAM['n']} chips: every one a different mesh", "Each color is its own shape, poured into a pile", "amber", "h_can", 0.6),
-        Caption("Recognized as one family", f"Alike by size, volume and shape, so they stack alike: {FAM['h']:.0f} mm, {seconds(FAM['s'])}",
-                "amber", "h2_chips", 0.5, "h2_chips", 5.4),
-        Caption("Build OK", f"{FAM['n']} different chips, no collisions, {seconds(FAM['s'])}", "good", "h2_chips", 5.6),
+        *chipreel.captions(),
         Caption("Half of them turned over", f"{WED['n']} wedges nested in pairs, one color each way: {WED['h']:.0f} mm, {seconds(WED['s'])}", "amber",
                 "i_wedges", 0.3),
     ],

@@ -31,7 +31,7 @@ Little things the maintainer asked for or caught, what the status page shows. Co
 
 | Bugs found | UI tweaks | New features | Direction | Total |
 |---|---|---|---|---|
-| 7 | 13 | 17 | 33 | 70 |
+| 7 | 16 | 20 | 37 | 80 |
 
 ## Sessions
 
@@ -41,7 +41,7 @@ line counts once, in the session it came up in.
 
 | Date | Tool and model | Prompts | Steering lines |
 |---|---|---|---|
-| 2026-11-05 | Claude Code (workstation), Opus 5.5 | 1 | 3 |
+| 2026-11-05 | Claude Code (workstation), Opus 5.5 | 5 | 13 |
 | before 2026-10-14 | Claude Code, Opus | not counted | 3 |
 | 2026-10-14 | Claude Code, Opus 5.5 | 5 | 0 |
 | 2026-10-16 - 19 | Claude Code, Opus 5.5 | not counted | 1 |
@@ -54,6 +54,16 @@ What the owner decided, corrected, taught, tested or changed in scope that
 the work would not have done on its own, newest first. `docs/TALLY.md` has
 the detail.
 
+- 2026-11-05 [direction]: the packer's goal for chips: what you'd get by pulling half a tube out, laying it down, and putting the other half next to it.
+- 2026-11-05 [direction]: chips sized and counted so that they fit two side-by-side horizontal stacks.
+- 2026-11-05 [feature]: the reel opens on the can's label, lid off, a pack by hand; then dump, a bad packer, back to the pile, ours.
+- 2026-11-05 [feature]: chips look like chips until the dump, then each gets its own color, to show that every mesh is different.
+- 2026-11-05 [feature]: a real-looking can, an invented brand, a label from a diffusion model, viewport capture only.
+- 2026-11-05 [direction]: emphasize that every chip is a unique mesh, unlike nesting one part repeated 100 times.
+- 2026-11-05 [ui]: cut the Part Quality section from the packing reel.
+- 2026-11-05 [ui]: the title card: a zoomed-out full bucket.
+- 2026-11-05 [ui]: no GitHub links on the cards for now.
+- 2026-11-05 [direction]: start benchmarking against the competition with one bucket and a plan, not a full study.
 - 2026-11-05 [correct][ui]: packing reel: show how long each pack took in the captions.
 - 2026-11-05 [scope][feature]: packing reel: pour chips from a can in a physics simulation, in different colors, to show families.
 - 2026-11-05 [scope][feature]: packing reel: explain the logic with some technical detail and more MJF guidance.

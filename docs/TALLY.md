@@ -7,6 +7,7 @@ the sessions before; earlier items are summaries.
 
 ## Asked for or agreed with the owner
 
+* Nesting stacks: chips laid as by hand, two stacks side by side, and a reel that tells that story (2026-11-05).
 * A live build check in Blender replacing the commercial packer's: collisions,
   clearances, the build volume; results that follow the mouse; production
   quality; the 5600, the 1200 and a 580 with a custom size. (1.0 - 1.2)
@@ -165,3 +166,9 @@ the sessions before; earlier items are summaries.
   patterns, pairs).
 * Several buckets per file (Stage 5), what-if, labels (Stages 6 - 7).
 * The performance list and the review items in `CLAUDE.md` (B, C).
+
+## 2026-11-05, assumed
+
+* Stacks only when every part of the build is one family or one part, free to turn, without large flat faces, within the density limit.
+* Reel: the invented brand Hypar, the word "chips" rather than the brand name he used, "Simulated" in the poor packer's caption.
+* The search keeps running up to the time set after stacks are found; a 20 s job takes about 45 s.

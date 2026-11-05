@@ -18,6 +18,7 @@ import bpy
 from mathutils import Euler, Quaternion, Vector
 
 FPS = 30
+DRAWS = 2               # redraws before a screenshot (more lets a Material Preview viewport settle)
 
 
 def log(*a):
@@ -250,7 +251,7 @@ class Reel:
         bpy.app.timers.register(self._tick, first_interval=1.5)
 
     def shot(self, path):
-        for _ in range(2):
+        for _ in range(DRAWS):
             bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
         with bpy.context.temp_override(window=win(), screen=win().screen):
             bpy.ops.screen.screenshot(filepath=path)
