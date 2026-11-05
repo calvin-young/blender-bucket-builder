@@ -76,6 +76,7 @@ cannot be downloaded.
     docs/                    AUTOPACK.md (packer spec), PRINT_QUALITY.md (packing rules, sourced),
                              DIFFERENTIATORS.md (keep current), DECISIONS.md, TALLY.md, PROMPT_STATS.md, images
     tools/                   command-line report, building Blender for tests
+    demo/                    the demo reels: scripted Blender capture and edit (demo/README.md)
 
 ## Conventions
 
