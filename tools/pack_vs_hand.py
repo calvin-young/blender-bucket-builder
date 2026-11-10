@@ -56,7 +56,11 @@ def pack_bucket(parts, s, workers, curve, t_all):
                 curve.append((round(time.perf_counter() - t_all, 1), n))
     jb = J.Job(parts, s, workers=workers)
     try:
-        return jb.run(upd)
+        res = jb.run(upd)
+        if os.environ.get('PACK_LOG'):
+            for line in res.log:
+                print('   ', line)
+        return res
     finally:
         jb.close()
 

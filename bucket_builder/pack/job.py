@@ -1787,6 +1787,72 @@ class Job:
         self._take_final(qs, c)
         self.log.append('%6.1f s  compacted  height %.1f mm (%.1f before), %d parts moved %.0f mm in all'
                         % (self.elapsed, self.final_height, h0, c.moves, c.travel))
+        yield from self._refill(qs, c)
+
+    def _refill(self, qs, c):
+        """Parts left out, tried again in the room the compaction made: the
+        compacted parts are locked where they now are, the grid search looks
+        for room among them, and what goes in is compacted too (each step a
+        valid layout).  A generator."""
+        left = [q for q in self._order() if q not in self.best and q[0] not in self._too_large]
+        if not left or self.cancel:
+            return
+        # time of its own: a part more in the bucket is worth a little over the time set
+        if getattr(self, '_refill_until', None) is None:
+            extra = min(60.0, 0.15 * self.budget) if self.budget else 30.0
+            self._refill_until = self.elapsed + max(5.0, extra)
+        over = lambda: self.cancel or self.elapsed > self._refill_until  # noqa: E731
+        if over():
+            return
+        g = self.g
+        b2 = g.new_bucket(list(self.locked) + [(self.parts[q[0]].mesh, c.M[j]) for j, q in enumerate(qs)])
+        b2.height = max(b2.height, self.final_height or 0.0)
+        added = {}
+        for q in sorted(left, key=lambda q: -self._size(q[0])):
+            if over():
+                break
+            r, _ = g.place_one(b2, q[0])
+            yield
+            if r is None:
+                continue
+            _, k, cell = r
+            g.put(b2, q[0], k, cell)
+            added[q] = (k, cell, g.placement(b2, q[0], q[1], k, cell).matrix)
+        if not added:
+            return
+        for q, (k, cell, M) in added.items():
+            self.best[q] = (k, cell)
+            self.final[q] = np.array(M)
+        self.version += 1
+        top = max(self.final_height, max(float((np.asarray(self.parts[q[0]].mesh.verts, float) @ M[:3, :3].T)[:, 2].max()
+                                              + M[2, 3] - self.s.vlo[2]) for q, (_, _, M) in added.items()))
+        self.final_height = top
+        self.log.append('%6.1f s  refilled   %d of %d left-out parts went in after compacting'
+                        % (self.elapsed, len(added), len(left)))
+        # the new ones to the exact gap too, then try again with what is still out
+        qs2 = sorted(self.final)
+        from .compact import Compactor
+        items = [(self.parts[q[0]].mesh, self.final[q]) for q in qs2]
+        c2 = Compactor(items, self.s.vlo, self.s.vhi, self.s.gap, self.s.wall_gap, self.locked, 0.0)
+        yield
+        tops = [c2._extent(j)[1][2] - self.s.vlo[2] for j in range(c2.n)]
+        for j in sorted(range(c2.n), key=lambda j: (c2._extent(j)[0][2], j)):
+            if qs2[j] in added or qs2[j] in self._apart:
+                continue
+            for ax in ((1, 0) if self.s.spread_z else (2, 1, 0)):
+                if over():
+                    break
+                c2.move(j, ax, tops)
+            yield
+        for j in range(c2.n):
+            if qs2[j] in added:
+                for ax in (2, 1, 0):
+                    if over():
+                        break
+                    c2.move(j, ax, tops)
+        self._take_final(qs2, c2)
+        if len(added) < len(left) and not over():
+            yield from self._refill(qs2, c2)
 
     def _take_final(self, qs, c):
         self.final = {q: c.M[j].copy() for j, q in enumerate(qs)}
