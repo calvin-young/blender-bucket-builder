@@ -241,3 +241,37 @@ left out). Netfabb: voxel 1 mm, no rotation, gap and height as above.
   the grid cannot place a part within two cells of the volume's height
   (issue #23). With 2 mm to spare everything goes in, the small parts inside
   the box.
+
+## 11. Speed and density work (2026-11-10)
+
+All on the synthetic buckets (`tools/bench_suite.py`, rush goal, no density
+limit, 8 processes, the workstation), old = 6bdf8c1, new = 1.5.2.
+
+**Time to the first layout** (seconds; heights equal or lower on 22 of 25
+buckets): one-offs (60 different parts) 96 -> 48, mix-a 46 -> 37, mix-b
+35 -> 17, mix-c 89 -> 76, workshop 19 -> 16, huge-and-tiny 25 -> 27.
+
+**Height after 30 s**, old -> new, all referee clean: clips 39.9 -> 36.3 mm,
+workshop 104.8 -> 78.0, tees 42 -> 38, hooks 33 -> 30, door-stops 72.3 either
+way.
+
+**Hand-packed troughs** (§10): 51 of 51 in one bucket in 33 - 39 s, fixed or
+free, 235.4 mm against 235.5 by hand (four upright stacks, one per size, each
+pair at its exact spacing). Before: 38 - 42.
+
+**Growth with the number of parts** (`tools/bench_scale_pack.py`, first layout,
+copies of one hex nut): 100 parts 3.2 s, 300 7.4 s, 1000 24.9 s, 2000 87.9 s, at
+23 - 32 % density.
+
+**HP SmartStream 3D Build Manager 2.0, Auto-pack** (no printer connected, so
+its default 248 mm volume; spacing 5 mm, its minimum), against Bucket Builder
+at a 5 mm gap and 30 s. Heights as SmartStream reports them; its layouts could
+not be exported to be judged by our referee.
+
+| Bucket | SmartStream | Bucket Builder |
+|---|---|---|
+| bureau-day (82 mixed parts) | 160 mm, under 15 s | 75 mm, 30 s, referee clean |
+| keycaps (81 large keycaps) | 92 mm, 8 % | 50 mm, 8.6 %, referee clean |
+
+Runs on five more buckets were spoiled (other windows in the way) and are not
+reported. SmartStream packs in seconds; it does not reach the same density.

@@ -408,6 +408,21 @@ Arrange tools (1.4.0, owner's request of 2026-10-21; `arrange.py`, panel
 
 Keep this and the next section current; push after every verified step.
 
+**2026-11-10 (packer day, 1.5.2).** Speed: the first layout of many
+different parts is 2 - 2.5 times sooner (orientations picked by box class
+from the vertices, quarter turns voxelized without the product over every
+piece, a part's orientations voxelized side by side in the threads).
+Density: nesting stacks in modes fixed and z, upright stacks side by side at
+their own widths, one stack per kind of part, exact spacing per kind
+(synthetic troughs: 51 of 51 like the hand layout, was 38 - 42); a point on
+a cell boundary marks one cell (#23 fixed: a part as tall as the volume
+fits; boxy parts take one cell less per axis); left-out parts tried again
+after compaction; the result prefers more parts over a lower build.
+Benchmarks: `tools/bench_suite.py` (synthetic buckets, one line each),
+`tools/bench_scale_pack.py` (time against part count), results in
+`docs/BENCHMARK_PLAN.md` §11. Real builds (local only) didn't change: their
+limit is the grid's slack at gaps under a cell (bucket-01, 0.5 mm gaps).
+
 Last updated: 2026-10-21 (session 4).
 
 * The repository is `calvin-young/blender-bucket-builder` (moved and renamed
