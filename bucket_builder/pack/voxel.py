@@ -160,6 +160,7 @@ class Soup:
         # only permutes and flips these, so those orientations need no
         # product over the pieces
         P = self.pieces
+        self.verts = V                            # (a quarter turn's extent comes from these, as for any turn)
         self.pmin = np.minimum(np.minimum(P[:, 0], P[:, 1]), P[:, 2])
         self.pmax = np.maximum(np.maximum(P[:, 0], P[:, 1]), P[:, 2])
 
@@ -183,13 +184,14 @@ def _quarter_turn(R):
 def surface_grid_soup(soup, R, h, pad, align='grid'):
     """surface_grid from a Soup turned by R (the pieces are already short)."""
     qt = _quarter_turn(np.asarray(R, np.float64)) if getattr(soup, 'pmin', None) is not None else None
-    if qt is not None:
+    if qt is not None and len(soup.verts):
         axes, signs = qt
         a, b = soup.pmin[:, axes], soup.pmax[:, axes]
         neg = signs < 0
         pmin = np.where(neg, -b, a)
         pmax = np.where(neg, -a, b)
-        lo, hi = pmin.min(axis=0), pmax.max(axis=0)
+        W = soup.verts @ np.asarray(R, np.float64).T      # (the extent as the product gives it,
+        lo, hi = W.min(axis=0), W.max(axis=0)            #  so the grid's size doesn't change)
         origin = _origin(lo, h, pad, align)
         dims = (np.floor((hi - origin) / h).astype(np.int64) + 1 + pad)
         grid = np.zeros(tuple(int(d) for d in dims), dtype=bool)

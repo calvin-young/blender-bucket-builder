@@ -1505,9 +1505,15 @@ class Job:
                 ks = sorted((k for k in range(len(self.g.orients(i))) if self.g._may_fit(b, i, k)),
                             key=lambda k: (-self._z_extent(i, k), k))
                 per = {}
+                seen = set()
                 for k in ks:
                     v = per.setdefault(self._extents_class(i, k), [])
                     if len(v) < self.FIRST_PER_SHAPE:
+                        sig = self.g._shape_sig(i, self.g.orients(i)[k])   # (a turn onto itself: skip)
+                        if sig is not None:
+                            if sig in seen:
+                                continue
+                            seen.add(sig)
                         v.append(k)
                 pick = [k for v in per.values() for k in v]
                 if len(pick) < len(ks):
