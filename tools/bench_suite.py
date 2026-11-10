@@ -22,7 +22,7 @@ DEFAULT = ('bureau-day,pringles,figurines,sockets,keycaps,giant,varied-chips,nut
 
 
 def run(name, desc, parts, extra, args):
-    s = Settings(gap=extra.get('gap', 2.0), wall_gap=args.wall_gap, h=args.cell,
+    s = Settings(gap=args.gap if args.gap else extra.get('gap', 2.0), wall_gap=args.wall_gap, h=args.cell,
                  max_density=(args.max_density / 100.0) or None, preset=args.goal,
                  time_budget=args.time, seed=args.seed)
     first = []
@@ -56,6 +56,7 @@ def main():
     ap.add_argument('--buckets', default=DEFAULT)
     ap.add_argument('--time', type=float, default=30.0)
     ap.add_argument('--cell', type=float, default=1.0)
+    ap.add_argument('--gap', type=float, help='instead of each bucket\'s own')
     ap.add_argument('--wall-gap', type=float, default=5.0)
     ap.add_argument('--max-density', type=float, default=0.0)
     ap.add_argument('--goal', default='rush')

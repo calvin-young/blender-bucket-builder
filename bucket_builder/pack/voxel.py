@@ -38,6 +38,10 @@ CHUNK = 1 << 18
 EDT_FROM = 8.0      # cells: below this radius shifted copies beat SciPy's distance transform
 
 
+# Cells: a point closer than this to a boundary between two cells is on it.
+EDGE = 1e-7
+
+
 def have_scipy():
     return _ndi is not None
 
@@ -81,15 +85,36 @@ def _mark(grid, P, origin, h):
     if P.shape[1] == 3:
         a, b, c = P[:, 0], P[:, 1], P[:, 2]        # (three minimums: a reduction over axis 1 is slow)
         pmin, pmax = np.minimum(np.minimum(a, b), c), np.maximum(np.maximum(a, b), c)
+        _mark_boxes(grid, pmin, pmax, origin, h, np.cross(b - a, c - a))
     else:
         pmin, pmax = P.min(axis=1), P.max(axis=1)
-    _mark_boxes(grid, pmin, pmax, origin, h)
+        _mark_boxes(grid, pmin, pmax, origin, h)
 
 
-def _mark_boxes(grid, pmin, pmax, origin, h):
-    """Mark the cells of boxes no wider than h (each touches at most 2 cells per axis)."""
-    lo = np.floor((pmin - origin) / h).astype(np.int64)
-    hi = np.floor((pmax - origin) / h).astype(np.int64)
+def _mark_boxes(grid, pmin, pmax, origin, h, normals=None):
+    """Mark the cells of boxes no wider than h (each touches at most 2 cells per axis).
+
+    With the pieces' normals (triangles), a point on the boundary between two
+    cells marks only one of them: a piece reaching up to a boundary stops in
+    the cell below it, and a flat piece lying in a boundary marks the cell on
+    its inner side (below a face looking up, above one looking down).  So a
+    part whose size is a whole number of cells takes that many, not one more
+    (a 40 mm block, 40 cells; a part as tall as the volume fits it)."""
+    fmin = (pmin - origin) / h
+    fmax = (pmax - origin) / h
+    if normals is None:
+        lo = np.floor(fmin).astype(np.int64)
+        hi = np.floor(fmax).astype(np.int64)
+    else:
+        lo = np.floor(fmin + EDGE).astype(np.int64)
+        hi = np.maximum(np.floor(fmax - EDGE).astype(np.int64), lo)
+        r = np.rint(fmin)
+        flat = (fmax - fmin < EDGE) & (np.abs(fmin - r) < EDGE)
+        if flat.any():
+            up = flat & (normals > 0)
+            lo[up] = hi[up] = r[up].astype(np.int64) - 1
+            down = flat & ~up
+            lo[down] = hi[down] = r[down].astype(np.int64)
     dims = np.array(grid.shape)
     lo = np.clip(lo, 0, dims - 1)
     hi = np.clip(hi, 0, dims - 1)
@@ -161,6 +186,7 @@ class Soup:
         # product over the pieces
         P = self.pieces
         self.verts = V                            # (a quarter turn's extent comes from these, as for any turn)
+        self.normals = np.cross(P[:, 1] - P[:, 0], P[:, 2] - P[:, 0])
         self.pmin = np.minimum(np.minimum(P[:, 0], P[:, 1]), P[:, 2])
         self.pmax = np.maximum(np.maximum(P[:, 0], P[:, 1]), P[:, 2])
 
@@ -190,13 +216,14 @@ def surface_grid_soup(soup, R, h, pad, align='grid'):
         neg = signs < 0
         pmin = np.where(neg, -b, a)
         pmax = np.where(neg, -a, b)
+        nrm = soup.normals[:, axes] * signs
         W = soup.verts @ np.asarray(R, np.float64).T      # (the extent as the product gives it,
         lo, hi = W.min(axis=0), W.max(axis=0)            #  so the grid's size doesn't change)
         origin = _origin(lo, h, pad, align)
         dims = (np.floor((hi - origin) / h).astype(np.int64) + 1 + pad)
         grid = np.zeros(tuple(int(d) for d in dims), dtype=bool)
         for s in range(0, pmin.shape[0], CHUNK):
-            _mark_boxes(grid, pmin[s:s + CHUNK], pmax[s:s + CHUNK], origin, h)
+            _mark_boxes(grid, pmin[s:s + CHUNK], pmax[s:s + CHUNK], origin, h, nrm[s:s + CHUNK])
         return grid, origin
     P = soup.pieces @ R.T
     lo = np.minimum(np.minimum(P[:, 0], P[:, 1]), P[:, 2]).min(axis=0)
