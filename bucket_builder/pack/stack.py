@@ -175,11 +175,66 @@ def _cut(order, S, poses, k):
     return res
 
 
+def _positions(ms, S):
+    w = [0.0]
+    for a, b in zip(ms, ms[1:]):
+        w.append(w[-1] + S[a, b])
+    return np.array(w)
+
+
+def _cuts_by_part(order, S, poses):
+    """Cuts that keep each part to stacks of its own (narrow parts don't widen
+    the stacks of wide ones): one stack per part, then the longest split in
+    two, again and again.  [] for a single part."""
+    groups = {}
+    for m in order:
+        groups.setdefault(id(poses[m].mesh), []).append(m)
+    if len(groups) < 2:
+        return []
+    runs = [list(g) for g in groups.values()]
+    out = []
+    while len(runs) <= len(order):
+        out.append([(ms, _positions(ms, S)) for ms in runs])
+        longest = max(range(len(runs)), key=lambda r: _length((runs[r], _positions(runs[r], S)), poses)[0])
+        if len(runs[longest]) < 2:
+            break
+        ms = runs.pop(longest)
+        half = (len(ms) + 1) // 2
+        runs += [ms[:half], ms[half:]]
+    return out
+
+
 def _length(st, poses):
     ms, w = st
     lo = min(poses[m].lo[2] + w[i] for i, m in enumerate(ms))
     hi = max(poses[m].hi[2] + w[i] for i, m in enumerate(ms))
     return hi - lo, lo
+
+
+def _shelves(stacks, poses, Q, room, gap):
+    """Upright stacks side by side in rows, each as wide as its own parts:
+    per stack {world axis: offset of the stack's axis from the volume's low
+    corner (inside the wall gap)}, or None if they don't fit the floor."""
+    foot = []
+    for ms, _ in stacks:
+        lo = np.min([np.minimum(Q @ poses[m].lo, Q @ poses[m].hi) for m in ms], axis=0)
+        hi = np.max([np.maximum(Q @ poses[m].lo, Q @ poses[m].hi) for m in ms], axis=0)
+        foot.append((lo, hi))
+    out = [None] * len(stacks)
+    x = y = row = 0.0
+    for sn in sorted(range(len(stacks)), key=lambda n: -(foot[n][1][1] - foot[n][0][1])):
+        lo, hi = foot[sn]
+        w, d = hi[0] - lo[0], hi[1] - lo[1]
+        if w > room[0] + 1e-9 or d > room[1] + 1e-9:
+            return None
+        if x > 0 and x + w > room[0] + 1e-9:
+            x, y, row = 0.0, y + row + gap, 0.0
+        if y + d > room[1] + 1e-9:
+            return None
+        out[sn] = {0: x - lo[0], 1: y - lo[1]}
+        x += w + gap
+        row = max(row, d)
+    return out
 
 
 def _axes():
@@ -201,9 +256,10 @@ def _axes():
     return out
 
 
-def plan(poses, S, order, vlo, vhi, gap, wall, max_z=None):
+def plan(poses, S, order, vlo, vhi, gap, wall, max_z=None, turns='free'):
     """The lowest way to lay the chain in the volume: (height, world matrix per
-    pose index, stacks, description), or None if it doesn't fit."""
+    pose index, stacks, description), or None if it doesn't fit.  turns
+    'z': stacks stand upright, turned about z only; 'fixed': not turned."""
     vlo, vhi = np.asarray(vlo, float), np.asarray(vhi, float)
     room = vhi - vlo - np.array([2 * wall, 2 * wall, 0.0])
     lo = np.min([p.lo for p in poses], axis=0)
@@ -212,18 +268,29 @@ def plan(poses, S, order, vlo, vhi, gap, wall, max_z=None):
     best = None
     tried = {}
     for ax, u, v, Q in _axes():
+        if turns != 'free' and ax != 2:
+            continue
+        if turns == 'fixed' and not np.allclose(Q, np.eye(3)):
+            continue
         eu, ev = ext[0], ext[1]
+        shelf = None
         if ax == 2:
-            nu = int((room[u] + gap) // (eu + gap))
-            nv = int((room[v] + gap) // (ev + gap))
-            if nu < 1 or nv < 1:
+            # as many stacks as stand side by side, each as wide as its own
+            # parts (a stack of narrow parts beside one of wide ones), the
+            # most that fit giving the lowest build
+            found = None
+            cuts = [_cut(order, S, poses, k) for k in range(1, len(poses) + 1)]
+            cuts += _cuts_by_part(order, S, poses)
+            for cut in cuts:
+                hk = max(_length(st, poses)[0] for st in cut)
+                if hk > room[2] or (found is not None and hk >= found[1]):
+                    continue
+                offs = _shelves(cut, poses, Q, room, gap)
+                if offs is not None:
+                    found = (cut, hk, offs)
+            if found is None:
                 continue
-            k = min(nu * nv, len(poses))
-            stacks = _cut(order, S, poses, k)
-            lens = [_length(s, poses) for s in stacks]
-            height = max(a for a, _ in lens)
-            if height > room[2]:
-                continue
+            stacks, height, shelf = found
             layers = 1
         else:
             cu, cv = (u, v) if v == 2 else (v, u)   # cu across the floor, cv up
@@ -247,10 +314,10 @@ def plan(poses, S, order, vlo, vhi, gap, wall, max_z=None):
         # (a tie goes to the build that leaves the most floor in one piece)
         score = (round(height, 3), len(stacks), ax)
         if best is None or score < best[0]:
-            best = (score, ax, u, v, Q, stacks, height, layers)
+            best = (score, ax, u, v, Q, stacks, height, layers, shelf)
     if best is None:
         return None
-    _, ax, u, v, Q, stacks, height, layers = best
+    _, ax, u, v, Q, stacks, height, layers, shelf = best
     M = {}
     # places across the stack, in world axes
     q_lo = np.minimum(Q @ lo, Q @ hi)
@@ -268,12 +335,12 @@ def plan(poses, S, order, vlo, vhi, gap, wall, max_z=None):
         lift = lambda spot: {a0: spot[0] * (q_ext[a0] + gap), a1: spot[1] * (q_ext[a1] + gap)}  # noqa: E731
     base = np.array([vlo[0] + wall, vlo[1] + wall, vlo[2]])
     for sn, (ms, w) in enumerate(stacks):
-        offs = lift(spots[sn])
+        offs = lift(spots[sn]) if shelf is None else shelf[sn]
         l0 = _length((ms, w), poses)[1]
         for i, m in enumerate(ms):
             T = np.zeros(3)
             for a, d in offs.items():
-                T[a] = base[a] + d - q_lo[a]
+                T[a] = base[a] + d - (q_lo[a] if shelf is None else 0.0)
             T[ax] = base[ax] + (w[i] - l0)
             Rw = Q @ poses[m].R
             centered = T - Q @ poses[m].center
@@ -313,14 +380,18 @@ def tighten(poses, M, stacks, ax, vlo, vhi, gap, wall, seconds=None):
     return {m: c.M[idx[m]].copy() for m in M}
 
 
-def build(meshes, rotations, vlo, vhi, gap, wall, tighten_s=None, log=None):
+def build(meshes, rotations, vlo, vhi, gap, wall, tighten_s=None, log=None, turns='free'):
     """A stacked layout of these parts: {index: 4 x 4}, height and description,
     or None when they don't nest or don't fit.  rotations[i]: mesh to the
-    family's frame, members already lined up with each other."""
+    family's frame, members already lined up with each other.  turns: 'free'
+    (any), 'z' (about the vertical only: the stacks stand upright) or 'fixed'
+    (rotations[i] is the part's own orientation, kept as it is)."""
     poses0 = [Pose(m, R) for m, R in zip(meshes, rotations)]
     # the thinnest axis of the frame is the stack's
     ext = np.mean([p.hi - p.lo for p in poses0], axis=0)
     ax = int(np.argmin(ext))
+    if turns != 'free' and ax != 2:
+        return None                    # (a stack along x or y would turn the parts over)
     if ax != 2:
         perm = {0: np.array([[0, 0, -1.0], [0, 1.0, 0], [1.0, 0, 0]]),
                 1: np.array([[1.0, 0, 0], [0, 0, -1.0], [0, 1.0, 0]])}[ax]
@@ -335,7 +406,7 @@ def build(meshes, rotations, vlo, vhi, gap, wall, tighten_s=None, log=None):
     posed = []
     for i, (m, R) in enumerate(zip(meshes, rotations)):
         best = None
-        for F in FLIPS:
+        for F in (FLIPS if turns == 'free' else FLIPS[:2] if turns == 'z' else FLIPS[:1]):
             p = Pose(m, F @ np.asarray(R, float))
             t, b = height_maps(p, n)
             with np.errstate(invalid='ignore'):
@@ -357,10 +428,25 @@ def build(meshes, rotations, vlo, vhi, gap, wall, tighten_s=None, log=None):
     # the spacings of the chain at the exact gap, so the stacks are cut as they will really be
     for a, b in zip(order, order[1:]):
         S[a, b] = exact_spacing(poses[a], poses[b], float(S[a, b]), gap) + EXACT_MARGIN
+    # and of a copy over another copy of the same part, posed alike: one
+    # measurement per part covers every such pair (stacks of one part each)
+    kinds = {}
+    for m, p in enumerate(poses):
+        kinds.setdefault((id(p.mesh), np.round(p.R, 9).tobytes()), []).append(m)
+    if len(kinds) > 1:
+        for ms in kinds.values():
+            if len(ms) < 2:
+                continue
+            a, b = ms[0], ms[1]
+            e = exact_spacing(poses[a], poses[b], float(S[a, b]), gap) + EXACT_MARGIN
+            for x in ms:
+                for y in ms:
+                    if x != y:
+                        S[x, y] = min(S[x, y], e)
     mean_pitch = float(np.mean([S[a, b] for a, b in zip(order, order[1:])]))
     if log is not None:
         log.append('stack spacing %.2f mm at the exact gap' % mean_pitch)
-    got = plan(poses, S, order, vlo, vhi, gap, wall)
+    got = plan(poses, S, order, vlo, vhi, gap, wall, turns=turns)
     if got is None:
         return None
     height, M, stacks, what, ax = got

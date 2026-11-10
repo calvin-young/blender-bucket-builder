@@ -230,7 +230,11 @@ class Job:
         from . import family
         if self.start or self.locked or len(self.copies) < self.PATTERN_FROM:
             return None
-        if any(p.mode != 'free' for p in self.parts):
+        modes = {p.mode for p in self.parts}
+        if modes in ({'fixed'}, {'z'}):
+            # each part as it is (turned about z at most): the world's frame is common to all
+            return [(q, np.asarray(self.parts[q[0]].base, float)[:3, :3]) for q in self.copies]
+        if modes != {'free'}:
             return None
         if len(self.parts) == 1:
             C = family._canonical(self.parts[0])
@@ -254,8 +258,10 @@ class Job:
         if self.s.flat_rules and self.s.flat_pair_weight and any(self._has_flat_faces(i) for i in range(len(self.parts))):
             return                  # (flat faces close together are what the print-quality rules avoid)
         t0 = self.elapsed
+        modes = {p.mode for p in self.parts}
+        turns = 'free' if modes == {'free'} else modes.pop()
         got = stack.build([self.parts[q[0]].mesh for q, _ in group], [R for _, R in group],
-                          self.s.vlo, self.s.vhi, self.s.gap, self.s.wall_gap, log=self.log)
+                          self.s.vlo, self.s.vhi, self.s.gap, self.s.wall_gap, log=self.log, turns=turns)
         if got is None:
             return
         vol = sum(abs(float(metrics.mesh_stats(self.parts[q[0]].mesh)[0])) * abs(float(np.linalg.det(R))) for q, R in group)
@@ -1578,7 +1584,8 @@ class Job:
         has placed so far)."""
         res = Result()
         st = getattr(self, '_stacks', None)
-        if st is not None and (self.best is None or self.cur is None or st['height'] < self._best_height()):
+        if st is not None and (self.best is None or self.cur is None or len(st['M']) > len(self.best)
+                               or (len(st['M']) == len(self.best) and st['height'] < self._best_height())):
             for (i, c), M in sorted(st['M'].items()):
                 k = self._match(i, M[:3, :3])
                 res.placements.append(Placement(i, c, np.array(M), -1 if k is None else k, None))

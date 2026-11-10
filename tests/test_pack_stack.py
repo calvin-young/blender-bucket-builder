@@ -95,11 +95,30 @@ def test_not_nesting():
     check(getattr(j, '_stacks', None) is None, 'solid blocks are left to the usual search')
 
 
+def test_fixed_two_sizes():
+    """Parts that may not turn stack as they are, each size in stacks of its
+    own beside the other's, every pair at its exact spacing."""
+    sys.path.insert(0, os.path.join(HERE, '..', 'benchmarks'))
+    from hand_builds import trough
+    small, big = trough(30.0, 2.0, 120.0, 150.0, name='small'), trough(40.0, 2.0, 120.0, 150.0, name='big')
+    parts = [Part('small', small, 12, 'fixed'), Part('big', big, 12, 'fixed')]
+    s = Settings(vlo=np.zeros(3), vhi=np.array([200.0, 284.0, 120.0]), gap=2.0, wall_gap=2.0, max_density=None)
+    j = J.Job(parts, s, workers=1)
+    res = j.run()
+    j.close()
+    check(getattr(j, '_stacks', None) is not None, 'fixed troughs stack')
+    check(len(res.placements) == 24 and not res.unplaced, f'all placed ({len(res.placements)})')
+    check(all(np.allclose(p.matrix[:3, :3], np.eye(3)) for p in res.placements), 'none of them turned')
+    items = res.items(parts)
+    v = referee.check(items, s.vlo, s.vhi, s.gap, s.wall_gap)
+    check(v.ok, f'the exact engine agrees: {v}')
+
 if __name__ == '__main__':
     test_spacing_bounds()
     test_order()
     test_job_chips()
     test_density_limit()
     test_not_nesting()
+    test_fixed_two_sizes()
     print('FAILED' if FAILS else 'all ok')
     sys.exit(1 if FAILS else 0)
