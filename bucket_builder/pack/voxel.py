@@ -83,6 +83,11 @@ def _mark(grid, P, origin, h):
         pmin, pmax = np.minimum(np.minimum(a, b), c), np.maximum(np.maximum(a, b), c)
     else:
         pmin, pmax = P.min(axis=1), P.max(axis=1)
+    _mark_boxes(grid, pmin, pmax, origin, h)
+
+
+def _mark_boxes(grid, pmin, pmax, origin, h):
+    """Mark the cells of boxes no wider than h (each touches at most 2 cells per axis)."""
     lo = np.floor((pmin - origin) / h).astype(np.int64)
     hi = np.floor((pmax - origin) / h).astype(np.int64)
     dims = np.array(grid.shape)
@@ -151,6 +156,12 @@ class Soup:
                 break
         self.pieces = np.concatenate(parts) if parts else np.zeros((0, 3, 3))
         self.lo = V.min(axis=0) if len(V) else np.zeros(3)
+        # each piece's box in the base frame: a quarter turn of the frame
+        # only permutes and flips these, so those orientations need no
+        # product over the pieces
+        P = self.pieces
+        self.pmin = np.minimum(np.minimum(P[:, 0], P[:, 1]), P[:, 2])
+        self.pmax = np.maximum(np.maximum(P[:, 0], P[:, 1]), P[:, 2])
 
     def rotation(self, A):
         """A as a rotation of the base frame (A = R base), or None."""
@@ -160,8 +171,31 @@ class Soup:
         return R
 
 
+def _quarter_turn(R):
+    """(axes, signs) when R permutes and flips the axes, else None."""
+    Q = np.rint(R)
+    if np.abs(R - Q).max() > 1e-9 or not np.all(np.abs(Q).sum(axis=1) == 1):
+        return None
+    axes = np.abs(Q).argmax(axis=1)
+    return axes, Q[np.arange(3), axes]
+
+
 def surface_grid_soup(soup, R, h, pad, align='grid'):
     """surface_grid from a Soup turned by R (the pieces are already short)."""
+    qt = _quarter_turn(np.asarray(R, np.float64)) if getattr(soup, 'pmin', None) is not None else None
+    if qt is not None:
+        axes, signs = qt
+        a, b = soup.pmin[:, axes], soup.pmax[:, axes]
+        neg = signs < 0
+        pmin = np.where(neg, -b, a)
+        pmax = np.where(neg, -a, b)
+        lo, hi = pmin.min(axis=0), pmax.max(axis=0)
+        origin = _origin(lo, h, pad, align)
+        dims = (np.floor((hi - origin) / h).astype(np.int64) + 1 + pad)
+        grid = np.zeros(tuple(int(d) for d in dims), dtype=bool)
+        for s in range(0, pmin.shape[0], CHUNK):
+            _mark_boxes(grid, pmin[s:s + CHUNK], pmax[s:s + CHUNK], origin, h)
+        return grid, origin
     P = soup.pieces @ R.T
     lo = np.minimum(np.minimum(P[:, 0], P[:, 1]), P[:, 2]).min(axis=0)
     hi = np.maximum(np.maximum(P[:, 0], P[:, 1]), P[:, 2]).max(axis=0)

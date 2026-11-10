@@ -42,6 +42,7 @@ class Greedy:
         self.parts = parts
         self.s = settings
         self._poses = {}            # (part index, orientation index) -> _Pose
+        self._pregrid = {}          # grids voxelized ahead, in threads, until pose() takes them
         self._orients = {}
         self._volume = {}
         self._close = {}
@@ -60,6 +61,32 @@ class Greedy:
         self._pool = ThreadPoolExecutor(max_workers=n) if n > 1 else None
 
     # ------------------------------------------------------------ poses
+    def _voxelize(self, i, A):
+        part = self.parts[i]
+        cloud = self._cloud(i)
+        return voxel.voxelize(part.mesh.verts, part.mesh.tris, A, self.s.h, self.s.gap, self._close[i],
+                              cloud=cloud, align='min', soup=None if cloud is not None else self._soup(i))
+
+    def _prefetch(self, bucket, i, ks):
+        """Voxelize the orientations of part i that will be needed and are not
+        yet, side by side in the threads (most of a voxelization is NumPy
+        work that releases the GIL).  pose() then takes the grids in order,
+        so the result is the same as voxelizing one by one."""
+        if self._pool is None:
+            return
+        todo = [k for k in ks if (i, k) not in self._poses and (i, k) not in self._pregrid
+                and self._may_fit(bucket, i, k)]
+        if len(todo) < 2:
+            return
+        self._part_volume(i)                      # (fills _close[i])
+        if self._cloud(i) is None:
+            self._soup(i)                         # (made once, before the threads share it)
+        todo = [k for k in todo if self._turned_grid(i, self.orients(i)[k]) is None]
+        if len(todo) < 2:
+            return
+        for k, g in zip(todo, self._pool.map(lambda A: self._voxelize(i, A), [self.orients(i)[k] for k in todo])):
+            self._pregrid[(i, k)] = g
+
     def _part_volume(self, i):
         if i not in self._volume:
             vol, openness = metrics.mesh_stats(self.parts[i].mesh)
@@ -123,8 +150,9 @@ class Greedy:
         cloud = self._cloud(i)
         g = self._turned_grid(i, A)
         if g is None:
-            g = voxel.voxelize(part.mesh.verts, part.mesh.tris, A, s.h, s.gap, self._close[i],
-                               cloud=cloud, align='min', soup=None if cloud is not None else self._soup(i))
+            g = self._pregrid.pop(key, None)
+        if g is None:
+            g = self._voxelize(i, A)
             if g.solid.size >= self.TURN_FROM:
                 self._turn_base.setdefault(i, (np.asarray(A, float), g))
         p = _Pose()
@@ -368,7 +396,9 @@ class Greedy:
         FFTs release the GIL); refinement is sequential."""
         why = 'too large for the volume'
         todo = []
-        for k in (range(len(self.orients(i))) if allowed is None else allowed):
+        ks = list(range(len(self.orients(i))) if allowed is None else allowed)
+        self._prefetch(bucket, i, ks)
+        for k in ks:
             if not self._may_fit(bucket, i, k):
                 continue                                    # (decided before voxelizing it)
             p = self.pose(i, k)

@@ -1498,7 +1498,12 @@ class Job:
             for i, part in enumerate(self.parts):
                 if part.mode != 'free' or i in self._too_large or i in fam:
                     continue                    # (a family's members go in on its lattices)
-                ks = sorted(self._distinct(i), key=lambda k: (-self._z_extent(i, k), k))
+                # The box class and height come from the vertices; only the
+                # orientations that could be picked are voxelized (to drop
+                # those the grid can't tell apart), not all 24.
+                b = self.cur.bucket
+                ks = sorted((k for k in range(len(self.g.orients(i))) if self.g._may_fit(b, i, k)),
+                            key=lambda k: (-self._z_extent(i, k), k))
                 per = {}
                 for k in ks:
                     v = per.setdefault(self._extents_class(i, k), [])
