@@ -48,7 +48,7 @@ wasn't enough.
 
 ## Status
 
-**Version 1.5.0**, in production use by its first user. Tested on Blender 5.2. It's declared for
+**Version 1.5.2**, in production use by its first user. Tested on Blender 5.2. It's declared for
 4.2 and newer, but the versions in between haven't been tried yet.
 
 The add-on is developed almost entirely by an AI assistant (Claude), with little human code review.

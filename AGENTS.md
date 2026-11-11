@@ -423,6 +423,17 @@ Benchmarks: `tools/bench_suite.py` (synthetic buckets, one line each),
 `docs/BENCHMARK_PLAN.md` §11. Real builds (local only) didn't change: their
 limit is the grid's slack at gaps under a cell (bucket-01, 0.5 mm gaps).
 
+**2026-11-10 evening.** With 20 or more different free parts, the first
+layout keeps one orientation per box shape (one-offs: first layout 48 -> 34 s,
+same height). Three job tests that had been failing outside Blender pass
+again (the stacks wrapper's first yield, worker processes against a fixed
+seed, an off-grid start that a lattice made on-grid). Netfabb 2027 (trial)
+runs from Lua in the VM: `~/data/packbench/nfbench/nfbench.py` (local, not in
+the repo; Netfabb's Lua has no `os` library, and True Shape stops with an
+access violation when started from a script). First results in
+`docs/BENCHMARK_PLAN.md` §12. Weakness found: mixed sizes with free rotation
+(#24), where Netfabb's Monte Carlo builds lower.
+
 Last updated: 2026-10-21 (session 4).
 
 * The repository is `calvin-young/blender-bucket-builder` (moved and renamed
