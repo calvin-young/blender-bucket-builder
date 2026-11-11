@@ -31,12 +31,38 @@ except Exception:                    # pragma: no cover
     _FFT_KW = {}
 
 
+# Optional GPU correlation: CuPy where it can be imported and a GPU answers
+# (not in Blender's bundled Python; BB_GPU=0 turns it off).  The bucket's
+# spectrum and the parts' spectra stay on the GPU; only the mask comes back.
+_cp = None
+if __import__('os').environ.get('BB_GPU', '1') != '0':
+    try:                                # pragma: no cover - depends on the machine
+        import cupy as _cupy
+        _cupy.cuda.runtime.getDeviceCount()
+        _cp = _cupy
+    except Exception:
+        _cp = None
+
+
+def gpu_name():
+    """The GPU the correlation runs on, or None."""
+    if _cp is None:
+        return None
+    try:
+        return _cp.cuda.runtime.getDeviceProperties(0)['name'].decode()
+    except Exception:
+        return 'GPU'
+
+
 def rfftn(a, s):
     return _fft.rfftn(a, s=s, axes=(0, 1, 2), **_FFT_KW)
 
 
 def irfftn(a, s):
     return _fft.irfftn(a, s=s, axes=(0, 1, 2), **_FFT_KW)
+
+
+_GPU_LOCK = threading.Lock()      # (one stream: the orientation threads take turns)
 
 
 def fast_size(n):
@@ -202,6 +228,16 @@ class Bucket:
         z = fast_size(self.top_block() + kz + 1)
         return (C[0], C[1], min(C[2], z))
 
+    def spectrum_gpu(self, shape):
+        """The bucket's spectrum on the GPU (float32: see _dtype; checked there)."""
+        if self._spec is None:
+            self._spec = {}
+        sp = self._spec.get(('gpu', shape))
+        if sp is None:
+            occ = _cp.asarray((self.count[:, :, :shape[2]] > 0).astype(np.float32))
+            sp = self._spec[('gpu', shape)] = _cp.fft.rfftn(occ, s=shape, axes=(0, 1, 2))
+        return sp
+
     def spectrum(self, dtype=np.float64, shape=None):
         shape = self.count.shape if shape is None else tuple(shape)
         if self._spec is None:
@@ -244,19 +280,35 @@ class Bucket:
         if not self.count.any():
             mask = np.ones(tuple(cmax - cmin + 1), dtype=bool)
             return mask, cmin
-        dt = self._dtype(pg.coarse_count(f, phase))
         Cs = self.search_shape(kc.shape[2])
-        ks = SPECTRA.get((key, f, tuple(phase), Cs, dt),
-                         lambda: np.conj(rfftn(kc.astype(dt), Cs)))
-        corr = irfftn(self.spectrum(dt, Cs) * ks, Cs)
         mask = np.ones(tuple(cmax - cmin + 1), dtype=bool)
         # offsets whose kernel lies inside the cropped grid are exact; above
         # them nothing is taken, so they stay free
         zmax = min(cmax[2], Cs[2] - kc.shape[2])
+        sl = (slice(cmin[0], cmax[0] + 1), slice(cmin[1], cmax[1] + 1), slice(cmin[2], zmax + 1))
+        if _cp is not None and self._dtype_ok32(pg.coarse_count(f, phase)):
+            with _GPU_LOCK:
+                ks = SPECTRA.get((key, f, tuple(phase), Cs, 'gpu'),
+                                 lambda: _cp.conj(_cp.fft.rfftn(_cp.asarray(kc.astype(np.float32)), s=Cs,
+                                                                axes=(0, 1, 2))))
+                if zmax >= cmin[2]:
+                    corr = _cp.fft.irfftn(self.spectrum_gpu(Cs) * ks, s=Cs, axes=(0, 1, 2))
+                    mask[:, :, :zmax - cmin[2] + 1] = (corr[sl] < 0.5).get()
+            return mask, cmin
+        dt = self._dtype(pg.coarse_count(f, phase))
+        ks = SPECTRA.get((key, f, tuple(phase), Cs, dt),
+                         lambda: np.conj(rfftn(kc.astype(dt), Cs)))
+        corr = irfftn(self.spectrum(dt, Cs) * ks, Cs)
         if zmax >= cmin[2]:
-            sl = (slice(cmin[0], cmax[0] + 1), slice(cmin[1], cmax[1] + 1), slice(cmin[2], zmax + 1))
             mask[:, :, :zmax - cmin[2] + 1] = corr[sl] < 0.5
         return mask, cmin
+
+    def _dtype_ok32(self, n_kernel):
+        """Whether single precision is safe here (the bound in _dtype)."""
+        if self._ntaken is None or self._ntaken[0] != self.version:
+            self._ntaken = (self.version, int(np.count_nonzero(self.count)))
+        bound = 1.2e-7 * math.log2(self.count.size) * math.sqrt(max(self._ntaken[1], 1) * max(n_kernel, 1))
+        return bound < 0.05
 
     # ------------------------------------------------------------ changes
     def place(self, pg, b, profile, volume, top):
