@@ -14,7 +14,7 @@ Cursor and Gemini CLI read it directly.
   height), Arrange tools (drop to floor, minimize box or height, tilt off axis,
   snap to the volume), and an automatic packer, still marked experimental
   (`docs/AUTOPACK.md`; print-quality rules in `docs/PRINT_QUALITY.md`).
-* **Status:** version 1.5.1, in production use by its first user. Declared for
+* **Status:** version 1.5.3, in production use by its first user. Declared for
   Blender 4.2 and newer; tested on Blender 5.2 (Linux, software OpenGL).
   Not yet tried: Blender 4.2 - 5.1, macOS, Vulkan / Metal, a real GPU.
 * **Runs in:** Blender's bundled Python (3.11 in 4.2) with NumPy, nothing else.
@@ -159,7 +159,7 @@ the code. Tagged so far: v1.0.0 (731961d), v1.1.0 (c32cec6), v1.2.0 (ae5a8bf),
 v1.3.0 (bf63370), v1.5.1 (same code as main's 1.5.0, cut for the status page's download button). Not tagged: 1.3.90-1.4.x, the `autopack` branch's previews,
 where "1.4.0" was used on both lines and 1.4.3 never reached the manifest; and
 1.5.0, whose code kept changing after the version was set (e8fdc24 to
-0614ea1). The next build is 1.5.2. Builds also get a GitHub pre-release with the zip
+0614ea1). Tagged since: v1.5.2, v1.5.3. The next build is 1.5.4. Builds also get a GitHub pre-release with the zip
 attached, and a new download link on the Workbench row (ai-context, topics/workstation.md).
 
 ## Implementation notes
@@ -457,6 +457,21 @@ Optional CuPy path for the coarse search (`bucket._cp`, not in Blender):
 the GPU). Coarse cell per bucket: #26. Jiggle push moves: #27. psacking
 (MIT, built in `~/data/packbench/ext`) packs far lower density and
 slower here; CakeForge, listed in the first report, does not exist.
+The owner's laptop (Windows 11, 22 threads, no SciPy, energy saver):
+first layout of one-offs 140.0 s NumPy against 48.8 s compiled (2.9x),
+bureau-day 60.7 s against 56.0 s (1.1x), same layouts.
+
+**Next (2026-11-11, the owner's notes):** issues #28 - #40: overlay
+drawing order, inside-out and non-manifold checks, hidden parts by
+default, fully-outside parts quiet until export, Jiggle feedback, one
+clear set of Pack actions, inject parts (also from the command line),
+soft clearance (nominal 3 mm, minimum 1 mm), cages, repair and hollow,
+panel location preference, labeled copies, benchmarks (Windows VM: the
+owner allows a reboot to reserve the GPU without him nearby; Netfabb
+True Shape through its window). Real buckets are low-quality data until
+the owner has given metadata per bucket (#20). A hand-packed challenge
+bucket (95 %, a few clashes) is promised for Jiggle; not on the
+workstation yet.
 
 Last updated: 2026-10-21 (session 4).
 
