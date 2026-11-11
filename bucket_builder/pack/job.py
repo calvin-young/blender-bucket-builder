@@ -1492,19 +1492,23 @@ class Job:
         return float(np.prod(V.max(0) - V.min(0)))
 
     FIRST_PER_SHAPE = 2
+    FIRST_MANY = 20             # with this many different free parts, one per shape
 
     def _first_allowed(self):
         """Orientations for the first layout: of a part that turns freely, two
         of each shape of bounding box (tallest first), not all 24.  It comes
         four times sooner for 150 chips, and is often better: copies that
         all lie alike nest, a mix does not.  The job tries every orientation
-        later."""
+        later.  With many different parts it keeps one of each: the first
+        layout then comes about a third sooner, and a mix of one-offs
+        doesn't nest by lying alike anyway."""
         if getattr(self, '_first', None) is None:
             self._first = {}
             fam = self._in_family()
-            for i, part in enumerate(self.parts):
-                if part.mode != 'free' or i in self._too_large or i in fam:
-                    continue                    # (a family's members go in on its lattices)
+            free = [i for i, part in enumerate(self.parts)
+                    if part.mode == 'free' and i not in self._too_large and i not in fam]
+            keep = 1 if len(free) >= self.FIRST_MANY else self.FIRST_PER_SHAPE
+            for i in free:          # (a family's members go in on its lattices)
                 # The box class and height come from the vertices; only the
                 # orientations that could be picked are voxelized (to drop
                 # those the grid can't tell apart), not all 24.
@@ -1515,7 +1519,7 @@ class Job:
                 seen = set()
                 for k in ks:
                     v = per.setdefault(self._extents_class(i, k), [])
-                    if len(v) < self.FIRST_PER_SHAPE:
+                    if len(v) < keep:
                         sig = self.g._shape_sig(i, self.g.orients(i)[k])   # (a turn onto itself: skip)
                         if sig is not None:
                             if sig in seen:
