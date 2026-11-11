@@ -430,8 +430,10 @@ again (the stacks wrapper's first yield, worker processes against a fixed
 seed, an off-grid start that a lattice made on-grid). Netfabb 2027 (trial)
 runs from Lua in the VM: `~/data/packbench/nfbench/nfbench.py` (local, not in
 the repo; Netfabb's Lua has no `os` library, and True Shape stops with an
-access violation when started from a script). First results in
-`docs/BENCHMARK_PLAN.md` §12. Weakness found: mixed sizes with free rotation
+access violation when started from a script; Gravity only settles parts
+where they are). Its results stay local (`~/data/packbench/nfbench/results.jsonl`)
+until Calvin decides whether the non-commercial trial's numbers may be
+published. Weakness found: mixed sizes with free rotation
 (#24), where Netfabb's Monte Carlo builds lower.
 
 Last updated: 2026-10-21 (session 4).
