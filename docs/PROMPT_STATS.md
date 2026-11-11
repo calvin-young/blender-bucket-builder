@@ -31,7 +31,7 @@ Little things the maintainer asked for or caught, what the status page shows. Co
 
 | Bugs found | UI tweaks | New features | Direction | Total |
 |---|---|---|---|---|
-| 7 | 16 | 20 | 37 | 80 |
+| 7 | 16 | 20 | 40 | 83 |
 
 ## Sessions
 
@@ -41,6 +41,7 @@ line counts once, in the session it came up in.
 
 | Date | Tool and model | Prompts | Steering lines |
 |---|---|---|---|
+| 2026-11-10 | Claude Code (workstation), Opus 5.5 | 4 | 3 |
 | 2026-11-05 | Claude Code (workstation), Opus 5.5 | 5 | 13 |
 | before 2026-10-14 | Claude Code, Opus | not counted | 3 |
 | 2026-10-14 | Claude Code, Opus 5.5 | 5 | 0 |
@@ -54,6 +55,9 @@ What the owner decided, corrected, taught, tested or changed in scope that
 the work would not have done on its own, newest first. `docs/TALLY.md` has
 the detail.
 
+- 2026-11-10 [direction]: a day of autonomous packer work: find weaknesses, fix them, benchmark against every packer available, Netfabb's trial included.
+- 2026-11-10 [direction]: a report for his management that places the packer against the industry and research, names packers we could still get, and quantifies headroom, hardware limits and what compiled code would buy.
+- 2026-11-10 [direction]: asked whether a speed-against-density control makes sense, preferring not to add a second slider.
 - 2026-11-05 [direction]: the packer's goal for chips: what you'd get by pulling half a tube out, laying it down, and putting the other half next to it.
 - 2026-11-05 [direction]: chips sized and counted so that they fit two side-by-side horizontal stacks.
 - 2026-11-05 [feature]: the reel opens on the can's label, lid off, a pack by hand; then dump, a bad packer, back to the pile, ours.

@@ -172,3 +172,28 @@ the sessions before; earlier items are summaries.
 * Stacks only when every part of the build is one family or one part, free to turn, without large flat faces, within the density limit.
 * Reel: the invented brand Hypar, the word "chips" rather than the brand name he used, "Simulated" in the poor packer's caption.
 * The search keeps running up to the time set after stacks are found; a 20 s job takes about 45 s.
+
+## 2026-11-10
+
+Requested / agreed:
+
+* A day of autonomous work on the packer's speed and density, benchmarking against every packer available, Netfabb 2027's trial included.
+* A report for management: benchmarks, the field of commercial and academic packers, packers we could still get access to (Magics named), headroom, algorithms worth trying, hardware limits, C++ against Python with numbers.
+* His view of a speed-against-density control afterwards, preferring not to add a second slider.
+
+Assumed:
+
+* With 20 or more different free parts, one orientation per box shape in the first layout.
+* Netfabb compared with every part free (as its Monte Carlo turns them), same volume, gap and wall gap; layouts judged by our referee.
+* Recommendation in the report: no second slider; named time presets ("Quick look", "Normal", "Overnight").
+* The report is a private claude.ai page with synthetic buckets only; real builds appear only as counts with generic labels.
+
+Not asked:
+
+* Whether results from Netfabb's non-commercial trial may go into a report for management (the report says to check with legal first).
+* Permission to build and run psacking (open-source GPU packer) for the comparison.
+
+Later:
+
+* Mixed sizes with free rotation build lower in Netfabb's Monte Carlo (#24).
+* Magics and HP Universal Build Manager comparisons; an interlocking check.
