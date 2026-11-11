@@ -31,7 +31,7 @@ Little things the maintainer asked for or caught, what the status page shows. Co
 
 | Bugs found | UI tweaks | New features | Direction | Total |
 |---|---|---|---|---|
-| 7 | 17 | 21 | 43 | 88 |
+| 8 | 17 | 21 | 42 | 88 |
 
 ## Sessions
 
