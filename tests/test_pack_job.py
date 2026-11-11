@@ -131,6 +131,7 @@ def test_frame():
 
 
 def _job(parts, s, **kw):
+    kw.setdefault('workers', 1)     # (worker processes finish in any order: no seed repeats them)
     jb = J.Job(parts, s, threads=1, **kw)
     try:
         res = jb.run()
@@ -272,6 +273,9 @@ def test_start_off_grid():
     from pack import compact
     items = [(parts[p.part].mesh, p.matrix) for p in res.placements]
     Ms, c = compact.compact(items, s.vlo, s.vhi, s.gap, s.wall_gap)
+    Ms = [np.array(M, float) for M in Ms]
+    for M in Ms:                    # (a lattice compacts no further: off the grid by a fraction of a cell)
+        M[:3, 3] += (0.37, 0.21, 0.0)
     start = {(p.part, p.copy): M for p, M in zip(res.placements, Ms)}
     jb2 = J.Job(parts, s, threads=1, start=start, max_iterations=0)
     lay = jb2._fresh()

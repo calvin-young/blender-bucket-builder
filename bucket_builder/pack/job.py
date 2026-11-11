@@ -295,7 +295,8 @@ class Job:
             self.log.append('%6.1f s  stacks     failed: %s' % (self.elapsed, type(ex).__name__))
             if os.environ.get('PACK_DEBUG'):
                 raise
-        yield
+        if getattr(self, '_stacks', None) is not None:
+            yield                   # (a layout to show; otherwise the first step places a part)
         for _ in work:
             yield
             if getattr(self, '_stacks', None) is not None and self.budget is not None and self.elapsed >= self.budget:
