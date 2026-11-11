@@ -53,17 +53,20 @@ def _mesh_arrays(obj, depsgraph):
     return v.reshape(-1, 3).astype(np.float64), t.reshape(-1, 3)
 
 
-def effort_settings(effort, seconds, hours, minutes):
-    """Settings for the Effort choice: Quick, Standard (the Time given) or
-    Best (until nothing better turns up for `minutes`, at most `hours`)."""
+def effort_settings(effort, seconds, hours, minutes, overnight_hours=12.0):
+    """Settings for the Effort choice: Quick, Normal (the Time given),
+    Thorough (until nothing better turns up for `minutes`, at most `hours`)
+    or Overnight (until stopped, at most `overnight_hours`)."""
     if effort == 'QUICK':
         return {'time_budget': min(float(seconds), QUICK_SECONDS)}
+    if effort == 'OVERNIGHT':
+        return {'time_budget': float(overnight_hours) * 3600.0, 'restarts': True}
     if effort == 'BEST':
         return {'time_budget': float(hours) * 3600.0, 'stall_time': float(minutes) * 60.0, 'restarts': True}
     return {'time_budget': float(seconds)}
 
 
-QUICK_SECONDS = 10.0
+QUICK_SECONDS = 15.0
 
 
 def quality_settings(percent, keep_low=False):
@@ -151,8 +154,15 @@ class BUCKETBUILDER_OT_pack(Operator):
     selected_only: BoolProperty(name="Selected Only", default=True,
                                 description="Pack the selected parts (otherwise every visible part)")
     improve: BoolProperty(name="Improve Current Layout", default=False,
-                          description="Start from where the parts are now: keep those that fit, place "
-                                      "the others, then look for a better layout")
+                          description="Start from where the parts are now: nudge those that break a rule, "
+                                      "pack again the ones that still do, then look for a better layout")
+    fix: EnumProperty(name="Jiggle", default='NONE',
+                      items=(('NONE', "None", "Pack (or improve) as usual"),
+                             ('FIX', "Jiggle", "Small moves only, until no part collides, sits too close or "
+                              "past a wall: nothing is packed again elsewhere"),
+                             ('FIX_TIGHTEN', "Jiggle and Tighten", "Small moves until every rule is kept, then "
+                              "every part moved down, back and left as far as the gap allows")),
+                      options={'SKIP_SAVE'})
 
     _thread = None
     _timer = None
@@ -166,12 +176,25 @@ class BUCKETBUILDER_OT_pack(Operator):
         """Without a window (scripts, tests): pack in one go."""
         if not self._prepare(context):
             return {'CANCELLED'}
-        try:
-            self._result = self._job.run()
-        finally:
-            self._job.close()
+        if self._mode != 'pack':
+            self._result = self._fix_here()
+        else:
+            try:
+                self._result = self._job.run()
+            finally:
+                self._job.close()
         self._apply(context)
         return {'FINISHED'}
+
+    def _fix_here(self, stop=None):
+        """Jiggle in this process (scripts, or no separate Python)."""
+        from .pack import jiggle
+        from .pack.problem import Placement, Result
+        keys, Ms, _jg = jiggle.fix(self._parts, self._start, self._settings, self._lock,
+                                   self._mode == 'fix_tighten', stop=stop)
+        res = Result()
+        res.placements = [Placement(i, c, np.asarray(M, float), -1) for (i, c), M in zip(keys, Ms)]
+        return res
 
     def invoke(self, context, event):
         if JOB['running']:
@@ -190,7 +213,10 @@ class BUCKETBUILDER_OT_pack(Operator):
         if self._proc is None:
             def work():
                 try:
-                    self._result = self._job.run()
+                    if self._mode != 'pack':
+                        self._result = self._fix_here(stop=lambda: JOB.get('stopping'))
+                    else:
+                        self._result = self._job.run()
                 except Exception as ex:          # reported by the modal handler
                     self._error = ex
 
@@ -212,7 +238,7 @@ class BUCKETBUILDER_OT_pack(Operator):
     def _start_process(self, exe):
         tempdir.sweep_stale()                  # (what an earlier run left if Blender was killed)
         self._dir = tempdir.new_job_folder()
-        worker.write_job(self._dir, self._parts, self._settings, self._lock, self._start)
+        worker.write_job(self._dir, self._parts, self._settings, self._lock, self._start, self._mode)
         addon = os.path.dirname(os.path.abspath(__file__))
         code = ("import sys; sys.path.insert(0, %r); from pack.worker import main; sys.exit(main(%r))"
                 % (addon, self._dir))
@@ -269,10 +295,16 @@ class BUCKETBUILDER_OT_pack(Operator):
                      h=st.pack_cell, z_step=st.pack_z_step,
                      max_density=(st.pack_max_density / 100.0) or None,
                      preset=st.pack_preset.lower(), **quality_settings(st.pack_quality, st.pack_keep_low),
-                     **effort_settings(st.pack_effort, st.pack_time, st.pack_best_hours, st.pack_stall_minutes))
+                     **effort_settings(st.pack_effort, st.pack_time, st.pack_best_hours, st.pack_stall_minutes,
+                                      st.pack_overnight_hours))
         self._settings = s
-        self._start = start if self.improve else None
-        self._job = J.Job(self._parts, s, lock, start=self._start)
+        self._start = start if (self.improve or self.fix != 'NONE') else None
+        self._mode = 'pack' if self.fix == 'NONE' else self.fix.lower()
+        if self._mode != 'pack':
+            s.time_budget = float(st.pack_jiggle_time)
+            self._job = None
+        else:
+            self._job = J.Job(self._parts, s, lock, start=self._start)
         self._result = None
         self._error = None
         self._t0 = time.perf_counter()
@@ -292,6 +324,8 @@ class BUCKETBUILDER_OT_pack(Operator):
             text = "Stopping..."
         elif JOB['phase'] == 'greedy':
             text = "Packing: %d of %d parts, %s%s   (Esc to stop)" % (done, total, _duration(el), left)
+        elif JOB['phase'] in ('jiggling', 'compacting') and self._mode != 'pack':
+            text = "Jiggling: nudging parts until every rule is kept, %s%s   (Esc to stop)" % (_duration(el), left)
         else:
             text = "Improving the layout: %.1f mm high, %s%s   (Esc to stop, the best layout stays)" % (
                 JOB['height'], _duration(el), left)
@@ -347,7 +381,7 @@ class BUCKETBUILDER_OT_pack(Operator):
             self._stop_t = time.perf_counter()
             if self._proc is not None:
                 open(os.path.join(self._dir, 'stop'), 'w').close()
-            else:
+            elif self._job is not None:
                 self._job.cancel = True
             self._status(context)
         if event.type != 'TIMER':
@@ -357,6 +391,9 @@ class BUCKETBUILDER_OT_pack(Operator):
             if not done and self._stop_t is not None and time.perf_counter() - self._stop_t > 5.0:
                 self._proc.kill()                # (it did not stop at the next part: stop it now)
             self._show_progress(context)
+        elif self._job is None:                  # (jiggling in a thread)
+            self._take_state('jiggling', 0.0, self._settings.time_budget, time.perf_counter() - self._t0)
+            done = not self._thread.is_alive()
         else:
             jb = self._job
             JOB['done'] = jb.progress[0]
@@ -431,9 +468,9 @@ class BUCKETBUILDER_OT_pack(Operator):
         rep = metrics.measure(res.items(self._parts) + [('locked', m, M) for m, M in self._lock],
                               self._vlo, self._vhi)              # (the whole build: locked parts too)
         total = sum(len(objs) for objs in self._objects)
-        msg = "Packed %d of %d parts in %.1f s: height %.1f mm, density %.1f %%" % (
-            len(res.placements), total, time.perf_counter() - self._t0,
-            rep.height, 100.0 * (rep.density or 0.0))
+        msg = "%s %d of %d parts in %.1f s: height %.1f mm, density %.1f %%" % (
+            "Jiggled" if self._mode != 'pack' else "Packed", len(res.placements), total,
+            time.perf_counter() - self._t0, rep.height, 100.0 * (rep.density or 0.0))
         first = JOB.get('first_height')
         if first and first > rep.height + 0.05:
             msg += " (first layout %.1f mm)" % first
@@ -586,6 +623,8 @@ def badge_state(now=None):
         if JOB.get('phase', 'greedy') != 'greedy':
             b = JOB.get('budget') or 0.0
             frac = 1.0 - (JOB['time_left'] or 0.0) / b if b > 0 else None
+            if JOB.get('phase') == 'jiggling':
+                return ("Jiggling parts into place", left + "Esc to stop", frac, ACCENT)
             return ("Improving the layout: %.1f mm" % JOB['height'], left + "Esc keeps the best", frac, ACCENT)
         return ("Packing: %d of %d parts" % (done, total), left + "Esc to stop", done / total, ACCENT)
     if TIMING.get('proc') is not None:

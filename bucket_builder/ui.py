@@ -493,7 +493,9 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
             else:
                 b = job.get('budget') or 0.0
                 frac = 1.0 - (job['time_left'] or 0.0) / b if b > 0 else 0.0
-                row.progress(factor=frac, type='BAR', text="Improving: %.1f mm%s" % (job['height'], left))
+                text = ("Jiggling%s" % left) if job.get('phase') == 'jiggling' else \
+                    ("Improving: %.1f mm%s" % (job['height'], left))
+                row.progress(factor=frac, type='BAR', text=text)
             row = layout.row()
             row.operator("bucketbuilder.pack_stop", icon='CANCEL')
         else:
@@ -507,6 +509,17 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
             op = row.operator("bucketbuilder.pack", icon='FILE_REFRESH', text="Improve Current Layout")
             op.selected_only = bool(sel)
             op.improve = True
+            op.fix = 'NONE'
+            row = layout.row(align=True)
+            op = row.operator("bucketbuilder.pack", icon='MOD_NOISE', text="Jiggle")
+            op.selected_only = bool(sel)
+            op.improve = False
+            op.fix = 'FIX'
+            op = row.operator("bucketbuilder.pack", text="Jiggle & Tighten")
+            op.selected_only = bool(sel)
+            op.improve = False
+            op.fix = 'FIX_TIGHTEN'
+            row.prop(st, "pack_jiggle_time", text="")
         layout.template_list("BUCKETBUILDER_UL_pack_parts", "", bpy.data, "meshes", context.window_manager,
                              "bucket_builder_pack_part", rows=3, maxrows=6)
         col = _split(layout)
@@ -518,6 +531,8 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
         elif st.pack_effort == 'BEST':
             col.prop(st, "pack_best_hours")
             col.prop(st, "pack_stall_minutes")
+        elif st.pack_effort == 'OVERNIGHT':
+            col.prop(st, "pack_overnight_hours")
         col.prop(st, "pack_mode")
         sub = col.column(align=True)
         sub.active = st.pack_mode == 'Z' or any(o.bucket_builder_pack_mode == 'Z' for o in sel)

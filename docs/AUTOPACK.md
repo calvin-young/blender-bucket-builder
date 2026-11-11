@@ -711,6 +711,15 @@ and the referee. They are listed in the solver dropdown; `auto` picks one
 > can be stopped. `Settings.stall_time`, `restarts`; CLI `--effort`,
 > `--stall`.
 >
+> Renamed and extended 2026-11-11 (the owner: a long run should stop by
+> itself once it can't do better, not ask for 15 more minutes again and
+> again): Quick (15 s), Normal (was Standard, the Time given, 1 min by
+> default), Thorough (was Best) and Overnight (restarts, no stall rule, until
+> stopped, the build at its bound, or the Overnight Limit, 12 h by default;
+> the limit keeps the final compaction to exact gaps, which an unbounded
+> run would never reach). The identifiers QUICK / STANDARD / BEST stay, so
+> saved files keep their choice; CLI `--effort overnight`.
+>
 > **Lattices first** (1.4.0): when parts with 20 copies or more, and
 > families, are nine tenths of the copies, their lattice probes (with at
 > most 12 turned ones, within a quarter of the time) and a lattice layout

@@ -1277,6 +1277,35 @@ class Job:
                 return k
         return None
 
+    def _jiggle_start(self):
+        """Small moves first (pack.jiggle) for a start layout that breaks a
+        rule, so a part a little too close is nudged rather than taken out
+        and packed again elsewhere (_load then takes out what is left)."""
+        if not self.s.jiggle:
+            return None
+        from . import jiggle, referee
+        qs = [q for q in self.copies if q in self.start]
+        items = [(self.parts[q[0]].mesh, np.asarray(self.start[q], float)) for q in qs]
+        if not items:
+            return None
+        bad = referee.offenders([('l', m, M) for m, M in self.locked] + [('p', m, M) for m, M in items],
+                                self.s.vlo, self.s.vhi, self.s.gap, self.s.wall_gap, len(self.locked))
+        if not bad:
+            return None
+        seconds = self.s.jiggle if self.budget is None else min(self.s.jiggle, 0.3 * self.budget)
+        Ms, jg, _n = jiggle.mend(items, self.s.vlo, self.s.vhi, self.s.gap, self.s.wall_gap, self.locked,
+                                 seconds=seconds)
+        after = referee.offenders([('l', m, M) for m, M in self.locked]
+                                  + [('p', m, M) for (m, _), M in zip(items, Ms)],
+                                  self.s.vlo, self.s.vhi, self.s.gap, self.s.wall_gap, len(self.locked))
+        if len(after) >= len(bad):          # (no better: the parts are packed again from where they were)
+            return '%6.1f s  jiggle     %d parts broke a rule; small moves did not help' % (self.elapsed, len(bad))
+        self.start = dict(self.start)
+        for q, M in zip(qs, Ms):
+            self.start[q] = M
+        return '%6.1f s  jiggle     %d parts broke a rule, %d moves, %d still do' % (
+            self.elapsed, len(bad), jg.moves, len(after))
+
     def _load(self, lay, start):
         """Keep the given placements that make a valid layout (the exact
         engine decides: of a pair too close the higher part goes, as does a
@@ -1315,9 +1344,12 @@ class Job:
         self._lb = self.lower_bound()
         self._wall_turns()
         if self.start:
+            note = self._jiggle_start()
             left = self._load(self.cur, self.start)
             self.log.append('%6.1f s  start      %d parts kept where they are, %d to place'
                             % (self.elapsed, len(self.cur.recs), len(left)))
+            if note:
+                self.log.append(note)
             yield from self._build(self.cur, left, self._first_allowed(), count=True)
             self._consider(self.cur, 'current', {})
         else:

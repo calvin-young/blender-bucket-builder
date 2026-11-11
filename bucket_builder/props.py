@@ -282,12 +282,14 @@ class BucketBuilderSettings(PropertyGroup):
         description="Voxel size of the packer in millimeters; smaller packs tighter and slower")
     pack_effort: EnumProperty(
         name="Effort", default='STANDARD',
-        items=(('QUICK', "Quick", "The first layout and a few seconds of looking for better ones: "
-                "for a day's work that just has to go in"),
-               ('STANDARD', "Standard", "Looks for better layouts for the Time given"),
-               ('BEST', "Best", "Keeps looking, starting afresh now and then, until nothing better has "
-                "turned up for a while (Give Up After), at most for the Time Limit: for a build that "
-                "will be printed again and again")),
+        items=(('QUICK', "Quick", "The first layout and a few seconds of looking for better ones (15 s): "
+                "for a quick look, or a day's work that just has to go in"),
+               ('STANDARD', "Normal", "Looks for better layouts for the Time given (1 minute by default)"),
+               ('BEST', "Thorough", "Keeps looking, starting afresh now and then, and stops by itself once "
+                "nothing better has turned up for a while (Give Up After), at most for the Time Limit: for "
+                "a build that matters"),
+               ('OVERNIGHT', "Overnight", "Keeps looking until it is stopped or the build cannot get lower, "
+                "at most for the Overnight Limit: leave it running and take the best layout in the morning")),
         description="How hard the packer tries. It keeps the best layout found so far, so it can be "
                     "stopped at any time")
     pack_time: FloatProperty(
@@ -296,10 +298,16 @@ class BucketBuilderSettings(PropertyGroup):
                     "(it stops sooner when the build cannot get lower). 0: the first layout only")
     pack_best_hours: FloatProperty(
         name="Time Limit", default=2.0, min=0.05, soft_max=48.0, precision=2,
-        description="Effort Best: the longest the packer may run, in hours")
+        description="Effort Thorough: the longest the packer may run, in hours")
+    pack_jiggle_time: FloatProperty(
+        name="Jiggle Time", default=60.0, min=1.0, soft_max=600.0, precision=0, subtype='TIME_ABSOLUTE',
+        description="The longest Jiggle may run, in seconds (it stops sooner once every rule is kept)")
+    pack_overnight_hours: FloatProperty(
+        name="Overnight Limit", default=12.0, min=0.1, soft_max=72.0, precision=1,
+        description="Effort Overnight: the longest the packer may run, in hours")
     pack_stall_minutes: FloatProperty(
         name="Give Up After", default=10.0, min=0.5, soft_max=120.0, precision=1,
-        description="Effort Best: stop once no better layout has turned up for this many minutes")
+        description="Effort Thorough: stop once no better layout has turned up for this many minutes")
     pack_preset: EnumProperty(
         name="Goal", default='OVERNIGHT',
         items=(('OVERNIGHT', "Big Parts First", "Fit as much as possible, big parts first: when not "

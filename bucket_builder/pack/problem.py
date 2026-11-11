@@ -62,6 +62,8 @@ class Settings:
                                       # out or the build is close to the top of the volume
     stall_time: float = None          # seconds: stop once no better layout has turned up for this long
     restarts: bool = False            # the improvement loop also starts afresh now and then (Effort: Best)
+    jiggle: float = 30.0              # seconds, at most, of small moves that mend a start layout before
+                                      # parts that still break a rule are taken out and packed again (0: none)
 
     def __post_init__(self):
         if self.vlo is None or self.vhi is None:

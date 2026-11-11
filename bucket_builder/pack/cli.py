@@ -32,7 +32,9 @@ def _quality(args):
 
 def _effort(args):
     if args.effort == 'quick':
-        return {'time_budget': min(args.time, 10.0)}
+        return {'time_budget': min(args.time, 15.0)}
+    if args.effort == 'overnight':
+        return {'time_budget': args.time, 'restarts': True}
     if args.effort == 'best':
         return {'time_budget': args.time, 'stall_time': args.stall * 60.0, 'restarts': True}
     return {'time_budget': args.time}
@@ -83,9 +85,9 @@ def build_parser():
     k.add_argument('--seed', type=int, default=0, help='of the improvement loop (0)')
     k.add_argument('--workers', type=int, default=None, help='processes (default: up to 8, two cores left)')
     k.add_argument('--no-compact', action='store_true', help='skip the final move to the exact gaps')
-    k.add_argument('--effort', choices=('quick', 'standard', 'best'), default='standard',
-                   help='quick: --time at most 10 s; best: until nothing better for --stall minutes '
-                        '(default 10), at most --time')
+    k.add_argument('--effort', choices=('quick', 'standard', 'best', 'overnight'), default='standard',
+                   help='quick: --time at most 15 s; best (Thorough): until nothing better for --stall '
+                        'minutes (default 10), at most --time; overnight: restarts, for all of --time')
     k.add_argument('--stall', type=float, default=10.0, help='minutes, with --effort best')
     k.add_argument('--quality', type=float, default=50.0,
                    help='part quality against packing density, 0 - 100 (default 50; see docs/PRINT_QUALITY.md)')

@@ -30,11 +30,11 @@ from .problem import Part, Settings
 
 SETTINGS = ('gap', 'wall_gap', 'h', 'coarse', 'phases', 'z_step', 'max_density', 'layer_cap',
             'layer_weight', 'candidates', 'time_limit', 'time_budget', 'preset', 'seed', 'compact', 'spread_z',
-            'stall_time', 'restarts', 'flat_rules', 'flat_pair_weight', 'flat_wall_weight',
+            'stall_time', 'restarts', 'jiggle', 'flat_rules', 'flat_pair_weight', 'flat_wall_weight',
             'flat_top_weight', 'spread_scale', 'height_far', 'height_top', 'height_band', 'near_top_extra')
 
 
-def write_job(folder, parts, settings, locked=(), start=None):
+def write_job(folder, parts, settings, locked=(), start=None, mode='pack'):
     """Write what a worker needs: parts (meshes shared by identity),
     settings, locked (mesh, 4 x 4) pairs, and optionally the layout to start
     from ({(part, copy): 4 x 4}).  Geometry and numbers only: the worker
@@ -59,7 +59,7 @@ def write_job(folder, parts, settings, locked=(), start=None):
         st.append([int(i), int(c)])
     np.savez(os.path.join(folder, 'job.npz'), **arrays)
     job = {'parts': spec, 'locked': len(locked), 'vlo': list(map(float, settings.vlo)),
-           'vhi': list(map(float, settings.vhi)), 'start': st,
+           'vhi': list(map(float, settings.vhi)), 'start': st, 'mode': mode,
            'settings': {k: getattr(settings, k) for k in SETTINGS}}
     with open(os.path.join(folder, 'job.json'), 'w') as f:
         json.dump(job, f)
@@ -101,6 +101,8 @@ def main(folder):
         locked = [(Mesh(z['lv%d' % n], z['lt%d' % n], 'locked'), z['lM%d' % n]) for n in range(job['locked'])]
         start = {(i, c): z['sM%d' % n] for n, (i, c) in enumerate(job.get('start', []))} or None
         s = Settings(vlo=job['vlo'], vhi=job['vhi'], **job['settings'])
+        if job.get('mode') in ('fix', 'fix_tighten'):
+            return _fix(folder, state, parts, s, locked, start, job['mode'] == 'fix_tighten', t0)
         jb = J.Job(parts, s, locked, start=start)
         stop = os.path.join(folder, 'stop')
         last = [0.0, -1, -1]
@@ -143,6 +145,42 @@ def main(folder):
         state['finished'] = True
         _write(folder, state)
         return 1
+    return 0
+
+
+def _fix(folder, state, parts, s, locked, start, tighten, t0):
+    """Jiggle only (pack.jiggle.fix): the start layout mended by small
+    moves, tightened to the exact gaps with `tighten`.  No part is taken
+    out; parts that could not be mended stay where they ended up."""
+    from . import jiggle
+    stop = os.path.join(folder, 'stop')
+    state['phase'] = 'jiggling'
+    state['budget'] = s.time_budget
+    keys = sorted(start or {})
+    last = [0.0]
+
+    def report(jg, Ms=None, final=False):
+        now = time.perf_counter()
+        if not final and now - last[0] < 0.3:
+            return
+        last[0] = now
+        Ms = jg.M[:jg.n] if Ms is None else Ms
+        state['placements'] = [[i, c, -1, np.asarray(M).ravel().tolist()] for (i, c), M in zip(keys, Ms)]
+        state['version'] += 1
+        state['seconds'] = now - t0
+        left = jg.total()
+        state['log'] = ['%6.1f s  jiggle     %d moves, %s' % (
+            now - t0, jg.moves, '%.2f mm of gap still missing' % left if left > jiggle.TOL else 'every rule kept')]
+        _write(folder, state)
+
+    keys, Ms, jg = jiggle.fix(parts, start or {}, s, locked, tighten, on_step=report,
+                              stop=lambda: os.path.exists(stop))
+    report(jg, Ms, final=True)
+    bad = sum(1 for j in range(jg.n) if jg.penalty(j) > jiggle.TOL)
+    if bad:
+        state['log'].append('%d parts still break a rule: Improve Current Layout packs them again' % bad)
+    state['finished'] = True
+    _write(folder, state)
     return 0
 
 

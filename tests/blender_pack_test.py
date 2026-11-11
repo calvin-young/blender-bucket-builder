@@ -121,6 +121,28 @@ def main():
     print('   (', sum(1 for o in objs[2:] if np.allclose(np.array(o.matrix_world), keep[o.name])),
           'of', len(objs) - 2, 'others did not move)')
 
+    # Jiggle: a part pushed a little into its neighbor is nudged back; nothing is packed again
+    a = objs[2]
+    near = min(objs[3:], key=lambda o: (o.matrix_world.translation - a.matrix_world.translation).length)
+    d = near.matrix_world.translation - a.matrix_world.translation
+    a.matrix_world.translation += d.normalized() * 2.5
+    bpy.context.view_layer.update()
+    mon = settle()
+    s0 = mon.status()
+    check(s0['collisions'] + s0['clearance'] > 0, 'a part pushed into its neighbor breaks a rule', s0)
+    keep = {o.name: np.array(o.matrix_world) for o in objs}
+    st.pack_jiggle_time = 60.0
+    r = bpy.ops.bucketbuilder.pack(selected_only=False, fix='FIX')
+    print('  ', st.pack_last)
+    check(r == {'FINISHED'} and st.pack_last.startswith('Jiggled 17 of 17'), 'Jiggle keeps every part', st.pack_last)
+    mon = settle()
+    s = mon.status()
+    check(s['collisions'] == 0 and s['clearance'] == 0 and s['partly_out'] == 0 and s['outside'] == 0
+          and s['near_wall'] == 0, 'Jiggle mends it', s)
+    moved = [float(np.linalg.norm(np.array(o.matrix_world)[:3, 3] - keep[o.name][:3, 3])) for o in objs]
+    check(max(moved) < 15.0, 'with small moves only (largest %.1f mm, %d parts moved)'
+          % (max(moved), sum(1 for m in moved if m > 1e-6)))
+
     # packing a selection packs it around what is already in the volume
     keep = {o.name: np.array(o.matrix_world) for o in objs}
     bpy.ops.mesh.primitive_cube_add(size=25, location=(0, 0, 0))
