@@ -65,6 +65,8 @@ cannot be downloaded.
     bucket_builder/          the add-on (this folder is what gets zipped)
       core/                  NumPy engine: triangle tests, trees, the collision world
       pack/                  the auto packer and the build metrics (NumPy only; runs in its own process)
+      pack/native/           compiled voxel steps (bbcore.c, loaded with ctypes; .so and .dll are committed,
+                             rebuilt by tools/build_native.sh; NumPy is the fallback)
       packing.py             the Pack operator and its job folder
       monitor.py             mirrors the Blender scene into the engine (handlers, timer, workers)
       overlay.py             viewport drawing and the wording of the verdict
@@ -110,7 +112,10 @@ lives outside those two folders, and **every time a feature of the
 engines needs something only Blender has, say so to the owner and note it
 under "Blender dependencies" below**, so the split can be planned.
 
-Blender dependencies of the engines so far: none. The engines take
+Blender dependencies of the engines so far: none. Since 2026-11-11 `pack/`
+may load its own compiled library (`pack/native`, plain C through `ctypes`,
+one file per platform); results are identical with or without it
+(`tests/test_pack_native.py`), and `BB_NATIVE=0` turns it off. The engines take
 NumPy arrays (vertices, triangles, 4 x 4 matrices) and return results;
 the add-on reads meshes from Blender (`monitor.py`, `packing.py`) and
 runs the packer in Blender's own Python (`packing.python_exe`), which is

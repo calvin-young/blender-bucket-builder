@@ -73,7 +73,7 @@ def time_corr(xp, fft, kw, shape, dtype, reps=5):
 # Share of the whole run each step takes (from a laptop's run of 1.3.92), for
 # the progress shown in Blender: lines "@@progress <fraction>" in the output,
 # which the add-on takes out of the text it copies.
-WEIGHT = {'fft': 4.0, 'threads': 1.0, 'bureau-day': 20.0, 'pringles': 40.0, 'figurines': 10.0,
+WEIGHT = {'fft': 4.0, 'threads': 1.0, 'native': 50.0, 'bureau-day': 20.0, 'pringles': 40.0, 'figurines': 10.0,
           'sockets': 5.0, 'giant': 8.0}
 _done = [0.0, 1.0]
 
@@ -161,6 +161,39 @@ def greedy_table():
         progress(name)
 
 
+def native_table():
+    """The first layout of two buckets with the compiled voxel steps and with
+    NumPy alone: the same layout, and how much sooner."""
+    from . import job as J, native, synthetic
+    from .problem import Settings
+    print()
+    lib = native.lib
+    if lib is None:
+        print('Compiled voxel steps: no library for this platform (NumPy only)')
+        progress('native')
+        return
+    print('Compiled voxel steps against NumPy (first layout, one process)')
+    print('%-11s %12s %12s %8s  %s' % ('bucket', 'compiled', 'NumPy', 'faster', 'same layout'))
+    every = {**synthetic.buckets(), **synthetic.library()}
+    for name in ('one-offs', 'bureau-day'):
+        d, parts, kw = every[name]
+        out = []
+        for use in (lib, None):
+            native.lib = use
+            try:
+                s = Settings(gap=kw.get('gap', 2.0), max_density=None, time_budget=None)
+                jb = J.Job(parts, s, workers=1, threads=1, max_iterations=0, seed=1)
+                t = time.perf_counter()
+                res = jb.run()
+                out.append((time.perf_counter() - t, [(p.part, p.copy, p.orientation) for p in res.placements]))
+                jb.close()
+            finally:
+                native.lib = lib
+        print('%-11s %10.1f s %10.1f s %7.1fx  %s' % (name, out[0][0], out[1][0], out[1][0] / out[0][0],
+                                                       'yes' if out[0][1] == out[1][1] else 'NO'), flush=True)
+        progress('native')
+
+
 def main(args=None):
     if args is None:
         args = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else sys.argv[1:]
@@ -180,10 +213,11 @@ def main(args=None):
         print('GPU: none usable (%s)' % type(ex).__name__)
     print()
     greedy = '--greedy' in args
-    _done[1] = WEIGHT['fft'] + WEIGHT['threads'] + (sum(v for k, v in WEIGHT.items()
-                                                        if k not in ('fft', 'threads')) if greedy else 0.0)
+    _done[1] = WEIGHT['fft'] + WEIGHT['threads'] + 2 * WEIGHT['native'] + (
+        sum(v for k, v in WEIGHT.items() if k not in ('fft', 'threads', 'native')) if greedy else 0.0)
     fft_table()
     thread_table()
+    native_table()
     if greedy:
         greedy_table()
 

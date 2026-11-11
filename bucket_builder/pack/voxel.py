@@ -34,6 +34,8 @@ try:                                    # optional: faster flood fill and dilati
 except Exception:                       # pragma: no cover - depends on the install
     _ndi = None
 
+from . import native as _native
+
 CHUNK = 1 << 18
 EDT_FROM = 8.0      # cells: below this radius shifted copies beat SciPy's distance transform
 
@@ -82,6 +84,9 @@ def _mark(grid, P, origin, h):
     """Mark the bounding-box cells of small triangles P (edges <= h)."""
     if not P.shape[0]:
         return
+    if P.shape[1] == 3 and _native.lib is not None:
+        _native.mark_tris(grid, P, origin, h)
+        return
     if P.shape[1] == 3:
         a, b, c = P[:, 0], P[:, 1], P[:, 2]        # (three minimums: a reduction over axis 1 is slow)
         pmin, pmax = np.minimum(np.minimum(a, b), c), np.maximum(np.maximum(a, b), c)
@@ -100,6 +105,9 @@ def _mark_boxes(grid, pmin, pmax, origin, h, normals=None):
     its inner side (below a face looking up, above one looking down).  So a
     part whose size is a whole number of cells takes that many, not one more
     (a 40 mm block, 40 cells; a part as tall as the volume fits it)."""
+    if _native.lib is not None:
+        _native.mark_boxes(grid, pmin, pmax, origin, h, normals)
+        return
     fmin = (pmin - origin) / h
     fmax = (pmax - origin) / h
     if normals is None:
@@ -149,9 +157,15 @@ def surface_grid(verts, tris, A, h, pad, align='grid'):
     t = np.asarray(tris)
     for s in range(0, t.shape[0], CHUNK):
         P = V[t[s:s + CHUNK]]
-        for piece in _subdivide(P, h):
+        for piece in (_native_pieces(P, h) if _native.lib is not None else _subdivide(P, h)):
             _mark(grid, piece, origin, h)
     return grid, origin
+
+
+def _native_pieces(P, h):
+    """_subdivide's pieces from the compiled version, in batches."""
+    for s in range(0, P.shape[0], CHUNK // 16):
+        yield _native.subdivide(P[s:s + CHUNK // 16], h)
 
 
 class Soup:
@@ -170,6 +184,15 @@ class Soup:
         parts, n = [], 0
         self.ok = True
         for s in range(0, t.shape[0], CHUNK):
+            if _native.lib is not None:
+                piece = _native.subdivide(V[t[s:s + CHUNK]], h, max(self.MAX_PIECES - n, 1))
+                if piece is None:
+                    self.ok = False
+                    parts = []
+                    break
+                parts.append(piece)
+                n += piece.shape[0]
+                continue
             for piece in _subdivide(V[t[s:s + CHUNK]], h):
                 parts.append(piece)
                 n += piece.shape[0]
@@ -212,6 +235,14 @@ def surface_grid_soup(soup, R, h, pad, align='grid'):
     qt = _quarter_turn(np.asarray(R, np.float64)) if getattr(soup, 'pmin', None) is not None else None
     if qt is not None and len(soup.verts):
         axes, signs = qt
+        if _native.lib is not None:
+            W = soup.verts @ np.asarray(R, np.float64).T
+            lo, hi = W.min(axis=0), W.max(axis=0)
+            origin = _origin(lo, h, pad, align)
+            dims = (np.floor((hi - origin) / h).astype(np.int64) + 1 + pad)
+            grid = np.zeros(tuple(int(d) for d in dims), dtype=bool)
+            _native.mark_boxes_turned(grid, soup.pmin, soup.pmax, soup.normals, axes, signs, origin, h)
+            return grid, origin
         a, b = soup.pmin[:, axes], soup.pmax[:, axes]
         neg = signs < 0
         pmin = np.where(neg, -b, a)
@@ -301,6 +332,8 @@ def _propagate(empty, out, axis):
 def outside(blocked):
     """Empty cells connected (6-neighbors) to the grid's border through empty
     cells.  The border must be empty."""
+    if _native.lib is not None:
+        return _native.outside(blocked)
     empty = ~blocked
     if _ndi is not None:
         lab, _ = _ndi.label(empty)
