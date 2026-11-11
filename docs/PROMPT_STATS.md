@@ -31,7 +31,7 @@ Little things the maintainer asked for or caught, what the status page shows. Co
 
 | Bugs found | UI tweaks | New features | Direction | Total |
 |---|---|---|---|---|
-| 7 | 16 | 20 | 40 | 83 |
+| 7 | 17 | 21 | 43 | 88 |
 
 ## Sessions
 
@@ -41,6 +41,7 @@ line counts once, in the session it came up in.
 
 | Date | Tool and model | Prompts | Steering lines |
 |---|---|---|---|
+| 2026-11-11 | Claude Code (workstation), Opus 5.5 | 1 | 5 |
 | 2026-11-10 | Claude Code (workstation), Opus 5.5 | 4 | 3 |
 | 2026-11-05 | Claude Code (workstation), Opus 5.5 | 5 | 13 |
 | before 2026-10-14 | Claude Code, Opus | not counted | 3 |
@@ -55,6 +56,11 @@ What the owner decided, corrected, taught, tested or changed in scope that
 the work would not have done on its own, newest first. `docs/TALLY.md` has
 the detail.
 
+- 2026-11-11 [direction]: "Thorough" should more or less guarantee the best build without restarting it again and again; Overnight runs until stopped.
+- 2026-11-11 [direction]: test the compiled-code assumption for real (Windows, Blender 5.2) before production plans; use a GPU when there is one, the laptop being the worst case.
+- 2026-11-11 [feature]: Jiggle: fix a hand pack's few interferences with small moves, or keep optimizing from the current layout.
+- 2026-11-11 [ui]: the report: screenshots per bucket, every packer in one filterable table, collapsible sections, a short summary straight into graphics.
+- 2026-11-11 [bugs]: the figurines beat their "floor": it was computed for upright parts while the comparison let them turn.
 - 2026-11-10 [direction]: a day of autonomous packer work: find weaknesses, fix them, benchmark against every packer available, Netfabb's trial included.
 - 2026-11-10 [direction]: a report for his management that places the packer against the industry and research, names packers we could still get, and quantifies headroom, hardware limits and what compiled code would buy.
 - 2026-11-10 [direction]: asked whether a speed-against-density control makes sense, preferring not to add a second slider.

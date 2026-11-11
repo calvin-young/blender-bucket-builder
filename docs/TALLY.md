@@ -197,3 +197,34 @@ Later:
 
 * Mixed sizes with free rotation build lower in Netfabb's Monte Carlo (#24).
 * Magics and HP Universal Build Manager comparisons; an interlocking check.
+
+## 2026-11-11
+
+Requested / agreed:
+
+* Read the report as the owner and push the next steps: performance, reporting, more benchmarks.
+* psacking (and CakeForge and anything else reachable): go.
+* A C++ build for Windows 11 and Blender 5.2 to test the speed assumptions, on the VM and his laptop.
+* Effort presets; "Thorough" instead of a 15-minute Overnight that has to be restarted, plus an Overnight that runs until stopped.
+* Use the GPU where there is one; his laptop is the worst case.
+* Report: screenshots per bucket, all packers in one filterable table, collapsible detail, a much shorter summary.
+* Jiggle: small moves that mend a hand-packed or near-valid layout, or keep improving from it.
+
+Assumed:
+
+* Plain C through ctypes rather than a C++ Python extension: one file per platform for every Blender and Python version, NumPy as the fallback.
+* The `.so` / `.dll` committed to the repo so builds are reproducible from a checkout.
+* Thorough = the old Best (stops once nothing better for 10 min, at most 2 h); Overnight = 12 h limit, no stall rule (an unbounded run would never reach the final compaction).
+* Jiggle as two buttons (Jiggle, Jiggle & Tighten) beside Improve Current Layout, with its own time (60 s default); Improve Current Layout jiggles first.
+* GPU: an optional CuPy path for measuring only; production GPU through OpenCL or Vulkan later (#25).
+* Floors in the report computed with free rotation, over our 24 turns.
+* Netfabb numbers stay out of the public repo until the trial-terms question is answered.
+
+Not asked:
+
+* Whether to restart the workstation with the GPU reserved for the VM to test the Windows DLL there (the freeze risk says only with the owner near); the laptop test covers Windows instead.
+
+Later:
+
+* #25 whole search on the GPU, #26 coarse cell per bucket, #27 jiggle push moves, #24 mixed sizes with free rotation.
+* Netfabb True Shape through its window; Magics; HP Universal Build Manager.

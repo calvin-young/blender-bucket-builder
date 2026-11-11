@@ -441,6 +441,23 @@ until Calvin decides whether the non-commercial trial's numbers may be
 published. Weakness found: mixed sizes with free rotation
 (#24), where Netfabb's Monte Carlo builds lower.
 
+**2026-11-11 (1.5.3).** `pack/native`: the voxel steps in C (cut,
+mark, quarter turns, span flood fill), loaded with ctypes, `.so` and
+`.dll` committed (`tools/build_native.sh`, mingw-w64 for Windows);
+identical grids and layouts (`tests/test_pack_native.py`); first layout
+of one-offs 80 -> 36 s in one process. Measure Packer Speed compares it
+with NumPy (the owner's laptop numbers not in yet). Jiggle
+(`pack/jiggle.py`, buttons Jiggle / Jiggle & Tighten, worker modes `fix`
+/ `fix_tighten`, `Settings.jiggle` seconds before Improve Current Layout
+re-places offenders); moved parts held to gap + 0.0001 mm and checked by a
+fresh world (`mend`); parts more than 20 mm wrong are left for packing
+again. Effort Quick 15 s / Normal / Thorough / Overnight (12 h limit).
+Optional CuPy path for the coarse search (`bucket._cp`, not in Blender):
+1.3 - 1.6x end to end, transforms 150 - 250x (#25 for the whole search on
+the GPU). Coarse cell per bucket: #26. Jiggle push moves: #27. psacking
+(MIT, built in `~/data/packbench/ext`) packs far lower density and
+slower here; CakeForge, listed in the first report, does not exist.
+
 Last updated: 2026-10-21 (session 4).
 
 * The repository is `calvin-young/blender-bucket-builder` (moved and renamed
