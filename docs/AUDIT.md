@@ -50,29 +50,34 @@ from a script while the monitor is paused, then switches it on. That path
 (pause, resume, `resync`) reads right on paper (`monitor.py:583-606`,
 `681-750`), which is exactly why it needs a run in Blender to settle.
 
-**Fix, as a spec (three parts, do all three):**
+**Also not reproduced in Blender (2026-11-13, background mode, the add-on
+as installed).** The 100 chips at their final placement, units in mm
+(scale 0.001), volume centered, checks on, then clearance 2.99 mm: 0
+warnings. The same after switching the checks off and on (the monitor
+pauses and drops its fitted trees), after moving every chip away and back
+while paused, and after twelve live drags of chips 52 and 54 ending at
+their final placement. The meshes in `good.3mf` are identical to the ones
+the film builds, so it is not a data mix-up either.
 
-1. **A reproduction in Blender**, `tests/blender_film_test.py`: build 100
-   small parts, move all of them from a script over several frames with both
-   switches off, switch the checks on, switch clearance on, let the timer
-   settle (drive `monitor._tick_scene` by hand: timers do not run in
-   background mode). Then compare, for every object, the world's matrix
-   (`World.O_T`, `O_L`) with `matrix_world`, and the verdict with
-   `pack.referee`. Run it with the film's real data once
-   (`demo/chips/shots.py`, last segment, clearance on): if the matrices
-   differ, the monitor is at fault; if they agree and 1.95 still shows, the
-   engine is, and the dump names the triangles.
-2. **A self-check when the monitor comes to rest.** When nothing is pending
-   (the moment the badge turns to its final state), compare every mirrored
-   matrix with the evaluated object's and every mesh signature with the
-   stored one; on a difference call `set_matrix` / re-read, count it in
-   `Monitor.fixups`, and show the count in Performance > Copy Report. It is
-   one pass over the objects, microseconds at 600 parts. This turns a silent
-   wrong verdict into a self-healing, counted event, whatever the cause.
-3. **A verdict is never drawn from a result older than its parts.** Give
-   each `PairResult` the two object versions it was computed from, and have
-   `Monitor.problems()` skip (and re-queue) a result whose versions are not
-   the current ones. Cheap, and it closes the whole class.
+Two of the safeguards this section first proposed exist already: the
+monitor compares every matrix with the scene at least every 1.5 s when
+quiet (`monitor.py:1701`, `resync`), and a pair's result is dropped on any
+change of either part (`world.py:1311-1354`).
+
+**What is left, in order:**
+
+1. **Run the film's last segments in a window** (`tests/gui_on_xvfb.sh`
+   with `demo/chips/shots.py`), clearance on, and when a warning appears
+   dump `World.O_T` / `O_L` for both parts, their meshes' hashes, and the
+   result's points and triangles, next to `matrix_world`. Only a window
+   has what background mode lacks: the real timer, redraws between slices
+   (`warm()` redraws while the checks switch on), and the order in which
+   Blender delivers updates.
+2. **If the matrices agree there, the engine is at fault** and the dump
+   names the two triangles: add them to `tests/test_world.py` as a case.
+   If they disagree, the monitor missed an update between two resyncs:
+   find which handler path, and add a window test for it.
+3. Until then, #19 stays open, labelled as not reproduced.
 
 Why this ranks first: the same mechanism that shows a false warning can hide
 a real one, and a missed collision is the one error this tool must not make.
@@ -122,9 +127,11 @@ line for line (`referee.py:24-45` and `66-83`); make it call it.
 
 **A2. The live check has no end-to-end test of "the world equals the
 scene"** (section 1). Every Blender test checks verdicts on scenes the test
-built through the normal path. None moves many objects by script with the
-checks off, or compares the mirror with the scene afterwards. The film found
-#19 by accident. *Fix:* section 1, parts 1 and 2.
+built through the normal path; none compares the mirror with the scene
+after many scripted moves with the checks switched off and on. The film
+found #19 by accident. *Fix:* turn the reproduction script of section 1
+into `tests/blender_mirror_test.py` (it passes today) and run it in a
+window too.
 
 **A3. Packing results cannot be repeated** (section 2). *Fix:*
 `Settings.repeatable`.
@@ -213,7 +220,7 @@ It changes the layout in one place, and fixes A5 on the way.
 
 ## 5. What I would do next, in order
 
-1. Section 1, parts 1 - 3 (#19). One day, most of it the Blender test.
+1. Section 1: the film in a window with a dump (#19).
 2. A1: the slow independent checker, and run it over the benchmark layouts.
 3. D5 (mechanical; hand it to a cheaper model with this section as the spec).
 4. `Settings.repeatable`, then rerun the benchmark tables with it.
