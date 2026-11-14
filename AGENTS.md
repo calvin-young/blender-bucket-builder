@@ -461,6 +461,18 @@ The owner's laptop (Windows 11, 22 threads, no SciPy, energy saver):
 first layout of one-offs 140.0 s NumPy against 48.8 s compiled (2.9x),
 bureau-day 60.7 s against 56.0 s (1.1x), same layouts.
 
+**2026-11-13 (audit, part A).** `docs/AUDIT.md`: #19 was not reproduced
+headless and the engine is cleared for it (the world must have held other
+matrices than the scene: next step is a Blender test that compares the
+mirror with the scene, plus a self-check when the monitor comes to rest);
+#22 was already fixed by 2e6b12f; the referee is the same engine as the
+live check (an independent slow checker is wanted); packing is repeatable
+only with one worker and no time budget; `buildcore` is to live in
+`bucket_builder/buildcore/` with a `pyproject.toml` at the root. Nothing in
+the code was changed. A kit that runs Magics' nester on our buckets on a
+colleague's PC exists outside this repo (`~/data/packbench/magics-kit` on
+the workstation; results stay local).
+
 **Next (2026-11-11, the owner's notes):** issues #28 - #40: overlay
 drawing order, inside-out and non-manifold checks, hidden parts by
 default, fully-outside parts quiet until export, Jiggle feedback, one

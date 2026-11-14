@@ -228,3 +228,10 @@ Later:
 
 * #25 whole search on the GPU, #26 coarse cell per bucket, #27 jiggle push moves, #24 mixed sizes with free rotation.
 * Netfabb True Shape through its window; Magics; HP Universal Build Manager.
+
+## 2026-11-13 (audit, part A)
+
+* **Asked:** an expert audit before more features; diagnose #19 and #22 without implementing; a benchmark kit for Magics' nester, run by a colleague.
+* **Assumed:** the kit stays out of this public repo until the owner says otherwise (it drives a commercial product and carries real builds); `buildcore` inside the add-on's folder, Apache-2.0.
+* **Not asked:** whether a compiled narrow phase is welcome; whether macOS needs the compiled packer.
+* **Later:** the Blender reproduction of #19; the independent checker; `Settings.repeatable`; audit part B.

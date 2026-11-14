@@ -42,6 +42,7 @@ line counts once, in the session it came up in.
 | Date | Tool and model | Prompts | Steering lines |
 |---|---|---|---|
 | 2026-11-11 | Claude Code (workstation), Opus 5.5 | 1 | 5 |
+| 2026-11-11 to 13 | Claude Code (workstation), Fable 5.2 and Opus 5.5, sent by an orchestrating session | 1 | 3 |
 | 2026-11-10 | Claude Code (workstation), Opus 5.5 | 4 | 3 |
 | 2026-11-05 | Claude Code (workstation), Opus 5.5 | 5 | 13 |
 | before 2026-10-14 | Claude Code, Opus | not counted | 3 |
@@ -60,6 +61,9 @@ the detail.
 - 2026-11-11 [direction]: test the compiled-code assumption for real (Windows, Blender 5.2) before production plans; use a GPU when there is one, the laptop being the worst case.
 - 2026-11-11 [feature]: Jiggle: fix a hand pack's few interferences with small moves, or keep optimizing from the current layout.
 - 2026-11-11 [ui]: the report: screenshots per bucket, every packer in one filterable table, collapsible sections, a short summary straight into graphics.
+- 2026-11-12 [direction]: an expert audit of everything before more features; the live check's correctness ranks above all packer work.
+- 2026-11-12 [direction]: compare against Magics' nester through one overnight script run on a colleague's PC, so the kit must survive every failure by itself.
+- 2026-11-13 [domain]: a colleague runs an older Magics; its scripting module is almost certainly not licensed, so the window route is the plan.
 - 2026-11-11 [bugs]: the figurines beat their "floor": it was computed for upright parts while the comparison let them turn.
 - 2026-11-10 [direction]: a day of autonomous packer work: find weaknesses, fix them, benchmark against every packer available, Netfabb's trial included.
 - 2026-11-10 [direction]: a report for his management that places the packer against the industry and research, names packers we could still get, and quantifies headroom, hardware limits and what compiled code would buy.
