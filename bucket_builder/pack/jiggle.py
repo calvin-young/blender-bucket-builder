@@ -75,6 +75,7 @@ class Jiggler:
                 k = keys[id(m)] = 'm%d' % len(keys)
                 self.w.add_geom(k, np.asarray(m.verts, np.float64), np.asarray(m.tris))
             self.w.add_object(uid, k, M)
+        self._lbox = {}
         self._box = [self._extent(j) for j in range(len(self.M))]
         self._settle()
         # the gaps as they were given: a pair that was at the gap and is no closer now
@@ -96,8 +97,14 @@ class Jiggler:
             pass
 
     def _extent(self, j):
-        V = np.asarray(self.meshes[j].verts, float) @ self.M[j][:3, :3].T + self.M[j][:3, 3]
-        return V.min(axis=0), V.max(axis=0)
+        """Bounding box of part j: its posed box (cached per rotation) plus its place."""
+        L = self.M[j][:3, :3]
+        c = self._lbox.get(j)
+        if c is None or not np.array_equal(c[0], L):
+            V = np.asarray(self.meshes[j].verts, float) @ L.T
+            c = self._lbox[j] = (L.copy(), V.min(axis=0), V.max(axis=0))
+        t = self.M[j][:3, 3]
+        return c[1] + t, c[2] + t
 
     def _wall_penalty(self, j):
         lo, hi = self._box[j]
@@ -216,10 +223,38 @@ class Jiggler:
     # ------------------------------------------------------------ moving
 
     def _set(self, j, t):
+        """Move part j and settle its pairs exactly (and whatever trials left quick)."""
         self.M[j][:3, 3] = t
         self.w.set_matrix(j, self.M[j], hot=False)
         self._box[j] = self._extent(j)
         self._settle()
+
+    def _exact_cost(self, j):
+        """cost(j) at its place now, measured exactly (trials may have left quick results)."""
+        if self.w._pend_refine or self.w._pend_hot or self.w._dirty:
+            self._settle()
+        return self.cost(j)
+
+    def _restore(self, j, t0, moving_on):
+        """Part j back where it was after its trials; settled exactly unless a
+        step was found, which ``_set`` settles when it is taken."""
+        if moving_on:
+            self._probe(j, t0)
+        else:
+            self._set(j, t0)
+
+    def _probe(self, j, t):
+        """Move part j for a trial: its pairs get the world's quick solve.
+        Whether parts collide is decided in full; a clearance may come out a
+        little high (the search is capped), which is fine for choosing a
+        step: the step taken is then settled exactly by ``_set``, and the run
+        keeps the best layout it has measured exactly.  Quick results left
+        behind are redone by the next ``_set``."""
+        self.M[j][:3, 3] = t
+        self.w.set_matrix(j, self.M[j], hot=True)
+        self._box[j] = self._extent(j)
+        while self.w._pend_hot or self.w._dirty:
+            self.w.step(budget=0.0, hot_budget=1.0, idle=False)
 
     def _try(self, j, step):
         """The best step for part j: (penalty after, translation), or None.
@@ -250,7 +285,7 @@ class Jiggler:
                 t = t0 + step * d / nd
                 if self.reach is not None and np.linalg.norm(t - self.start[j]) > self.reach:
                     continue
-                self._set(j, t)
+                self._probe(j, t)
                 if self._wall_penalty(j) > wall0 + TOL:
                     continue                  # (never farther out of the volume to get away from a part)
                 p = self.cost(j)
@@ -260,7 +295,7 @@ class Jiggler:
                         break
             if best is not None:
                 break
-        self._set(j, t0)
+        self._restore(j, t0, best is not None)
         if best is None and not was:
             self.moved.discard(j)
         return best
@@ -304,7 +339,7 @@ class Jiggler:
                     while step <= far:
                         if self.reach is not None and np.linalg.norm(t0 + step * d - self.start[j]) > self.reach:
                             break
-                        self._set(j, t0 + step * d)
+                        self._probe(j, t0 + step * d)
                         if self._free_of(j, o):
                             hi = step
                             break
@@ -313,12 +348,12 @@ class Jiggler:
                         continue
                     for _ in range(5):
                         mid = 0.5 * (lo + hi)
-                        self._set(j, t0 + mid * d)
+                        self._probe(j, t0 + mid * d)
                         if self._free_of(j, o):
                             hi = mid
                         else:
                             lo = mid
-                    self._set(j, t0 + hi * d)
+                    self._probe(j, t0 + hi * d)
                     if self._wall_penalty(j) > wall0 + TOL:
                         continue
                     c = self.cost(j)
@@ -328,7 +363,7 @@ class Jiggler:
                     break                     # (clear of everything: the diagonals need not be tried)
             if best is not None and best[0][0] <= TOL:
                 break
-        self._set(j, t0)
+        self._restore(j, t0, best is not None)
         if best is None:
             if not was:
                 self.moved.discard(j)
@@ -341,7 +376,7 @@ class Jiggler:
         t0 = self.M[j][:3, 3].copy()
         lo, hi, step = 0.0, None, min(0.25, far)
         while True:
-            self._set(j, t0 + step * d)
+            self._probe(j, t0 + step * d)
             if self._free_of(j, o):
                 hi = step
                 break
@@ -351,12 +386,12 @@ class Jiggler:
         if hi is not None:
             for _ in range(5):
                 mid = 0.5 * (lo + hi)
-                self._set(j, t0 + mid * d)
+                self._probe(j, t0 + mid * d)
                 if self._free_of(j, o):
                     hi = mid
                 else:
                     lo = mid
-        self._set(j, t0)
+        self._probe(j, t0)
         return hi
 
     def _hard_pairs(self):
@@ -389,7 +424,7 @@ class Jiggler:
             if self.reach is not None and np.linalg.norm(t - self.start[k]) > self.reach:
                 return False
             self.moved.add(k)
-            self._set(k, t)
+            self._probe(k, t)
             return self._wall_penalty(k) <= wall0[k] + TOL
 
         ok = place(j, t0[j] + dist * d)
@@ -418,7 +453,9 @@ class Jiggler:
         if ok and self.total() < before_total - 1e-9:
             result = {k: self.M[k][:3, 3].copy() for k in t0}
         for k, t in t0.items():
-            self._set(k, t)
+            self._probe(k, t)
+        if result is None:
+            self._settle()
         self.moved = was
         return result
 
@@ -514,10 +551,18 @@ class Jiggler:
                 pushed.add(j)
                 row = self._push_out(j, deadline)
                 if row is not None:           # (a row of parts moves up together)
+                    was_key = (self.total(), self.soft_total())
+                    old = {k: self.M[k][:3, 3].copy() for k in row}
                     for k, t in row.items():
-                        self.travel[k] += np.linalg.norm(t - self.M[k][:3, 3])
                         self.moved.add(k)
                         self._set(k, t)
+                    if not self._better((self.total(), self.soft_total()), was_key):
+                        for k, t in old.items():    # (measured exactly it was no better: undone)
+                            self._set(k, t)
+                        row = None
+                if row is not None:
+                    for k, t in row.items():
+                        self.travel[k] += np.linalg.norm(t - old[k])
                     self.moves += len(row)
                     self.rows += 1
                     key = (self.total(), self.soft_total())
@@ -532,8 +577,16 @@ class Jiggler:
             if got is None:
                 got = self._try(j, step[j])
             if got is not None:
-                self.travel[j] += np.linalg.norm(got[1] - self.M[j][:3, 3])
+                # (trials see quick results; the step is kept only if, measured
+                # exactly, the part is better off)
+                t_old = self.M[j][:3, 3].copy()
+                was_cost = self._exact_cost(j)
                 self._set(j, got[1])
+                if not self._better(self.cost(j), was_cost):
+                    self._set(j, t_old)
+                    got = None
+            if got is not None:
+                self.travel[j] += np.linalg.norm(got[1] - t_old)
                 self.moves += 1
                 step[j] = min(step[j] * 1.5, 4 * max(self.gap, 1.0))
                 key = (self.total(), self.soft_total())
