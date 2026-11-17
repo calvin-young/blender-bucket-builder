@@ -64,6 +64,7 @@ the detail.
 - 2026-11-12 [direction]: an expert audit of everything before more features; the live check's correctness ranks above all packer work.
 - 2026-11-12 [direction]: compare against Magics' nester through one overnight script run on a colleague's PC, so the kit must survive every failure by itself.
 - 2026-11-13 [domain]: a colleague runs an older Magics; its scripting module is almost certainly not licensed, so the window route is the plan.
+- 2026-11-16 [direction]: cages, sprue racks and kits are mostly one idea (units and kits); design them on one model before building any.
 - 2026-11-11 [bugs]: the figurines beat their "floor": it was computed for upright parts while the comparison let them turn.
 - 2026-11-10 [direction]: a day of autonomous packer work: find weaknesses, fix them, benchmark against every packer available, Netfabb's trial included.
 - 2026-11-10 [direction]: a report for his management that places the packer against the industry and research, names packers we could still get, and quantifies headroom, hardware limits and what compiled code would buy.

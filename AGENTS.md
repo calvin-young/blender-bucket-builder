@@ -473,6 +473,17 @@ the code was changed. A kit that runs Magics' nester on our buckets on a
 colleague's PC exists outside this repo (`~/data/packbench/magics-kit` on
 the workstation; results stay local).
 
+**2026-11-16 (design).** `docs/SPEC_PACK.md`: one design for the Pack
+actions, soft clearance, cages, kits, sprues and labeled copies, on three
+concepts: a unit (parent and children marked Packs As One), a kit (a set
+made N times, kit 1 is the recipe) and a marker (an Empty on a part: gate
+point, label spot). Four actions replace Jiggle / Tighten / Improve: Fix
+Problems, Add Waiting Parts, Improve Layout, Pack All From Scratch. Two
+clearances: Aim and At Least. Its build order is section 8.
+`docs/VISION.md`: milestones by the toolset's stages 0 - 4. Both are
+proposals; the owner has not chosen the panel direction (A, B or C) yet.
+Nothing is built.
+
 **Next (2026-11-11, the owner's notes):** issues #28 - #40: overlay
 drawing order, inside-out and non-manifold checks, hidden parts by
 default, fully-outside parts quiet until export, Jiggle feedback, one

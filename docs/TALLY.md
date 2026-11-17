@@ -235,3 +235,10 @@ Later:
 * **Assumed:** the kit stays out of this public repo until the owner says otherwise (it drives a commercial product and carries real builds); `buildcore` inside the add-on's folder, Apache-2.0.
 * **Not asked:** whether a compiled narrow phase is welcome; whether macOS needs the compiled packer.
 * **Later:** the Blender reproduction of #19; the independent checker; `Settings.repeatable`; audit part B.
+
+## 2026-11-16 (Pack and Arrange design)
+
+* **Asked:** one coherent design for #32 - #36, #39, #41, #42 on one model, with two or three panel directions as mock-ups; a vision with milestones by the toolset's stages.
+* **Assumed:** units as parent and children; kit 1 as the recipe; markers as Empties; the names Aim / At Least, Waiting, and the four action names; direction A recommended.
+* **Not asked:** panel direction; cage numbers; the polisher's dimensions; whether gaps under the aim should ever fail a build; raised or engraved labels first.
+* **Later:** hull-shaped cages; collection instances as units; gate points proposed from marked faces.
