@@ -467,6 +467,7 @@ class Jiggler:
         tried = set()           # parts that had their turn in this round
         escaped = set()         # parts whose way out of a collision was looked for since the last reset
         pushed = set()          # and those for which a row push was looked for
+        resets = 0
         best_key, best_M = (self.total(), self.soft_total()), [M.copy() for M in self.M[:self.n]]
         round_key = best_key
         while time.perf_counter() < deadline:
@@ -490,8 +491,10 @@ class Jiggler:
                     break                     # (a whole pass over every part won nothing)
                 round_key = now
                 stuck.clear()                 # (others have moved since: try again)
-                escaped.clear()
-                pushed.clear()
+                resets += 1
+                if resets <= 2:               # (the searches for a way out are dear: twice more, then small steps only)
+                    escaped.clear()
+                    pushed.clear()
                 tried.clear()
                 step = {j: max(self.gap, 1.0) for j in range(self.n)}
                 continue
