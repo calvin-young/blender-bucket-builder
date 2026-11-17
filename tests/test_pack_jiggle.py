@@ -104,9 +104,32 @@ def soft():
     check(1.0 <= g[0] < aim, 'without an aim the pair is moved past the gap and not on toward 3 mm (%.2f mm)' % g[0])
 
 
+def fair():
+    print('a part that cannot be helped does not keep the others waiting')
+    box = S.box(20, 20, 20)
+    vlo, vhi = (0, 0, 0), (300, 150, 100)
+    # a box wedged between locked ones on every side (nowhere to go), and far from it a pair 0.4 mm apart
+    lock = [(box, at(100 + dx, 60 + dy, 30 + dz)) for dx, dy, dz in
+            ((-21, 0, 0), (21, 0, 0), (0, -21, 0), (0, 21, 0), (0, 0, -21), (0, 0, 21))]
+    free = [(box, at(100.8, 60, 30)), (box, at(220, 60, 30)), (box, at(240.4, 60, 30))]
+    Ms, jg = jiggle.jiggle(free, vlo, vhi, 1.0, 5.0, locked=lock, seconds=40)
+    gap = abs(Ms[2][0, 3] - Ms[1][0, 3]) - 20.0
+    check(gap >= 1.0 - 1e-6, 'the easy pair is mended (%.2f mm) although the wedged box cannot be' % gap)
+    check(jg.penalty(0) > jiggle.TOL, 'and the wedged box is still reported')
+    print('a deep collision is left by the shortest way out')
+    # two boxes 9 mm into each other along x, with room on one side only
+    lock = [(box, at(100, 60, 30))]
+    free = [(box, at(111, 60, 30))]
+    Ms, jg = jiggle.jiggle(free, vlo, vhi, 1.0, 5.0, locked=lock, seconds=30)
+    v = referee.check([('l', box, lock[0][1]), ('p', box, Ms[0])], vlo, vhi, 1.0, 5.0)
+    moved = float(np.linalg.norm(Ms[0][:3, 3] - free[0][1][:3, 3]))
+    check(v.ok and moved < 10.6, 'out along x by %.2f mm (10 is the least possible), in %d moves' % (moved, jg.moves))
+
+
 if __name__ == '__main__':
     main()
     soft()
+    fair()
     print()
     if FAILS:
         print('FAILED: %d' % len(FAILS))

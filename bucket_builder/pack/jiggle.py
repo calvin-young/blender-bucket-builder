@@ -247,12 +247,77 @@ class Jiggler:
             self.moved.discard(j)
         return best
 
+    def _free_of(self, j, o):
+        """Part j keeps the hard rules with part o."""
+        return not any(q == o and pen > 0.0 for q, pen, _ in self.problems(j))
+
+    def _escape(self, j, deadline):
+        """A step that takes part j clear of a part it collides with: along
+        each direction the shortest way out (found by doubling, then halving),
+        and of those the one that leaves j with the least hard penalty, then
+        the shortest.  A collision has no slope to follow (its penalty is the
+        same however deep), so small steps cannot find this.  Returns
+        (cost after, translation) or None."""
+        t0 = self.M[j][:3, 3].copy()
+        was = j in self.moved
+        self.moved.add(j)
+        base = self.cost(j)
+        s = self.w.slot(j)
+        others = []
+        for key, pr in self.w.viol.items():
+            if s in key and pr.state == COLLIDE:
+                o = self.w.uid(key[1] if key[0] == s else key[0])
+                if o is not None:
+                    others.append(o)
+        far = FAR if self.reach is None else min(FAR, self.reach)
+        best = None
+        for o in others:
+            away = [p[2] for p in self.problems(j) if p[0] == o and p[2] is not None]
+            for group in (away + list(DIRS[np.abs(DIRS).max(axis=1) == 1.0]), list(DIRS[np.abs(DIRS).max(axis=1) < 1.0])):
+                for d in group:
+                    if time.perf_counter() > deadline:
+                        break
+                    lo, hi, step = 0.0, None, 0.25
+                    while step <= far:
+                        if self.reach is not None and np.linalg.norm(t0 + step * d - self.start[j]) > self.reach:
+                            break
+                        self._set(j, t0 + step * d)
+                        if self._free_of(j, o):
+                            hi = step
+                            break
+                        lo, step = step, step * 2
+                    if hi is None:
+                        continue
+                    for _ in range(5):
+                        mid = 0.5 * (lo + hi)
+                        self._set(j, t0 + mid * d)
+                        if self._free_of(j, o):
+                            hi = mid
+                        else:
+                            lo = mid
+                    self._set(j, t0 + hi * d)
+                    c = self.cost(j)
+                    if c[0] < base[0] - 1e-9 and (best is None or (c[0], hi) < (best[0][0], best[2])):
+                        best = (c, t0 + hi * d, hi)
+                if best is not None and best[0][0] <= TOL:
+                    break                     # (clear of everything: the diagonals need not be tried)
+            if best is not None and best[0][0] <= TOL:
+                break
+        self._set(j, t0)
+        if best is None:
+            if not was:
+                self.moved.discard(j)
+            return None
+        return best[0], best[1]
+
     def run(self, seconds=30.0, deadline=None, on_step=None):
         """Mend the layout; returns the new matrices of the parts that may move."""
         if deadline is None:
             deadline = time.perf_counter() + seconds
         step = {j: max(self.gap, 1.0) for j in range(self.n)}
         stuck = set()
+        tried = set()           # parts that had their turn in this round
+        escaped = set()         # parts whose way out of a collision was looked for since the last reset
         best_key, best_M = (self.total(), self.soft_total()), [M.copy() for M in self.M[:self.n]]
         round_key = best_key
         while time.perf_counter() < deadline:
@@ -266,13 +331,27 @@ class Jiggler:
                     break
                 now = (self.total(), self.soft_total())
                 if not self._better(now, round_key):
-                    break                     # (a whole round of every part won nothing)
+                    break                     # (a whole pass over every part won nothing)
                 round_key = now
                 stuck.clear()                 # (others have moved since: try again)
+                escaped.clear()
+                tried.clear()
                 step = {j: max(self.gap, 1.0) for j in range(self.n)}
                 continue
-            (hard, _soft), j = bad[-1]
-            got = self._try(j, step[j])
+            # every part with something to gain gets its turn, the worst first: one
+            # part that cannot be helped must not keep the others waiting
+            turn = [(c, j) for c, j in bad if j not in tried]
+            if not turn:
+                tried.clear()
+                continue
+            (hard, _soft), j = turn[-1]
+            tried.add(j)
+            got = None
+            if hard > TOL and j not in escaped:
+                escaped.add(j)
+                got = self._escape(j, deadline)
+            if got is None:
+                got = self._try(j, step[j])
             if got is not None:
                 self.travel[j] += np.linalg.norm(got[1] - self.M[j][:3, 3])
                 self._set(j, got[1])
