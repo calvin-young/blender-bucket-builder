@@ -34,6 +34,7 @@ class Settings:
     vlo: np.ndarray = None            # build volume corners, mm (default: the 5600, corner at 0)
     vhi: np.ndarray = None
     gap: float = 5.0                  # between parts, mm
+    gap_aim: float = None             # with two clearances: what pairs should have; `gap` is then the least (Jiggle only so far)
     wall_gap: float = 5.0             # from the side walls (x and y), mm
     h: float = 1.0                    # cell size, mm
     coarse: int = 4                   # cells per coarse cell
