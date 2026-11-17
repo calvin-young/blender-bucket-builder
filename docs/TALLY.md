@@ -242,3 +242,10 @@ Later:
 * **Assumed:** units as parent and children; kit 1 as the recipe; markers as Empties; the names Aim / At Least, Waiting, and the four action names; direction A recommended.
 * **Not asked:** panel direction; cage numbers; the polisher's dimensions; whether gaps under the aim should ever fail a build; raised or engraved labels first.
 * **Later:** hull-shaped cages; collection instances as units; gate points proposed from marked faces.
+
+## 2026-11-16 (Jiggle with two clearances)
+
+* **Asked:** soft clearance in Jiggle (1.0 mm the rule, 3 mm aimed for), row pushes if needed, tested on synthetic cases, then run on the owner's challenge build.
+* **Assumed:** the soft cost grows faster than the shortfall (the tightest gaps first); a reach of 8 mm for "small moves"; hard rules settled before any part moves for the aim; a part never leaves the volume to escape another.
+* **Not asked:** whether small turns should be allowed (the one collision left on the challenge build may need one); whether Jiggle may take minutes.
+* **Later:** the panel's two clearance fields and the live check's tiers (SPEC_PACK step 1); Jiggle's speed; small rotations.

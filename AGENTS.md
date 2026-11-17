@@ -484,6 +484,22 @@ clearances: Aim and At Least. Its build order is section 8.
 proposals; the owner has not chosen the panel direction (A, B or C) yet.
 Nothing is built.
 
+**2026-11-16 (Jiggle, not yet in a build).** `pack/jiggle.py` knows two
+clearances (`aim=`; `Settings.gap_aim`): the gap is the least, what a pair
+lacks of the aim is a soft cost that never counts against a hard rule
+(#35, the engine side only: no panel control, the live check and the
+packer still know one gap). Also: the shortest way out of a collision
+(`_escape`: a collision's penalty has no slope), every part gets its turn
+(two hopeless parts used to take all the time), row pushes (`_push`, #27),
+no leaving the volume to get away from a part, `reach=` limits how far a
+part ends from its start, a pair that is no closer than it was given needs
+no margin (`_kept`). Tests in `tests/test_pack_jiggle.py`. On the owner's
+hand-packed challenge build (local only) it clears all but one collision,
+which has no room to clear by small moves; the numbers are with the build,
+not here. `PairResult.segs`, `pa` and `pb` are relative to the first
+part's translation, not world points. Slow: about a second per move on
+parts of 200 k triangles.
+
 **Next (2026-11-11, the owner's notes):** issues #28 - #40: overlay
 drawing order, inside-out and non-manifold checks, hidden parts by
 default, fully-outside parts quiet until export, Jiggle feedback, one
