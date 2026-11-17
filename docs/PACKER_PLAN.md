@@ -8,16 +8,21 @@ bucket-01 and so on), and keep a change only if the numbers improve.
 
 ## The order, and why
 
-1. **Numbers that can be trusted and repeated** (half a day each). Every
-   later step is judged by numbers; today they change from run to run and
-   are checked by the engine that made them.
-2. **Jiggle: fast, then small turns.** It is what the owner uses on hand
-   packs, and it takes 15 minutes where it should take one.
-3. **#24 and #26**, the two places where another packer builds lower.
-4. **Soft clearance in the packer.** Useful, but Jiggle already covers
-   the hand-pack case, and step 3 moves density more.
+Revised 2026-11-17 with the owner's answers:
 
-## 1a. Repeatable runs
+1. **The independent check of the referee (1b)**, with only as much of
+   1a as makes before/after numbers trustworthy: a fixed-seed,
+   single-worker mode for the bench scripts. The owner sees little daily
+   value in a deterministic packer for users, and he is right: it is for
+   measuring. The independent check matters daily: "clean" must really be
+   clean.
+2. **Jiggle speed, then small turns (opt-in).** The owner said yes to
+   turns, as an option; speed first.
+3. **Soft clearance in the packer (4 below)**, moved up: the owner calls it
+   "something a human would do but an autopacker normally wouldn't".
+4. **#24 and #26** (3a, 3b below).
+
+## 1a. Repeatable runs (shrunk: a bench mode only)
 
 * **Approach:** `Settings.repeatable` (docs/AUDIT.md, section 2). Results
   of worker tasks are adopted in the order they were submitted
