@@ -44,11 +44,16 @@ DIRS /= np.linalg.norm(DIRS, axis=1)[:, None]
 
 
 class Jiggler:
-    def __init__(self, items, vlo, vhi, gap, wall_gap, locked=(), aim=None, reach=None):
+    def __init__(self, items, vlo, vhi, gap, wall_gap, locked=(), aim=None, reach=None, turns=0.0,
+                 max_turned=2, fixed=()):
         """items: [(mesh, 4 x 4)] that may move; locked: [(mesh, 4 x 4)] that stay.
         gap: the least any pair may have; aim: what every pair should have
         (None or not above gap: one clearance, as before); reach: no part
-        ends up farther than this from where it started (mm, None: no limit)."""
+        ends up farther than this from where it started (mm, None: no limit).
+        turns: degrees a part may be turned, at most, about its own center
+        (0: never; the owner's choice to allow it, 2026-11-17, as an option);
+        only a part that small moves cannot help is turned, and no more than
+        max_turned of them; fixed: indices of parts that may not turn."""
         self.vlo = np.asarray(vlo, float)
         self.vhi = np.asarray(vhi, float)
         # A pair (or wall) counts as broken under the referee's threshold, a hair below
@@ -58,6 +63,10 @@ class Jiggler:
         self.wall = float(wall_gap)
         self.aim = float(aim) if aim is not None and float(aim) > self.gap else None
         self.reach = None if reach is None else float(reach)
+        self.turns = float(turns or 0.0)
+        self.max_turned = int(max_turned)
+        self.fixed = set(fixed)
+        self.turned = {}         # part -> (axis, degrees) of the turn it was given
         self.moved = set()
         self.meshes = [m for m, _ in items] + [m for m, _ in locked]
         self.M = [np.array(M, float) for _, M in items] + [np.array(M, float) for _, M in locked]
@@ -85,6 +94,7 @@ class Jiggler:
             if pr.state != COLLIDE:
                 a, b = self.w.uid(key[0]), self.w.uid(key[1])
                 self.d0[(min(a, b), max(a, b))] = float(pr.dist)
+        self._turn_tried = set()
         self.moves = 0
         self.rows = 0            # row pushes made
         self.travel = np.zeros(self.n)
@@ -235,6 +245,78 @@ class Jiggler:
             self._settle()
         return self.cost(j)
 
+    def _set_M(self, j, M, exact=True):
+        self.M[j] = np.array(M, float)
+        self.w.set_matrix(j, self.M[j], hot=not exact)
+        self._box[j] = self._extent(j)
+        if exact:
+            self._settle()
+        else:
+            while self.w._pend_hot or self.w._dirty:
+                self.w.step(budget=0.0, hot_budget=1.0, idle=False)
+
+    def _turn(self, j, deadline):
+        """Small turns of part j about its center (x, y, z; 1, 2, 4 ... degrees
+        up to ``turns``, smallest first), each also followed by its way out of
+        a collision.  Returns (cost after, 4 x 4, (axis, degrees)) for the best
+        that lowers its hard penalty, or None.  Leaves the part as it was."""
+        if not self.turns or j in self.fixed or j >= self.n:
+            return None
+        if j not in self.turned and len(self.turned) >= self.max_turned:
+            return None
+        M0 = self.M[j].copy()
+        lo, hi = self._box[j]
+        c = 0.5 * (lo + hi)
+        was = j in self.moved
+        self.moved.add(j)
+        base = self._exact_cost(j)
+        degs, d = [], 1.0
+        while d <= self.turns + 1e-9:
+            degs += [d, -d]
+            d *= 2
+        if self.turns not in [abs(x) for x in degs]:
+            degs += [self.turns, -self.turns]
+        best = None
+        for deg in degs:
+            for ax in range(3):
+                if time.perf_counter() > deadline:
+                    break
+                a, b = [k for k in range(3) if k != ax]
+                co, si = np.cos(np.radians(deg)), np.sin(np.radians(deg))
+                R = np.eye(3)
+                R[a, a] = R[b, b] = co
+                R[a, b], R[b, a] = -si, si
+                M = M0.copy()
+                M[:3, :3] = R @ M0[:3, :3]
+                M[:3, 3] = R @ (M0[:3, 3] - c) + c
+                self._set_M(j, M, exact=False)
+                if self._wall_penalty(j) > self._wall0(j, M0) + TOL:
+                    continue
+                cand = (self.cost(j), M.copy())
+                if self._collides(j):
+                    esc = self._escape(j, deadline)
+                    if esc is not None and esc[0] < cand[0]:
+                        M2 = M.copy()
+                        M2[:3, 3] = esc[1]
+                        cand = (esc[0], M2)
+                if self._better(cand[0], base) and (best is None or cand[0] < best[0]):
+                    best = (cand[0], cand[1], (ax, deg))
+            if best is not None and best[0][0] <= TOL:
+                break                         # (the smallest turn that clears it)
+        self._set_M(j, M0, exact=best is None)
+        if best is None and not was:
+            self.moved.discard(j)
+        return best
+
+    def _wall0(self, j, M0):
+        """Wall penalty of part j at the matrix M0 (for comparing a turn with no turn)."""
+        M, box = self.M[j], self._box[j]
+        self.M[j] = M0
+        self._box[j] = self._extent(j)
+        w = self._wall_penalty(j)
+        self.M[j], self._box[j] = M, box
+        return w
+
     def _restore(self, j, t0, moving_on):
         """Part j back where it was after its trials; settled exactly unless a
         step was found, which ``_set`` settles when it is taken."""
@@ -299,6 +381,27 @@ class Jiggler:
         if best is None and not was:
             self.moved.discard(j)
         return best
+
+    def _try_turn(self, j, deadline):
+        """Turn part j if that helps (once per part and run); True if it was turned."""
+        if not self.turns or j in self._turn_tried:
+            return False
+        self._turn_tried.add(j)
+        got = self._turn(j, deadline)
+        if got is None:
+            return False
+        was_key = (self.total(), self.soft_total())
+        M_old = self.M[j].copy()
+        self._set_M(j, got[1])
+        if not self._better((self.total(), self.soft_total()), was_key):
+            self._set_M(j, M_old)
+            return False
+        ax, deg = got[2]
+        prev = self.turned.get(j)
+        self.turned[j] = (ax, deg + (prev[1] if prev and prev[0] == ax else 0.0))
+        self.travel[j] += float(np.linalg.norm(got[1][:3, 3] - M_old[:3, 3]))
+        self.moves += 1
+        return True
 
     def _collides(self, j):
         s = self.w.slot(j)
@@ -572,7 +675,8 @@ class Jiggler:
                         on_step(self)
                     continue
             if got is None and hard >= FAR:
-                stuck.add(j)                  # (no way out within reach: for packing again)
+                if not self._try_turn(j, deadline):
+                    stuck.add(j)              # (no way out within reach: for packing again)
                 continue
             if got is None:
                 got = self._try(j, step[j])
@@ -597,6 +701,12 @@ class Jiggler:
             elif step[j] > (MIN_STEP if hard > TOL else SOFT_STEP):
                 step[j] *= 0.5
             else:
+                if hard > TOL and self._try_turn(j, deadline):
+                    key = (self.total(), self.soft_total())
+                    if self._better(key, best_key):
+                        best_key, best_M = key, [M.copy() for M in self.M[:self.n]]
+                    step[j] = max(self.gap, 1.0)
+                    continue
                 stuck.add(j)
         for j in range(self.n):             # (back to the best layout seen)
             if not np.array_equal(self.M[j], best_M[j]):
@@ -608,7 +718,7 @@ class Jiggler:
 
 
 def mend(items, vlo, vhi, gap, wall_gap, locked=(), deadline=None, seconds=30.0, on_step=None, aim=None,
-         reach=None):
+         reach=None, turns=0.0, max_turned=2, fixed=()):
     """Jiggler runs until the layout passes the referee or time is up: a run
     whose result a fresh referee still faults is followed by another from
     where it ended (a fresh world settles every pair from scratch, where the
@@ -620,12 +730,16 @@ def mend(items, vlo, vhi, gap, wall_gap, locked=(), deadline=None, seconds=30.0,
     cur = [(m, np.asarray(M, float)) for m, M in items]
     first = [np.asarray(M, float)[:3, 3].copy() for _, M in items]
     moves = 0
+    turned = {}
     jg = None
     for _ in range(4):
-        jg = Jiggler(cur, vlo, vhi, gap, wall_gap, locked, aim=aim, reach=reach)
+        jg = Jiggler(cur, vlo, vhi, gap, wall_gap, locked, aim=aim, reach=reach, turns=turns,
+                     max_turned=max_turned, fixed=fixed)
+        jg.turned = dict(turned)              # (the count of turned parts holds across rounds)
         jg.start = first                      # (the reach counts from where the parts were given)
         Ms = jg.run(deadline=deadline, on_step=on_step)
         moves += jg.moves
+        turned.update(jg.turned)
         cur = [(m, M) for (m, _), M in zip(cur, Ms)]
         bad = referee.offenders([('l', m, M) for m, M in locked] + [('p', m, M) for m, M in cur],
                                 vlo, vhi, gap, wall_gap, len(locked))
@@ -635,11 +749,13 @@ def mend(items, vlo, vhi, gap, wall_gap, locked=(), deadline=None, seconds=30.0,
     return [M for _, M in cur], jg, moves
 
 
-def jiggle(items, vlo, vhi, gap, wall_gap, locked=(), seconds=30.0, aim=None, reach=None):
+def jiggle(items, vlo, vhi, gap, wall_gap, locked=(), seconds=30.0, aim=None, reach=None, turns=0.0,
+           max_turned=2, fixed=()):
     """New matrices for items [(mesh, 4 x 4)] with small moves that remove
     collisions, gaps under `gap` and parts past the walls; and the last
     Jiggler (its moves are the total)."""
-    Ms, jg, _n = mend(items, vlo, vhi, gap, wall_gap, locked, seconds=seconds, aim=aim, reach=reach)
+    Ms, jg, _n = mend(items, vlo, vhi, gap, wall_gap, locked, seconds=seconds, aim=aim, reach=reach,
+                      turns=turns, max_turned=max_turned, fixed=fixed)
     return Ms, jg
 
 

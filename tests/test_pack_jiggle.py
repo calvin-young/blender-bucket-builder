@@ -141,11 +141,36 @@ def rows():
     check(jg.rows >= 1 and max(moved) < 5.0 and min(moved) > 3.9, 'by one row push of about 4 mm, no part more')
 
 
+def turns():
+    print('small turns, only when asked for')
+    bar = S.box(100, 10, 10)
+    plate = S.box(140, 10, 60)          # (tall: the bar cannot climb out over them within a small move)
+    vlo, vhi = (0, 0, 0), (300, 150, 100)
+    # a bar turned 2 degrees about z between two locked plates 1.2 mm away when straight:
+    # its ends cut into both plates, and no move without a turn can free it
+    lock = [(plate, at(150, 60 - 11.2, 30)), (plate, at(150, 60 + 11.2, 30))]
+    M = at(150, 60, 30)
+    a = np.radians(2.0)
+    M[:3, :3] = [[np.cos(a), -np.sin(a), 0], [np.sin(a), np.cos(a), 0], [0, 0, 1]]
+    free = [(bar, M)]
+    Ms, jg = jiggle.jiggle(free, vlo, vhi, 1.0, 5.0, locked=lock, seconds=20)
+    v = referee.check([('l', m, L) for m, L in lock] + [('p', bar, Ms[0])], vlo, vhi, 1.0, 5.0)
+    check(not v.ok and not jg.turned, 'without turns the bar stays stuck (%d collisions)' % v.collisions)
+    Ms, jg = jiggle.jiggle(free, vlo, vhi, 1.0, 5.0, locked=lock, seconds=60, turns=4.0)
+    v = referee.check([('l', m, L) for m, L in lock] + [('p', bar, Ms[0])], vlo, vhi, 1.0, 5.0)
+    turned = jg.turned.get(0)
+    check(v.ok and turned is not None and abs(turned[1]) <= 4.0,
+          'with turns up to 4 degrees it is freed (turned %s)' % (turned,))
+    Ms, jg = jiggle.jiggle(free, vlo, vhi, 1.0, 5.0, locked=lock, seconds=20, turns=4.0, fixed=[0])
+    check(not jg.turned, 'a part marked fixed is never turned')
+
+
 if __name__ == '__main__':
     main()
     soft()
     fair()
     rows()
+    turns()
     print()
     if FAILS:
         print('FAILED: %d' % len(FAILS))
