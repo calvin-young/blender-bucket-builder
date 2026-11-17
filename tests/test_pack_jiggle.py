@@ -109,9 +109,9 @@ def fair():
     box = S.box(20, 20, 20)
     vlo, vhi = (0, 0, 0), (300, 150, 100)
     # a box wedged between locked ones on every side (nowhere to go), and far from it a pair 0.4 mm apart
-    lock = [(box, at(100 + dx, 60 + dy, 30 + dz)) for dx, dy, dz in
-            ((-21, 0, 0), (21, 0, 0), (0, -21, 0), (0, 21, 0), (0, 0, -21), (0, 0, 21))]
-    free = [(box, at(100.8, 60, 30)), (box, at(220, 60, 30)), (box, at(240.4, 60, 30))]
+    lock = [(box, at(100 + dx, 60 + dy, 40 + dz)) for dx, dy, dz in
+            ((-20.5, 0, 0), (20.5, 0, 0), (0, -21, 0), (0, 21, 0), (0, 0, -21), (0, 0, 21))]
+    free = [(box, at(100.3, 60, 40)), (box, at(220, 60, 30)), (box, at(240.4, 60, 30))]
     Ms, jg = jiggle.jiggle(free, vlo, vhi, 1.0, 5.0, locked=lock, seconds=40)
     gap = abs(Ms[2][0, 3] - Ms[1][0, 3]) - 20.0
     check(gap >= 1.0 - 1e-6, 'the easy pair is mended (%.2f mm) although the wedged box cannot be' % gap)
@@ -126,10 +126,26 @@ def fair():
     check(v.ok and moved < 10.6, 'out along x by %.2f mm (10 is the least possible), in %d moves' % (moved, jg.moves))
 
 
+def rows():
+    print('a row of parts moves up together (#27)')
+    box = S.box(20, 20, 20)
+    vlo, vhi = (0, 0, 0), (300, 150, 100)
+    # five boxes in a row at exactly the gap, a locked one before them, and a sixth box 4 mm into the first:
+    # nothing can leave sideways (locked boxes all around the first), so the row has to move up
+    lock = [(box, at(50, 60, 40))] + [(box, at(71 + 4, 60 + dy, 40 + dz)) for dy, dz in ((-21, 0), (21, 0), (0, -21), (0, 21))]
+    free = [(box, at(67, 60, 40))] + [(box, at(88 + 21 * i, 60, 40)) for i in range(4)]
+    Ms, jg = jiggle.jiggle(free, vlo, vhi, 1.0, 5.0, locked=lock, seconds=60)
+    v = referee.check([('l', m, M) for m, M in lock] + [('p', box, M) for M in Ms], vlo, vhi, 1.0, 5.0)
+    moved = [float(M[0, 3] - M0[0, 3]) for (_, M0), M in zip(free, Ms)]
+    check(v.ok, 'the row is pushed along x and every rule is kept (moves %s)' % ', '.join('%.2f' % x for x in moved))
+    check(jg.rows >= 1 and max(moved) < 5.0 and min(moved) > 3.9, 'by one row push of about 4 mm, no part more')
+
+
 if __name__ == '__main__':
     main()
     soft()
     fair()
+    rows()
     print()
     if FAILS:
         print('FAILED: %d' % len(FAILS))

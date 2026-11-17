@@ -77,7 +77,15 @@ class Jiggler:
             self.w.add_object(uid, k, M)
         self._box = [self._extent(j) for j in range(len(self.M))]
         self._settle()
+        # the gaps as they were given: a pair that was at the gap and is no closer now
+        # is fine although one of its parts has moved (a part slid along its neighbor)
+        self.d0 = {}
+        for key, pr in self.w.viol.items():
+            if pr.state != COLLIDE:
+                a, b = self.w.uid(key[0]), self.w.uid(key[1])
+                self.d0[(min(a, b), max(a, b))] = float(pr.dist)
         self.moves = 0
+        self.rows = 0            # row pushes made
         self.travel = np.zeros(self.n)
         self.start = [M[:3, 3].copy() for M in self.M[:self.n]]
 
@@ -102,6 +110,13 @@ class Jiggler:
     def _overlap(self, a, b):
         (la, ha), (lb, hb) = self._box[a], self._box[b]
         return float(np.maximum(np.minimum(ha, hb) - np.maximum(la, lb), 0).min())
+
+    def _kept(self, a, b, dist):
+        """A pair at the gap needs no margin: neither part has moved, or the
+        two are no closer than they were given."""
+        if a not in self.moved and b not in self.moved:
+            return True
+        return dist >= self.d0.get((min(a, b), max(a, b)), float('inf')) - 1e-7
 
     def _short(self, dist):
         """The soft cost of a gap: what it lacks of the aim, growing faster
@@ -128,8 +143,8 @@ class Jiggler:
                 d = (self._box[j][0] + self._box[j][1] - self._box[o][0] - self._box[o][1]) / 2
             else:
                 dist = float(pr.dist)
-                if dist >= self.floor and j not in self.moved and o not in self.moved:
-                    pen = 0.0                 # (at the gap, and left alone: fine)
+                if dist >= self.floor and self._kept(j, o, dist):
+                    pen = 0.0                 # (at the gap, and left alone or no closer than it was: fine)
                 else:
                     pen = max(0.0, self.gap + MARGIN - dist)
                 if pen == 0.0 and not (soft and self._short(dist) > 0.0):
@@ -193,8 +208,8 @@ class Jiggler:
             a, b = self.w.uid(key[0]), self.w.uid(key[1])
             if pr.state == COLLIDE:
                 pairs += self.gap + 1.0 + (self._overlap(a, b) if a is not None and b is not None else 0.0)
-            elif float(pr.dist) < self.floor or ((a in self.moved or b in self.moved)
-                                                 and float(pr.dist) < self.gap + MARGIN):
+            elif float(pr.dist) < self.floor or (float(pr.dist) < self.gap + MARGIN
+                                                 and not self._kept(a, b, float(pr.dist))):
                 pairs += max(0.0, self.gap + MARGIN - float(pr.dist))
         return pairs + sum(self._wall_penalty(j) for j in range(self.n))
 
@@ -214,6 +229,7 @@ class Jiggler:
         was = j in self.moved
         self.moved.add(j)                    # (a part that moves is held to the gap plus MARGIN)
         base = self.cost(j)
+        wall0 = self._wall_penalty(j)
         first = [p[2] for p in self.problems(j, soft=True) if p[2] is not None]
         lo, hi = self._box[j]
         floor = self.vlo + np.array([self.wall, self.wall, 0.0])
@@ -235,6 +251,8 @@ class Jiggler:
                 if self.reach is not None and np.linalg.norm(t - self.start[j]) > self.reach:
                     continue
                 self._set(j, t)
+                if self._wall_penalty(j) > wall0 + TOL:
+                    continue                  # (never farther out of the volume to get away from a part)
                 p = self.cost(j)
                 if self._better(p, base) and (best is None or p < best[0]):
                     best = (p, t)
@@ -246,6 +264,10 @@ class Jiggler:
         if best is None and not was:
             self.moved.discard(j)
         return best
+
+    def _collides(self, j):
+        s = self.w.slot(j)
+        return any(s in key and pr.state == COLLIDE for key, pr in self.w.viol.items())
 
     def _free_of(self, j, o):
         """Part j keeps the hard rules with part o."""
@@ -262,6 +284,7 @@ class Jiggler:
         was = j in self.moved
         self.moved.add(j)
         base = self.cost(j)
+        wall0 = self._wall_penalty(j)
         s = self.w.slot(j)
         others = []
         for key, pr in self.w.viol.items():
@@ -296,6 +319,8 @@ class Jiggler:
                         else:
                             lo = mid
                     self._set(j, t0 + hi * d)
+                    if self._wall_penalty(j) > wall0 + TOL:
+                        continue
                     c = self.cost(j)
                     if c[0] < base[0] - 1e-9 and (best is None or (c[0], hi) < (best[0][0], best[2])):
                         best = (c, t0 + hi * d, hi)
@@ -310,6 +335,129 @@ class Jiggler:
             return None
         return best[0], best[1]
 
+    def _way_out(self, j, o, d, far):
+        """How far part j must go along d to keep the hard rules with part o
+        (None: not within `far`).  Leaves j where it was."""
+        t0 = self.M[j][:3, 3].copy()
+        lo, hi, step = 0.0, None, min(0.25, far)
+        while True:
+            self._set(j, t0 + step * d)
+            if self._free_of(j, o):
+                hi = step
+                break
+            if step >= far:
+                break
+            lo, step = step, min(step * 2, far)
+        if hi is not None:
+            for _ in range(5):
+                mid = 0.5 * (lo + hi)
+                self._set(j, t0 + mid * d)
+                if self._free_of(j, o):
+                    hi = mid
+                else:
+                    lo = mid
+        self._set(j, t0)
+        return hi
+
+    def _hard_pairs(self):
+        """The pairs that break a hard rule now, as a set of (uid, uid)."""
+        out = set()
+        for key, pr in self.w.viol.items():
+            a, b = self.w.uid(key[0]), self.w.uid(key[1])
+            if a is None or b is None:
+                continue
+            if pr.state == COLLIDE or float(pr.dist) < self.floor or (
+                    float(pr.dist) < self.gap + MARGIN and not self._kept(a, b, float(pr.dist))):
+                out.add((min(a, b), max(a, b)))
+        return out
+
+    def _push(self, j, d, dist, deadline, limit=12):
+        """Part j goes `dist` along d, and each part it is then pushed into
+        goes along d too, as far as it needs, and so on down the row: a row of
+        parts moved up together (the owner's request #27).  Stops at a wall,
+        a locked part, the reach, or `limit` parts.  Returns {part: new
+        translation} if the whole layout breaks fewer hard rules for it, else
+        None; the layout is left as it was either way."""
+        t0 = {j: self.M[j][:3, 3].copy()}
+        was = set(self.moved)
+        before_total = self.total()
+        old = self._hard_pairs()
+        wall0 = {j: self._wall_penalty(j)}
+        ok = True
+
+        def place(k, t):
+            if self.reach is not None and np.linalg.norm(t - self.start[k]) > self.reach:
+                return False
+            self.moved.add(k)
+            self._set(k, t)
+            return self._wall_penalty(k) <= wall0[k] + TOL
+
+        ok = place(j, t0[j] + dist * d)
+        queue = [j]
+        while ok and queue:
+            if time.perf_counter() > deadline:
+                ok = False
+                break
+            a = queue.pop(0)
+            for k, pen, _ in self.problems(a):
+                if pen <= 0.0 or (min(a, k), max(a, k)) in old:
+                    continue                  # (not this push's doing)
+                if k >= self.n or len(t0) >= limit:
+                    ok = False                # (a locked part is in the way, or the row is too long)
+                    break
+                if k not in t0:
+                    t0[k] = self.M[k][:3, 3].copy()
+                    wall0[k] = self._wall_penalty(k)
+                self.moved.add(k)
+                need = self._way_out(k, a, d, dist + 1.0)
+                if need is None or not place(k, self.M[k][:3, 3] + need * d):
+                    ok = False
+                    break
+                queue.append(k)
+        result = None
+        if ok and self.total() < before_total - 1e-9:
+            result = {k: self.M[k][:3, 3].copy() for k in t0}
+        for k, t in t0.items():
+            self._set(k, t)
+        self.moved = was
+        return result
+
+    def _push_out(self, j, deadline):
+        """The best row push that takes part j out of a collision: along the
+        six axes and straight away from the other part.  Returns {part:
+        translation} or None."""
+        s = self.w.slot(j)
+        best = None
+        for key, pr in list(self.w.viol.items()):
+            if s not in key or pr.state != COLLIDE:
+                continue
+            o = self.w.uid(key[1] if key[0] == s else key[0])
+            if o is None:
+                continue
+            self.moved.add(j)
+            away = [p[2] for p in self.problems(j) if p[0] == o and p[2] is not None]
+            self.moved.discard(j)
+            far = FAR if self.reach is None else min(FAR, self.reach)
+            ways = []
+            for d in away + list(DIRS[np.abs(DIRS).max(axis=1) == 1.0]):
+                if time.perf_counter() > deadline:
+                    break
+                was = j in self.moved
+                self.moved.add(j)
+                h = self._way_out(j, o, d, far)
+                if not was:
+                    self.moved.discard(j)
+                if h is not None:
+                    ways.append((h, d))
+            ways.sort(key=lambda x: x[0])
+            for h, d in ways[:4]:
+                got = self._push(j, d, h, deadline)
+                if got is not None:
+                    size = sum(np.linalg.norm(t - self.M[k][:3, 3]) for k, t in got.items())
+                    if best is None or size < best[0]:
+                        best = (size, got)
+        return None if best is None else best[1]
+
     def run(self, seconds=30.0, deadline=None, on_step=None):
         """Mend the layout; returns the new matrices of the parts that may move."""
         if deadline is None:
@@ -318,14 +466,22 @@ class Jiggler:
         stuck = set()
         tried = set()           # parts that had their turn in this round
         escaped = set()         # parts whose way out of a collision was looked for since the last reset
+        pushed = set()          # and those for which a row push was looked for
         best_key, best_M = (self.total(), self.soft_total()), [M.copy() for M in self.M[:self.n]]
         round_key = best_key
         while time.perf_counter() < deadline:
             costs = [(self.cost(j), j) for j in range(self.n)]
             # (a part with a hard problem goes down to the finest step; one that only
             # wants more room stops at SOFT_STEP)
+            # The hard rules first: parts that only want more room wait until no part
+            # with a hard problem can be helped, so they do not take the room a fix needs.
+            # (A collision's penalty goes by how far the boxes overlap, which for two
+            # large parts hooked into each other says little: such a part still gets
+            # one look for a way out before it is left for packing again.)
             bad = sorted((c, j) for c, j in costs if j not in stuck
-                         and (TOL < c[0] < FAR or (c[0] <= TOL and c[1] > SOFT_GAIN)))
+                         and (TOL < c[0] < FAR or (c[0] >= FAR and j not in escaped and self._collides(j))))
+            if not bad:
+                bad = sorted((c, j) for c, j in costs if j not in stuck and c[0] <= TOL and c[1] > SOFT_GAIN)
             if not bad:
                 if not stuck:
                     break
@@ -335,6 +491,7 @@ class Jiggler:
                 round_key = now
                 stuck.clear()                 # (others have moved since: try again)
                 escaped.clear()
+                pushed.clear()
                 tried.clear()
                 step = {j: max(self.gap, 1.0) for j in range(self.n)}
                 continue
@@ -350,6 +507,25 @@ class Jiggler:
             if hard > TOL and j not in escaped:
                 escaped.add(j)
                 got = self._escape(j, deadline)
+            if hard > TOL and j not in pushed and self._collides(j) and (got is None or got[0][0] > TOL):
+                pushed.add(j)
+                row = self._push_out(j, deadline)
+                if row is not None:           # (a row of parts moves up together)
+                    for k, t in row.items():
+                        self.travel[k] += np.linalg.norm(t - self.M[k][:3, 3])
+                        self.moved.add(k)
+                        self._set(k, t)
+                    self.moves += len(row)
+                    self.rows += 1
+                    key = (self.total(), self.soft_total())
+                    if self._better(key, best_key):
+                        best_key, best_M = key, [M.copy() for M in self.M[:self.n]]
+                    if on_step is not None:
+                        on_step(self)
+                    continue
+            if got is None and hard >= FAR:
+                stuck.add(j)                  # (no way out within reach: for packing again)
+                continue
             if got is None:
                 got = self._try(j, step[j])
             if got is not None:
