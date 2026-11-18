@@ -37,6 +37,7 @@ class Settings:
     gap_aim: float = None             # with two clearances: what pairs should have; `gap` is then the least
     jiggle_reseat: int = 3            # Jiggle may take out and place again this many parts that small moves
                                       # cannot free (0: never); what solved the owner's challenge build
+    jiggle_turns: float = 0.0         # degrees Jiggle may turn a stuck part (0: never; an option, owner 2026-11-17)
     jiggle_reach: float = 20.0        # mm: Jiggle keeps every part this near where it started (None: no limit); a
                                       # limit keeps it a quick search near a solution, not a rule (owner, 2026-11-17)
     wall_gap: float = 5.0             # from the side walls (x and y), mm
