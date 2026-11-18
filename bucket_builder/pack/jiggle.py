@@ -427,8 +427,9 @@ class Jiggler:
 
     def compromises(self):
         """Pairs that keep apart but closer than the least: [(a, b, closest mm,
-        area mm^2 within the least)], the largest area first (#43).  The area
-        is what makes a compromise acceptable or not."""
+        area mm^2 within the least, 'touching' or 'close')], touching ones
+        first, then the largest area (#43).  The area is what makes a
+        compromise acceptable or not; touching ones may fuse."""
         from . import contact
         out = []
         for key, pr in self.w.viol.items():
@@ -438,8 +439,9 @@ class Jiggler:
             if a is None or b is None:
                 continue
             low, area_a, area_b = contact.contact(self.meshes[a], self.M[a], self.meshes[b], self.M[b], self.gap)
-            out.append((a, b, float(pr.dist), max(area_a, area_b)))
-        return sorted(out, key=lambda r: -r[3])
+            k = contact.kind(self.meshes[a], self.M[a], self.meshes[b], self.M[b], float(pr.dist))
+            out.append((a, b, float(pr.dist), max(area_a, area_b), k))
+        return sorted(out, key=lambda r: (r[4] != 'touching', -r[3]))
 
     def score(self):
         """How good the layout is, worst first in the tuple: collisions, then
@@ -447,8 +449,10 @@ class Jiggler:
         one over a face, and any of them better than a collision), then the
         rest of the hard penalty, then the soft cost."""
         col = sum(1 for pr in self.w.viol.values() if pr.state == COLLIDE)
-        comp = sum((self.gap - d) * max(area, 1.0) for _, _, d, area in self.compromises())
-        return (col, round(comp, 3), round(self.total(), 6), round(self.soft_total(), 6))
+        cs = self.compromises()
+        touching = sum(1 for c in cs if c[4] == 'touching')      # (worse than any ordinary compromise)
+        comp = sum((self.gap - c[2]) * max(c[3], 1.0) for c in cs)
+        return (col, touching, round(comp, 3), round(self.total(), 6), round(self.soft_total(), 6))
 
     def _reseat_group(self, group, deadline):
         """The parts of `group` taken out together and placed again as a group

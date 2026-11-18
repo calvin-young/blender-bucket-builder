@@ -98,7 +98,7 @@ def _areas(T):
     return 0.5 * np.linalg.norm(np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0]), axis=1)
 
 
-def _split(T, size, cap=16):
+def _split(T, size, cap=64):
     """Each triangle cut into k x k smaller ones (k by its longest edge over `size`, at most `cap`)."""
     e = np.linalg.norm(T[:, [1, 2, 0]] - T, axis=2).max(axis=1)
     k = np.clip(np.ceil(e / size).astype(np.int64), 1, cap)
@@ -126,7 +126,7 @@ def _close_area(Ta, Tb, within):
     if not near.any():
         return 0.0, float('inf')
     low = float(d[near].min())
-    fine = _split(Ta[near], max(within, 0.05) / 2.0)        # (triangles counted whole: cut them small first)
+    fine = _split(Ta[near], max(within, 0.05) / 4.0)        # (triangles counted whole: cut them small first)
     df = _min_dist(fine, Tb, within)
     return float(_areas(fine)[np.isfinite(df)].sum()), low
 
@@ -140,3 +140,27 @@ def contact(mesh_a, Ma, mesh_b, Mb, within):
     area_a, low_a = _close_area(Ta[ia], Tb[ib], within)
     area_b, low_b = _close_area(Tb[ib], Ta[ia], within)
     return min(low_a, low_b), area_a, area_b
+
+
+# The owner's rule (2026-11-18): faces closer than 0.5 mm may fuse ("touching");
+# a point, edge or rounded approach can go to about 0.1 mm without fusing.
+FACE_GAP = 0.5           # mm
+POINT_GAP = 0.1          # mm
+FACE_SHARE = 0.6         # area within FACE_GAP over area within 2 x FACE_GAP: faces facing keep
+                         # most of it (a flat face is close all over), a rounded approach little
+
+
+def kind(mesh_a, Ma, mesh_b, Mb, closest):
+    """'touching' (may fuse) or 'close' for a pair `closest` mm apart.  Faces
+    facing each other are close over about the same area at FACE_GAP as at
+    twice that; a sphere, an edge or a corner is close over a patch that
+    grows with the distance.  So the share of one in the other tells them
+    apart, whatever the size of the parts."""
+    if closest < POINT_GAP:
+        return 'touching'
+    if closest >= FACE_GAP:
+        return 'close'
+    _l, a1, b1 = contact(mesh_a, Ma, mesh_b, Mb, FACE_GAP)
+    _l, a2, b2 = contact(mesh_a, Ma, mesh_b, Mb, 2 * FACE_GAP)
+    share = max(a1, b1) / max(a2, b2, 1e-9)
+    return 'touching' if share > FACE_SHARE else 'close'

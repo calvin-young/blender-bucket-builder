@@ -207,9 +207,10 @@ def _fix(folder, state, parts, s, locked, start, tighten, t0):
     except Exception:
         comp = []
     if comp:
-        state['compromises'] = [[int(a), int(b), float(d), float(area)] for a, b, d, area in comp]
+        state['compromises'] = [[int(a), int(b), float(d), float(area), k] for a, b, d, area, k in comp]
         state['log'].append('%d pairs closer than %.1f mm, kept apart: %s' % (
-            len(comp), s.gap, '; '.join('%.2f mm over %.0f mm2' % (d, area) for _, _, d, area in comp[:5])))
+            len(comp), s.gap, '; '.join('%.2f mm over %.0f mm2%s' % (d, area, ' (touching: may fuse)' if k == 'touching' else '')
+                                         for _, _, d, area, k in comp[:5])))
     state['finished'] = True
     _write(folder, state)
     return 0
