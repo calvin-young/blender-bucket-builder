@@ -267,6 +267,21 @@ challenge build:
 | Preferred to Roomy | not shown | a tiny cost, so free room is shared out |
 | Roomy or more | nothing | free |
 
+* **The minimum is a strong preference, not a wall** (the owner,
+  2026-11-17). His challenge build was first finished in another tool with
+  one 0.6 mm gap over a tiny area, which he accepted and which printed
+  fine; he would have been happy with "1.5 mm is not possible; here is a
+  compromise with 0.6 mm over a small area". So a gap under the minimum is
+  allowed at a very high cost that grows with the **area** in close contact
+  (#43), never silently: the outcome lists each compromise (where, how
+  close, over how much area) for the user to accept, or to try again
+  without a part. A collision is still never allowed.
+* **Alternative layouts** (#45): when the request cannot be met cleanly,
+  the run may offer two or three results side by side instead of one,
+  for example "7 of each with two compromises" against "6 of each, every
+  gap at 3 mm or more", so nobody loops over counts and the quality slider
+  by hand. Ratios are kept: a build of kits or 1:1 sets (#42) drops whole
+  sets, never single parts.
 * **The cost** is one curve made of the tiers: steep under Acceptable,
   gentle under Preferred, nearly flat under Roomy. Pairs are ranked by it,
   so the tightest gaps are always widened first.

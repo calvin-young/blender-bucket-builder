@@ -14,7 +14,7 @@ Cursor and Gemini CLI read it directly.
   height), Arrange tools (drop to floor, minimize box or height, tilt off axis,
   snap to the volume), and an automatic packer, still marked experimental
   (`docs/AUTOPACK.md`; print-quality rules in `docs/PRINT_QUALITY.md`).
-* **Status:** version 1.5.4, in production use by its first user. Declared for
+* **Status:** version 1.5.5, in production use by its first user. Declared for
   Blender 4.2 and newer; tested on Blender 5.2 (Linux, software OpenGL).
   Not yet tried: Blender 4.2 - 5.1, macOS, Vulkan / Metal, a real GPU.
 * **Runs in:** Blender's bundled Python (3.11 in 4.2) with NumPy, nothing else.
@@ -159,7 +159,7 @@ the code. Tagged so far: v1.0.0 (731961d), v1.1.0 (c32cec6), v1.2.0 (ae5a8bf),
 v1.3.0 (bf63370), v1.5.1 (same code as main's 1.5.0, cut for the status page's download button). Not tagged: 1.3.90-1.4.x, the `autopack` branch's previews,
 where "1.4.0" was used on both lines and 1.4.3 never reached the manifest; and
 1.5.0, whose code kept changing after the version was set (e8fdc24 to
-0614ea1). Tagged since: v1.5.2, v1.5.3, v1.5.4. The next build is 1.5.5. Builds also get a GitHub pre-release with the zip
+0614ea1). Tagged since: v1.5.2, v1.5.3, v1.5.4, v1.5.5. The next build is 1.5.6. Builds also get a GitHub pre-release with the zip
 attached, and a new download link on the Workbench row (ai-context, topics/workstation.md).
 
 ## Implementation notes
@@ -511,6 +511,15 @@ worker and seed 0 unless `--parallel`. What is next is in
 `docs/PACKER_PLAN.md` ("Built", then #24 / #26). Blender tests that load
 the add-on with `--factory-startup` need it enabled first with
 `--python-expr` (see the session's note in PACKER_PLAN if this bites).
+
+**2026-11-17 evening (1.5.5).** Jiggle re-seats (`reseat=`,
+`Settings.jiggle_reseat` = 3): a part that small moves cannot free, or the
+one blocking it, is placed again by the packer in free room, every other
+part held; this solved the owner's challenge build (local). One X-ray
+toggle beside Isolate (#44 part 1). Two-clearance packing keeps to its
+time and gives the aim all of it while every part fits. Questionnaire for
+challenge builds: `docs/CHALLENGE_BUCKETS.md` (the builds and the catalog
+stay local).
 
 **Next (2026-11-11, the owner's notes):** issues #28 - #40: overlay
 drawing order, inside-out and non-manifold checks, hidden parts by

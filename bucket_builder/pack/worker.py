@@ -28,7 +28,7 @@ from . import job as J, safe
 from .meshio import Mesh
 from .problem import Part, Settings
 
-SETTINGS = ('gap', 'gap_aim', 'jiggle_reach', 'wall_gap', 'h', 'coarse', 'phases', 'z_step', 'max_density', 'layer_cap',
+SETTINGS = ('gap', 'gap_aim', 'jiggle_reach', 'jiggle_reseat', 'wall_gap', 'h', 'coarse', 'phases', 'z_step', 'max_density', 'layer_cap',
             'layer_weight', 'candidates', 'time_limit', 'time_budget', 'preset', 'seed', 'compact', 'spread_z',
             'stall_time', 'restarts', 'jiggle', 'flat_rules', 'flat_pair_weight', 'flat_wall_weight',
             'flat_top_weight', 'spread_scale', 'height_far', 'height_top', 'height_band', 'near_top_extra')
@@ -190,8 +190,10 @@ def _fix(folder, state, parts, s, locked, start, tighten, t0):
         state['version'] += 1
         state['seconds'] = now - t0
         left = jg.total()
-        state['log'] = ['%6.1f s  jiggle     %d moves, %s' % (
-            now - t0, jg.moves, '%.2f mm of gap still missing' % left if left > jiggle.TOL else 'every rule kept')]
+        state['log'] = ['%6.1f s  jiggle     %d moves%s, %s' % (
+            now - t0, jg.moves,
+            ', %d parts placed again elsewhere' % len(jg.reseated) if getattr(jg, 'reseated', None) else '',
+            '%.2f mm of gap still missing' % left if left > jiggle.TOL else 'every rule kept')]
         _write(folder, state)
 
     keys, Ms, jg = jiggle.fix(parts, start or {}, s, locked, tighten, on_step=report,

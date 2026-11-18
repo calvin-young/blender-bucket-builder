@@ -48,6 +48,17 @@ the rest by small uniform shifts. No small turns. That changes the order:
    sees.
 4. **#24 and #26**, as before.
 
+**Update, later the same day:** re-seating is built (`reseat=`,
+`Settings.jiggle_reseat`, 3 by default since 1.5.5) and solved the
+challenge build (local numbers: no collision, nothing under 1.5 mm, fewer
+pairs under 3 mm than the owner's own solution). And the owner's direction
+on clearances: the minimum is a strong, area-aware preference with
+compromises reported for him to accept (#43), and alternative layouts
+(#45) with ratios kept (#42). Order from here: Jiggle speed (re-seating
+spends most of its time voxelizing the held parts again for every try:
+build their grid once per run), then turns, then tiers with the
+area-aware cost (needs #44's exact per-triangle distances), then #45.
+
 Jiggle's move limit is now `Settings.jiggle_reach` (20 mm by default,
 adjustable; the owner: the limit only keeps the search quick).
 

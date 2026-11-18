@@ -865,7 +865,8 @@ def fix(parts, start, s, locked=(), tighten=False, deadline=None, on_step=None, 
             raise Stopped()
     try:
         Ms, jg, _n = mend(items, s.vlo, s.vhi, s.gap, s.wall_gap, locked, deadline=deadline, on_step=step,
-                          aim=getattr(s, 'gap_aim', None), reach=getattr(s, 'jiggle_reach', None))
+                          aim=getattr(s, 'gap_aim', None), reach=getattr(s, 'jiggle_reach', None),
+                          reseat=getattr(s, 'jiggle_reseat', 0))
     except Stopped:
         jg = Jiggler(items, s.vlo, s.vhi, s.gap, s.wall_gap, locked, aim=getattr(s, 'gap_aim', None))   # (stopped: as it was)
         Ms = [np.asarray(M, float) for _, M in items]
