@@ -22,6 +22,35 @@ Revised 2026-11-17 with the owner's answers:
    "something a human would do but an autopacker normally wouldn't".
 4. **#24 and #26** (3a, 3b below).
 
+## Revised again, 2026-11-17 evening (the owner's solved challenge build)
+
+The owner's own solution of the challenge build (local comparison:
+`~/data/packbench/challenge/COMPARE.md` on the workstation) re-seated
+parts rather than nudging them: three flat plates turned 90 degrees and
+moved 170 - 260 mm, one long part dropped 77 mm, one row moved 15 mm, and
+the rest by small uniform shifts. No small turns. That changes the order:
+
+1. **Jiggle re-seats** (new, first): when small moves cannot clear a part,
+   take out the part that blocks most (not necessarily one in the
+   collision) and place it in the build's free room with every other part
+   held, in any of the 24 axis turns; the packer's lock does the placing.
+   Measured on the challenge build: does it reach zero collisions and his
+   clearance tiers? And on his future blind challenge builds.
+2. **Clearance tiers** instead of two numbers (docs/SPEC_PACK.md,
+   section 4): Minimum 1.5, Acceptable 3, Preferred 5, Roomy 10 mm by
+   default. `pack/soft.py` and Jiggle's `aim` generalize to a list of
+   tiers and one cost curve.
+3. **#44 (one X-ray toggle, exact hatching) and #43 (rank warnings by
+   contact area):** the toggle is small and goes in the next build; the
+   exact per-triangle distances serve both the hatching and the contact
+   area, and the area then weighs Jiggle's priorities. After 1 and 2,
+   because they change what the owner can do; #43 and #44 change what he
+   sees.
+4. **#24 and #26**, as before.
+
+Jiggle's move limit is now `Settings.jiggle_reach` (20 mm by default,
+adjustable; the owner: the limit only keeps the search quick).
+
 ## 1a. Repeatable runs (shrunk: a bench mode only)
 
 * **Approach:** `Settings.repeatable` (docs/AUDIT.md, section 2). Results

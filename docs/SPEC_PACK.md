@@ -136,34 +136,89 @@ Jiggle, Jiggle & Tighten and Improve Current Layout disappear as names.
 Fix Problems is Jiggle; Improve Layout is the other two, which were
 already the same loop started at different points.
 
-### 3.2 Three directions for the panel
+### 3.2 The panel: one action that keeps trying (revised 2026-11-17)
 
-![Three directions](images/spec_pack/pack_abc.png)
+The first version of this section offered three directions (A: four verbs,
+B: one sentence, C: one button that follows the build) and recommended A.
+The owner's answer changed it, and he is right on the main point:
 
-**A. Four verbs.** One button per action, each with a line saying what it
-does and what it leaves alone. The one that fits the build's state is the
-large one; an action with nothing to do is greyed ("Add" with nothing
-waiting).
+* He likes **B's sentence**: the button says what it is about to do, in
+  the options chosen. And **A's clarity**.
+* But **the user should not have to choose between fixing and adding.**
+  Nobody knows beforehand whether the clashes can be fixed, whether the new
+  parts fit, or whether both can be done together. Separate buttons make
+  the user guess and try them in turn.
 
-**B. One sentence.** Three choices (which parts, how far, start from) and
-one button whose text says what it is about to do. It is the model itself
-on screen: nothing hidden, every combination reachable, including ones
-the verbs do not name (improve only the selection).
+**Direction D, adopted as the design:** one action that aims at everything
+asked for, keeps trying until it is done or the time is up, and ends with
+an outcome that says what happened and what to do next.
 
-**C. One button that follows the build.** The panel reads the build and
-offers the single action that makes sense now; the others are in a menu.
+![Direction D](images/spec_pack/pack_d.png)
 
-**Recommendation: A.**
+What the user chooses, in plain sentences:
 
-* B is honest but it asks a new user three questions before they can do
-  anything, and two of its eight combinations are nonsense.
-* C is the fastest when it guesses right and the most confusing when the
-  button changes under the user's hand, or when they want the other
-  action and have to find it.
-* A costs four buttons. It names each use case in the user's own words,
-  and its status lines carry C's best part (the panel tells you what it
-  sees). B's extra combinations are covered by one rule that needs no
-  control: **with a selection, Improve and Fix act on the selection.**
+* **Try to:** fix the problems (ticked when there are any), add the
+  waiting parts (ticked when there are any), and then make the build lower
+  (off by default: it moves everything, which a hand pack does not want).
+* **Parts may move:** only those with problems, or any unlocked part.
+* **Up to:** how far a part may end up from where it was (20 mm by
+  default). It keeps the search quick and near a solution; it is not a rule
+  of the build, so it is a number the user can raise (the owner, 2026-11-17).
+
+The button spells it out: "Fix 4 Problems and Add 3 Parts, Moving Any Part
+up to 20 mm". Unticking a box changes the sentence.
+
+What the run does, cheapest first, until everything asked is done or the
+time is up:
+
+1. Small moves (today's Jiggle, with the clearance tiers of section 4).
+2. **Re-seat:** take out the part that blocks most, and place it in the
+   build's free room with every other part held, in any of the 24 axis
+   turns. This is what the owner did by hand on the challenge build: three
+   plates turned 90 degrees and moved elsewhere opened the crowded row
+   that no small move could. It is the same step as adding a waiting part.
+3. Add the waiting parts into the free room, at the best clearance tier
+   that fits each.
+4. If asked, make the build lower (today's Improve).
+
+Every pass starts from the best layout so far, so **Try Again continues**;
+it never throws away what was won.
+
+**The outcome** (the result box of 3.3 stays, with one of these heads):
+
+1. "Couldn't fix the build": what is left, and why, and what would help
+   (more time, a larger move limit, taking a part out).
+2. "Fixed, but none of the new parts fit": try again if there is time.
+3. "Fixed, and added 2 of 3": try again for the last one.
+4. "Done": everything asked, with the clearance tiers reached.
+
+![Outcomes](images/spec_pack/pack_d_result.png)
+
+**What stays separate, and why:**
+
+* **Pack All From Scratch...** forgets the layout. It cannot be a step of
+  "keep trying", which promises to keep what is there, so it is its own,
+  smaller button, and it asks first.
+* "Make the build lower" is a checkbox, not the default. It is the one
+  step that moves parts nobody asked to move.
+
+**The owner's open points, answered:**
+
+* *A pinned part that is selected:* pinned wins, with a note under the
+  button ("2 selected parts are pinned and stay"). Agreed.
+* *Goal and Must Fit / Nice to Have:* priority tiers first, the Goal
+  second. A part marked Must Fit is placed before any other, and a Nice to
+  Have is never placed at the cost of a part above it. Among parts of one
+  tier the Goal decides (biggest parts first, most parts, lowest build).
+  The panel says so in the Goal's tooltip and in the outcome ("1 Nice to
+  Have part left out"). Two tiers are enough (Must Fit, and the rest), plus
+  Nice to Have as a third if the owner wants it; today's code has tiers
+  already (`Part.tier`).
+
+**Where I still push back:** a "keep trying" button must say when it has
+stopped making progress, or users will press Try Again forever. The
+outcome says "no better layout found in the last 2 minutes" when that is
+the case, and offers the concrete next step instead of Try Again.
 
 ### 3.3 The result stays, and names what is left (#32)
 
@@ -192,33 +247,44 @@ spliced into its model text, so names, metadata, colors and anything this
 tool does not understand come out byte for byte as they went in. It
 prints where each part went, or that there was no room and why.
 
-## 4. Soft clearance (#35)
+## 4. Clearance tiers (#35, revised 2026-11-17)
 
-Two numbers instead of one: **Aim** (3 mm) and **At Least** (1 mm).
+Not two numbers but tiers, from the owner's practice for builds like the
+challenge build:
+
+| Tier | Default | Meaning |
+| --- | --- | --- |
+| **Minimum** | 1.5 mm | the hard rule: never under it |
+| **Acceptable** | 3 mm | fine for most pairs |
+| **Preferred** | 5 mm | what a careful hand pack aims for |
+| **Roomy** | 10 mm | "whatever you can get away with": more is better up to here |
 
 | Gap | Live check | Packer and Fix |
 | --- | --- | --- |
-| under At Least | a problem; the build fails | never allowed |
-| between the two | a note that does not fail the build: "14 gaps under 3 mm, smallest 1.6" | allowed at a cost that grows as the gap shrinks |
-| Aim or more | nothing | free |
+| under Minimum | a problem; the build fails | never allowed |
+| Minimum to Acceptable | an amber note, counted in the badge ("6 gaps under 3 mm") | allowed at a high cost |
+| Acceptable to Preferred | listed, quiet | allowed at a small cost |
+| Preferred to Roomy | not shown | a tiny cost, so free room is shared out |
+| Roomy or more | nothing | free |
 
-* **Live check.** The engine already has two thresholds (the old
-  "collision distance" and the clearance); they become At Least and Aim.
-  The overlay gains one quieter color for "under the aim".
-* **Fix Problems** solves what is under At Least first, by the smallest
-  moves, and widens gaps toward the aim only where that costs nothing
-  else. On a tight hand pack that is the behavior wanted: clashes gone,
-  the layout otherwise as the person left it.
-* **Packing** in two steps, cheapest first. Step 1 (build first): pack at
-  the aim; bodies left over are tried again at At Least, and the result
-  says which ones were squeezed in. Step 2 (later, if the Magics and
-  Netfabb numbers say density is lost here): the search scores placements
-  by how much of the band between the two it uses.
-* Inside a cage the contents are held to At Least, not the aim: a cage is
-  small on purpose.
-* The reference test is the owner's hand-packed challenge build (local
-  only): Fix Problems must clear its clashes at At Least 1 mm without
-  moving any part more than a few millimeters.
+* **The cost** is one curve made of the tiers: steep under Acceptable,
+  gentle under Preferred, nearly flat under Roomy. Pairs are ranked by it,
+  so the tightest gaps are always widened first.
+* **Which pairs matter most** is not the smallest gap alone: two plates
+  2 mm apart over a large area matter more than two spheres at 1 mm (#43).
+  When the contact area is measured (with #44's exact hatching), the cost
+  and the list of warnings weigh it.
+* **Packing:** at Preferred first; parts left out are tried at Acceptable,
+  then at Minimum (squeezed in, or everything packed again at that tier,
+  whichever places more; `pack/soft.py` does this for two tiers today);
+  then Jiggle shares the slack out toward Roomy.
+* **Jiggle** solves what is under Minimum first, then widens gaps tier by
+  tier where that costs nothing else.
+* Inside a cage the contents are held to Minimum: a cage is small on
+  purpose.
+* The defaults belong to the kind of build (the owner gave these for
+  hand-packed buckets of mid-size parts); a printer or material profile
+  may change them later.
 
 ## 5. Arrange: fixtures and copies
 
@@ -356,9 +422,9 @@ they should land on a check that is known to be right.
 ## 9. Where this differs from the issues as written
 
 * **#33** asked for "perhaps one Improve button with a how-far choice".
-  That is direction B. I recommend four named actions instead: the
-  how-far choice is real, but it reads better as the difference between
-  Fix and Improve than as a setting.
+  After the owner's answer the design is one action that keeps trying,
+  with the how-far choice and a sentence on the button (section 3.2);
+  Pack All From Scratch stays separate because it forgets the layout.
 * **#36** asks for cage defaults that survive blasting. The design gives
   the controls; the numbers are not mine to invent.
 * **#41** proposes marking non-cosmetic faces. Points are simpler to
@@ -375,14 +441,15 @@ they should land on a check that is known to be right.
   the data model, the interface in two or three directions, how the
   packer treats units, the order of building.
 * **Assumed:** units are parent and children, not collections; kit 1 is
-  the recipe; markers are Empties; the clearance names "Aim" and "At
+  the recipe; markers are Empties; the clearance tier names (Minimum,
+  Acceptable, Preferred, Roomy); the
   Least"; "waiting" for bodies outside the volume; the action names.
 * **Not asked (the owner's to decide):**
-  1. Direction A, B or C for the Pack panel.
+  1. (Answered 2026-11-17: one action that keeps trying, section 3.2.)
   2. Cage numbers: bar sizes for the three strengths, the smallest
      useful window, clearance to the contents.
   3. The polisher's rack and hook dimensions, and parts per rack.
-  4. Whether a gap between At Least and Aim should ever fail the build
+  4. Whether gaps between Minimum and Acceptable should ever fail the build
      (for instance more than some number of them).
   5. Raised or engraved first, for his own jobs.
 * **Follow-ups:** hull-shaped cages; collection instances as units;
