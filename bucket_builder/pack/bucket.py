@@ -18,6 +18,7 @@ direct window checks.
 """
 
 import math
+import os
 import threading
 from collections import OrderedDict
 
@@ -35,7 +36,7 @@ except Exception:                    # pragma: no cover
 # (not in Blender's bundled Python; BB_GPU=0 turns it off).  The bucket's
 # spectrum and the parts' spectra stay on the GPU; only the mask comes back.
 _cp = None
-if __import__('os').environ.get('BB_GPU', '1') != '0':
+if os.environ.get('BB_GPU', '1') != '0':
     try:                                # pragma: no cover - depends on the machine
         import cupy as _cupy
         _cupy.cuda.runtime.getDeviceCount()
