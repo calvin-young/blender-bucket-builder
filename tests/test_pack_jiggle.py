@@ -165,12 +165,30 @@ def turns():
     check(not jg.turned, 'a part marked fixed is never turned')
 
 
+def reseat():
+    print('re-seating: a part small moves cannot free is placed again in free room')
+    box = S.box(20, 20, 20)
+    vlo, vhi = (0, 0, 0), (300, 150, 100)
+    # a box wedged into its locked neighbors on every side, and room elsewhere in the build
+    lock = [(box, at(100 + dx, 60 + dy, 40 + dz)) for dx, dy, dz in
+            ((-20.5, 0, 0), (20.5, 0, 0), (0, -21, 0), (0, 21, 0), (0, 0, -21), (0, 0, 21))]
+    free = [(box, at(100.3, 60, 40))]
+    Ms, jg = jiggle.jiggle(free, vlo, vhi, 1.0, 5.0, locked=lock, seconds=20)
+    v = referee.check([('l', m, M) for m, M in lock] + [('p', box, Ms[0])], vlo, vhi, 1.0, 5.0)
+    check(not v.ok and not jg.reseated, 'without re-seating it stays wedged')
+    Ms, jg = jiggle.jiggle(free, vlo, vhi, 1.0, 5.0, locked=lock, seconds=60, reseat=1)
+    v = referee.check([('l', m, M) for m, M in lock] + [('p', box, Ms[0])], vlo, vhi, 1.0, 5.0)
+    moved = float(np.linalg.norm(Ms[0][:3, 3] - free[0][1][:3, 3]))
+    check(v.ok and jg.reseated == [0], 'with re-seating it is placed again, %.0f mm away, and every rule is kept' % moved)
+
+
 if __name__ == '__main__':
     main()
     soft()
     fair()
     rows()
     turns()
+    reseat()
     print()
     if FAILS:
         print('FAILED: %d' % len(FAILS))
