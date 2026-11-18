@@ -253,6 +253,8 @@ class BUCKETBUILDER_PT_problems(_Base, Panel):
         op.direction = -1
         # going to a problem then shows its parts on their own (local view)
         row.operator("bucketbuilder.isolate", text="", depress=st.isolate, icon=ISOLATE_ICON)
+        row.operator("bucketbuilder.xray", text="", depress=context.window_manager.bucket_builder_xray,
+                     icon='XRAY')
         sub = row.row(align=True)
         sub.enabled = n > 0
         op = sub.operator("bucketbuilder.step_problem", text="Next  \u25b6")

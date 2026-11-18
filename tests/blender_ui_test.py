@@ -295,13 +295,13 @@ def main():
     assert '1 Part Outside Build Volume' in labels and any('Clearance Warning' in t for t in labels), labels[:8]
     assert not alerts, ('the lines of the verdict are all plain: their color is in the icons', alerts)
     assert 'HP MJF 5600' in labels and LOG[n0:][LOG[n0:].index(('label', 'HP MJF 5600')) + 1] == ('label_icon', 'INFO')
-    # The list of problems: previous, on its own, next, in that order; then
+    # The list of problems: previous, on its own, X-ray, next, in that order; then
     # Blender's list widget with a row for every problem, each with one of
     # Blender's own icons (one per kind), a color tab that is shown and
     # cannot be clicked, and a magnifier for "on its own".
     called = [t for k, t in LOG[n0:] if k == 'operator']
     at = called.index('bucketbuilder.step_problem')
-    assert called[at:at + 3] == ['bucketbuilder.step_problem', 'bucketbuilder.isolate',
+    assert called[at:at + 4] == ['bucketbuilder.step_problem', 'bucketbuilder.isolate', 'bucketbuilder.xray',
                                  'bucketbuilder.step_problem'], called[at:at + 4]
     texts = [t for k, t in LOG[n0:] if k == 'operator_text']
     assert any(t.endswith('Previous') for t in texts) and any(t.startswith('Next') for t in texts), texts[:6]
@@ -315,6 +315,7 @@ def main():
     assert len(set(ui._KIND_ICON[k] for k in ('PARTIAL', 'COLLIDE', 'CLEAR', 'WALL'))) == 4
     assert ui._KIND_ICON['WALL'] == 'OBJECT_HIDDEN'
     op_icons = [t for k, t in LOG[n0:] if k == 'operator_icon']
+    assert ('bucketbuilder.xray', 'XRAY') in op_icons, 'the X-ray toggle is missing'
     assert ('bucketbuilder.isolate', 'VIEWZOOM') in op_icons and \
         ('bucketbuilder.isolate_problem', 'VIEWZOOM') in op_icons, 'the magnifier is missing'
     assert not any(icon.startswith('SOLO') for _, icon in op_icons), 'a star is left'

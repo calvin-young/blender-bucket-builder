@@ -687,6 +687,9 @@ def register():
     bpy.types.WindowManager.bucket_builder_row = IntProperty(
         name="Problem", description="Frame this problem in the viewport and select the parts involved",
         get=_row_get, set=_row_set, options={'SKIP_SAVE'})
+    bpy.types.WindowManager.bucket_builder_xray = BoolProperty(
+        name="X-Ray", description="See through parts: Blender's X-ray and the hatching behind geometry, together",
+        default=False, options={'SKIP_SAVE'})
     bpy.types.Object.bucket_builder_ignore = BoolProperty(
         name="Ignore in Bucket Builder",
         description="Leave this object out of collision, clearance and build-volume checks",
@@ -695,6 +698,7 @@ def register():
 
 def unregister():
     del bpy.types.Object.bucket_builder_ignore
+    del bpy.types.WindowManager.bucket_builder_xray
     del bpy.types.WindowManager.bucket_builder_row
     del bpy.types.WindowManager.bucket_builder_rows
     del bpy.types.Scene.bucket_builder

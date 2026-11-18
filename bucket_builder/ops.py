@@ -293,6 +293,39 @@ class BUCKETBUILDER_OT_isolate(Operator):
         return {'FINISHED'}
 
 
+_XRAY_BEFORE = {}        # 3D view space pointer -> its own X-ray setting before the toggle; and 'hatch'
+
+
+class BUCKETBUILDER_OT_xray(Operator):
+    """See through parts to judge clearances: turns Blender's X-ray on in every 3D view and lets the hatching show behind geometry. Off puts both back as they were"""
+    bl_idname = "bucketbuilder.xray"
+    bl_label = "X-Ray"
+
+    def execute(self, context):
+        wm = context.window_manager
+        pr = props.prefs(context)
+        spaces = [sp for win in wm.windows for area in win.screen.areas if area.type == 'VIEW_3D'
+                  for sp in area.spaces if sp.type == 'VIEW_3D']
+        if not wm.bucket_builder_xray:
+            _XRAY_BEFORE.clear()
+            for sp in spaces:
+                _XRAY_BEFORE[sp.as_pointer()] = sp.shading.show_xray
+                sp.shading.show_xray = True
+            if pr is not None:
+                _XRAY_BEFORE['hatch'] = pr.use_xray
+                pr.use_xray = True
+            wm.bucket_builder_xray = True
+        else:
+            for sp in spaces:
+                sp.shading.show_xray = _XRAY_BEFORE.get(sp.as_pointer(), False)
+            if pr is not None and 'hatch' in _XRAY_BEFORE:
+                pr.use_xray = _XRAY_BEFORE['hatch']
+            _XRAY_BEFORE.clear()
+            wm.bucket_builder_xray = False
+        monitor.tag_redraw_all()
+        return {'FINISHED'}
+
+
 class _RowOperator:
     """What the buttons in a row of the list of problems have in common: they
     name their problem by its kind and the names of its parts."""
@@ -909,6 +942,7 @@ CLASSES = (
     BUCKETBUILDER_OT_focus_problem,
     BUCKETBUILDER_OT_step_problem,
     BUCKETBUILDER_OT_isolate,
+    BUCKETBUILDER_OT_xray,
     BUCKETBUILDER_OT_isolate_problem,
     BUCKETBUILDER_OT_ignore_problem,
     BUCKETBUILDER_OT_count_all_problems,
