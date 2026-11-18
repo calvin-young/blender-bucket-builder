@@ -31,7 +31,7 @@ Little things the maintainer asked for or caught, what the status page shows. Co
 
 | Bugs found | UI tweaks | New features | Direction | Total |
 |---|---|---|---|---|
-| 8 | 17 | 21 | 42 | 88 |
+| 9 | 18 | 25 | 45 | 97 |
 
 ## Sessions
 
@@ -41,6 +41,7 @@ line counts once, in the session it came up in.
 
 | Date | Tool and model | Prompts | Steering lines |
 |---|---|---|---|
+| 2026-11-14 to 18 | Claude Code (workstation), Opus 5.5, sent by an orchestrating session | 1 | 18 |
 | 2026-11-11 | Claude Code (workstation), Opus 5.5 | 1 | 5 |
 | 2026-11-11 to 13 | Claude Code (workstation), Fable 5.2 and Opus 5.5, sent by an orchestrating session | 1 | 3 |
 | 2026-11-10 | Claude Code (workstation), Opus 5.5 | 4 | 3 |
@@ -73,6 +74,15 @@ the detail.
 - 2026-11-18 [domain]: 1.49 mm meets a 1.5 mm minimum; hundredths under it are not compromises.
 - 2026-11-18 [domain]: faces under 0.5 mm may fuse; rounded, edge or corner approaches can go to about 0.1 mm.
 - 2026-11-18 [direction]: pack from scratch as a user would: "1:1 ratio, fit as many as you can"; whole sets, not broken ones.
+- 2026-11-18 [tested][bug]: Build Report said 12 parts out, the live check said in, for parts at exactly 0.000 mm from a wall; 0.001 mm counts as 0, be strict.
+- 2026-11-18 [direction][feature]: the packer must never place parts exactly at a wall.
+- 2026-11-18 [ui][feature]: hidden parts ignored by default everywhere; a hidden part inside the volume is named in the report.
+- 2026-11-18 [domain][feature]: his whole-set method: hardest part first, N copies nested at the core, then the best nesters, squeeze the rest, N - 1 if it fails.
+- 2026-11-18 [tested][direction]: the 4-set layout is good for an autopacker but chaotic: flat faces aligned to nothing, dead space; align faces with walls and neighbors.
+- 2026-11-18 [domain][feature]: ratios may break inside a bucket if they hold across buckets (6,6,7,7,7 + 7,7,6,6,6 beats 4 x 5); plan for yield.
+- 2026-11-18 [domain][feature]: cage numbers: voxelized on a 10 - 20 mm grid, windows 10 - 20 mm, strengths 1 x 1.5 / 1.5 x 2 / 2 x 3 mm, clearance = nominal.
+- 2026-11-18 [direction][feature]: raised labels first, mind zonal scaling; racks for AMT and DyeMansion.
+- 2026-11-18 [direction]: compare with Netfabb 2027 on the challenge parts (and Magics later).
 - 2026-11-11 [bugs]: the figurines beat their "floor": it was computed for upright parts while the comparison let them turn.
 - 2026-11-10 [direction]: a day of autonomous packer work: find weaknesses, fix them, benchmark against every packer available, Netfabb's trial included.
 - 2026-11-10 [direction]: a report for his management that places the packer against the industry and research, names packers we could still get, and quantifies headroom, hardware limits and what compiled code would buy.

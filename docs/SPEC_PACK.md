@@ -365,8 +365,14 @@ A rack is a unit: one rail object and its parts, overlapping at the gates.
   packer arranges the copies in rows with the gate points facing a rail;
   the rail and gates are generated between them; each rack becomes a
   unit and the racks are packed. This is a prototype first: how far it
-  goes is judged on a real part with the owner, and it needs the
-  polisher's dimensions from him.
+  goes is judged on a real part with the owner.
+* **Machine presets** (AMT PostPro now, DyeMansion too: the owner,
+  2026-11-18). What is published is in `docs/POSTPROCESS_MACHINES.md`:
+  chamber or basket sizes only (AMT SF100 400 x 600 x 400 mm, SF50
+  400 x 300 x 400 mm, DyeMansion Powerfuse S basket 610 x 340 x 315 mm).
+  No maker publishes rack, hook spacing or hanger type, so a preset holds
+  the chamber size and the user enters rack length, hook spacing, parts
+  per rack and the clearance for vapor, saved per machine.
 
 ### 5.4 Numbered copies (#39)
 
@@ -478,7 +484,8 @@ they should land on a check that is known to be right.
 * **Not asked (the owner's to decide):**
   1. (Answered 2026-11-17: one action that keeps trying, section 3.2.)
   2. (Answered 2026-11-18: cage numbers, section 5.1.)
-  3. The polisher's rack and hook dimensions, and parts per rack.
+  3. The polisher's rack and hook dimensions, and parts per rack (not published by
+     the makers, `docs/POSTPROCESS_MACHINES.md`: to be measured on his machine).
   4. Whether gaps between Minimum and Acceptable should ever fail the build
      (for instance more than some number of them).
   5. (Answered 2026-11-18: raised first.)

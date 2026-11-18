@@ -131,6 +131,41 @@ why only 24 - 28 parts fit: look at the layouts with the owner, then the
 orientation and nesting search for few large parts (#24, #26); (3) the
 first stage's time on large parts (minutes for 25 parts).
 
+**How the owner packs whole sets (2026-11-18), to teach the packer.**
+His verdict on the 7-set request (4 complete sets): "quite good as far as
+autopackers go", but chaotic: every part has flat faces, yet none is
+aligned to the bucket or to its neighbors, which leaves dead space. His
+own method, in order:
+
+1. Estimate N by eye.
+2. Place the biggest, hardest part first, its N copies nested in a simple
+   pattern at the core of the bucket (here the L-shaped holder, 7 nested).
+3. Judge from the room that took whether N of everything else fits.
+4. Then the parts that nest best, then squeeze the rest into the gaps.
+5. If it does not fit, drop to N - 1 and start again.
+
+What that means for the packer, as the next build steps (replacing (1) and
+(2) above): (a) a **set mode** that runs this loop: N from the volume
+bound, the hardest kind first as a lattice of N (the pattern packer
+already makes nested lattices), then the rest by nesting quality, whole
+sets only, N - 1 on failure; (b) **aligned orientations first**: for
+parts with large flat faces, prefer turns that put those faces parallel
+to the walls and to neighbors' faces (the free search draws from 24 turns
+of the principal frame, so alignment with the bucket is there; alignment
+between parts is not scored); (c) a score term for **dead space** between
+parallel faces that are not touching. His 7 sets is the expert bar (ten
+years of packing; he believes few colleagues would reach 7), and he wants
+to put this bucket to the company as a challenge: "how many copies can
+YOU fit?"
+
+**Ratios across buckets (the owner, 2026-11-18).** The job repeats (about
+150 of each), so a ratio may break inside one bucket if it holds across
+several: two buckets of 6, 6, 7, 7, 7 and 7, 7, 6, 6, 6 beat 4, 4, 4, 4, 4.
+Offer that as an alternative with its logistics noted (which bucket gets
+which extra). Yield matters too: a pair that is too close may fail every
+time, so a nominal 7 can really be 6; counts per bucket get adjusted as
+yield data comes in. Issues #46, #47.
+
 Jiggle's move limit is now `Settings.jiggle_reach` (20 mm by default,
 adjustable; the owner: the limit only keeps the search quick).
 
