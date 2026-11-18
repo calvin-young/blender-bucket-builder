@@ -139,6 +139,30 @@ Revised 2026-11-17 with the owner's answers:
 * **Risks:** step 1 changes results only when parts are left out; say so
   in the panel, or it looks like the setting does nothing.
 
+## Built, 2026-11-17
+
+* **1b, the independent check:** `tests/ref_slow.py` (no code shared with
+  the engine; samples about 0.5 mm apart; a pair it calls too close is
+  certainly too close), `tests/test_ref_slow.py`, and `--slow-check` in
+  `tools/bench_suite.py`. On the owner's challenge build it finds exactly
+  the referee's 13 pairs (5 minutes); on three packed synthetic buckets
+  both say clean.
+* **1a, shrunk:** `tools/bench_suite.py` runs one worker with seed 0
+  unless `--parallel`; two runs of four buckets gave the same numbers.
+* **2a, Jiggle speed:** trial moves on the quick solve, the step taken
+  measured exactly and undone if not better; cached boxes. 4x the moves
+  per second; the challenge build reaches a better end state in 5 minutes
+  than in 15 before (same collision left, 12 pairs short of the aim
+  instead of 20).
+* **2b, turns:** `jiggle(..., turns=degrees)`, off by default, at most two
+  parts, `fixed` parts never. They do not clear the challenge build's last
+  collision (tried 1 - 4 degrees about each axis on both parts).
+* **4, soft clearance in the packer:** `pack/soft.py`, `--aim` on the
+  command line, the worker when `Settings.gap_aim` is set. No panel
+  control yet (docs/SPEC_PACK.md, step 1).
+
+Still to do: #24 and #26 (3a, 3b); the panel's two clearance fields.
+
 ## State at hand-over
 
 * Jiggle has two clearances, ways out of collisions, row pushes and a
@@ -146,4 +170,4 @@ Revised 2026-11-17 with the owner's answers:
 * The challenge build (local, `~/data/packbench/challenge/RESULT.md` on
   the workstation): all but one collision cleared; the last has no room
   by small moves.
-* Not built: everything above. Build 1.5.4 has not been cut.
+* See "Built" above for what changed since.
