@@ -9,6 +9,8 @@ the end.
 The mock-ups are drawn in a real Blender 5.2 sidebar with dummy controls
 (`docs/images/spec_pack/`).
 
+Who packs and what "good" means for them: [USE_CASES.md](USE_CASES.md).
+
 ## 1. The idea in one paragraph
 
 Six issues ask for six features. Underneath they need three things the

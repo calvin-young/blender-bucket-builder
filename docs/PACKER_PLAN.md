@@ -6,6 +6,8 @@ before and after on `tools/bench_suite.py` (synthetic, numbers may be
 published) and on the owner's real builds (local only, reported as
 bucket-01 and so on), and keep a change only if the numbers improve.
 
+Who packs and what "good" means for them: [USE_CASES.md](USE_CASES.md).
+
 ## The order, and why
 
 Revised 2026-11-17 with the owner's answers:
