@@ -17,6 +17,7 @@ That keeps a report of a customer's bucket safe to paste anywhere
 import argparse
 import sys
 import time
+from dataclasses import replace
 
 import numpy as np
 
@@ -72,7 +73,10 @@ def build_parser():
     k.add_argument('--center', action='store_true', help='volume centered on x = y = 0')
     k.add_argument('--mode', choices=('fixed', 'z', 'free'), default='z', help='rotation of every part (z)')
     k.add_argument('--copies', type=int, default=1, help='make this many of every part (1)')
-    k.add_argument('--gap', type=float, default=5.0, help='between parts, mm (5)')
+    k.add_argument('--gap', type=float, default=5.0, help='between parts, mm (5); with --aim, the least')
+    k.add_argument('--aim', type=float, default=None,
+                   help='the gap wanted between parts, mm; --gap is then the least accepted where the aim '
+                        'would leave parts out')
     k.add_argument('--wall-gap', type=float, default=5.0, help='from the side walls, mm (5)')
     k.add_argument('--max-density', type=float, default=12.0, help='3D density limit in %% (12; 0: none)')
     k.add_argument('--cell', type=float, default=1.0, help='voxel size, mm (1)')
@@ -131,11 +135,16 @@ def pack_one(args, out):
     def upd(j):
         if not first and j.best is not None:
             first.append(j._best_height())
-    jb = J.Job(parts, s, workers=args.workers)
-    try:
-        res = jb.run(upd)
-    finally:
-        jb.close()
+    if getattr(args, 'aim', None):
+        from . import soft
+        res, squeezed, soft_log = soft.pack(parts, replace(s, gap_aim=args.aim), workers=args.workers, on_update=upd)
+    else:
+        squeezed, soft_log = [], []
+        jb = J.Job(parts, s, workers=args.workers)
+        try:
+            res = jb.run(upd)
+        finally:
+            jb.close()
     items = res.items(parts)
     rep = metrics.measure(items, vlo, vhi)
     n = sum(q.quantity for q in parts)
@@ -156,8 +165,17 @@ def pack_one(args, out):
         p('  layer density  peak %.1f %%, spread %s' % (100 * rep.peak_layer, fmt_cv(rep)))
     if first and rep.density is not None:
         p('  first layout   %.1f mm' % first[0])
-    p('  time           read %.1f s, pack %.1f s (%d process%s)' % (t_read, res.seconds, jb.workers,
-                                                                   '' if jb.workers == 1 else 'es'))
+    nproc = jb.workers if not getattr(args, 'aim', None) else (args.workers or 1)
+    p('  time           read %.1f s, pack %.1f s (%d process%s)' % (t_read, res.seconds, nproc,
+                                                                   '' if nproc == 1 else 'es'))
+    for line in soft_log:
+        p('  two gaps    ' + line)
+    if squeezed and len(squeezed) == len(res.placements):
+        p('  two gaps       the aim (%.1f mm) left parts out: packed at the least (%.1f mm), slack spread toward the aim'
+          % (args.aim, args.gap))
+    elif squeezed:
+        p('  squeezed in    %d parts closer than the aim (%.1f mm), at least %.1f mm' % (
+            len(squeezed), args.aim, args.gap))
     if args.referee:
         v = referee.check(items, vlo, vhi, args.gap, args.wall_gap)
         p('  referee        %s (%.1f s)' % ('clean' if v.ok else 'VIOLATIONS: %s' % v, v.seconds))

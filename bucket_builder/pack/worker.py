@@ -103,6 +103,8 @@ def main(folder):
         s = Settings(vlo=job['vlo'], vhi=job['vhi'], **job['settings'])
         if job.get('mode') in ('fix', 'fix_tighten'):
             return _fix(folder, state, parts, s, locked, start, job['mode'] == 'fix_tighten', t0)
+        if s.gap_aim and s.gap_aim > s.gap and not start:
+            return _soft(folder, state, parts, s, locked, t0)
         jb = J.Job(parts, s, locked, start=start)
         stop = os.path.join(folder, 'stop')
         last = [0.0, -1, -1]
@@ -145,6 +147,25 @@ def main(folder):
         state['finished'] = True
         _write(folder, state)
         return 1
+    return 0
+
+
+def _soft(folder, state, parts, s, locked, t0):
+    """Two clearances (pack.soft): the aim where it fits, the least where the
+    aim would leave parts out.  Reports the phases' log; no live moves."""
+    from . import soft
+    state['phase'] = 'greedy'
+    _write(folder, state)
+    res, squeezed, log = soft.pack(parts, s, locked=locked)
+    state['phase'] = 'done'
+    state['placements'] = [[p.part, p.copy, p.orientation, np.asarray(p.matrix).ravel().tolist()]
+                           for p in res.placements]
+    state['unplaced'] = [[i, c, why] for i, c, why in res.unplaced]
+    state['squeezed'] = [[p.part, p.copy] for p in squeezed]
+    state['log'] = log
+    state['seconds'] = time.perf_counter() - t0
+    state['finished'] = True
+    _write(folder, state)
     return 0
 
 
