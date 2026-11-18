@@ -46,11 +46,21 @@ def pack(parts, s, workers=None, on_update=None, aim_share=0.45, locked=()):
         finally:
             jb.close()
     log = []
-    s_aim = replace(s, gap=aim, gap_aim=None,
-                    time_budget=None if total is None else total * aim_share)
+    # The aim gets all the time while every part fits; once its first layout
+    # leaves parts out, only its share, and the rest goes to getting them in.
+    s_aim = replace(s, gap=aim, gap_aim=None, time_budget=total)
     jb = J.Job(parts, s_aim, locked, workers=workers)
+    seen = {'done': False}
+
+    def watch(j):
+        if not seen['done'] and j.best is not None and total is not None:
+            seen['done'] = True
+            if j.result().unplaced:
+                j.budget = max(j.elapsed, min(j.budget, aim_share * total))
+        if on_update is not None:
+            on_update(j)
     try:
-        res = jb.run(on_update)
+        res = jb.run(watch)
     finally:
         jb.close()
     log.append('%6.1f s  at the aim (%.2f mm): %d placed, %d left out' % (
