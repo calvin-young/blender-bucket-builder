@@ -114,6 +114,23 @@ check out on synthetic cases (two faces 0.5 mm apart: 500 mm2 for 400 mm2
 faces, the strip along their edges counted too) and take 0.2 - 5 s per
 pair on parts of 200 k triangles.
 
+**Packing from scratch, measured 2026-11-18** (the owner's request as a
+user: five distinct parts, "1:1 ratio, fit as many as you can"; local
+files, results in `~/data/packbench/challenge/loose/`): at most **4
+complete sets**. Asking for 5 - 9 of each placed 24 - 28 parts in all, the
+large parts first, so higher counts broke more sets; giving each set its
+own priority tier (set 1 before set 2) still gave 4. A careful hand pack of
+the same parts holds clearly more, so the packer's density on large,
+interlocking parts is the real gap, not Jiggle. The two-clearance packing
+spent most of its time at the aim (430 - 470 s for the first stage alone)
+and nothing was squeezed in at the least.
+
+Next, in order: (1) sets as a hard rule (#42, #45): a result never keeps a
+broken set, and the run tries N, N + 1 ... and offers the best two; (2)
+why only 24 - 28 parts fit: look at the layouts with the owner, then the
+orientation and nesting search for few large parts (#24, #26); (3) the
+first stage's time on large parts (minutes for 25 parts).
+
 Jiggle's move limit is now `Settings.jiggle_reach` (20 mm by default,
 adjustable; the owner: the limit only keeps the search quick).
 
