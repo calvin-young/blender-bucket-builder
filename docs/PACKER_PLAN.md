@@ -101,6 +101,19 @@ cluster's parts together (take out 14, 15 and 23 at once and place them
 again as a group), and cut a re-seat try that cannot find room early (the
 packing job's first layout already says "no room" in a few seconds).
 
+**Contact area and compromises, measured 2026-11-18** (three runs of
+15 min): all three ended with one collision and no part re-seated, worse
+than the run before (two of three collision-free, both re-seating parts 32
+and 34). The compromises left were reported with their areas, e.g. one run
+"1.35 mm over 2259 mm2", another "1.49 mm over 13 mm2 and 1.50 mm over
+4 mm2". Not understood yet why no re-seat happened: the cluster re-seat
+(two packing jobs of up to 60 s) and the score of every round (contact
+areas of the close pairs) are the changes since; the next step is to log
+each re-seat try and its outcome, then decide. Contact areas themselves
+check out on synthetic cases (two faces 0.5 mm apart: 500 mm2 for 400 mm2
+faces, the strip along their edges counted too) and take 0.2 - 5 s per
+pair on parts of 200 k triangles.
+
 Jiggle's move limit is now `Settings.jiggle_reach` (20 mm by default,
 adjustable; the owner: the limit only keeps the search quick).
 
