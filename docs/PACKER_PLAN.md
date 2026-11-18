@@ -88,6 +88,19 @@ build, least 1.5 mm, aim 3 mm, up to 6 re-seats, runs of 15 - 20 min):**
   solved it), and judge every move, hard ones too, by the whole layout's
   cost. Target stays about a minute.
 
+**Stall restarts, measured 2026-11-18** (rounds end after 60 s without a
+better layout and a fresh one starts from the best; every move judged by
+the whole layout's cost; three runs of 15 min side by side, least 1.5 mm):
+0 of 3 solved. Two runs cleared every collision but left 3 - 4 pairs under
+1.5 mm, the tightest 0.1 mm and 0.001 mm (parts 14, 15, 23, 21: the same
+cluster); one left a collision. Moves fell from thousands to under 200 per
+run (no more trading of room), and each fresh round spent most of its time
+on re-seat tries (30 s each). Re-seating stays on: without it every run
+ends with a collision. Not good enough for a build. Next: re-seat the
+cluster's parts together (take out 14, 15 and 23 at once and place them
+again as a group), and cut a re-seat try that cannot find room early (the
+packing job's first layout already says "no room" in a few seconds).
+
 Jiggle's move limit is now `Settings.jiggle_reach` (20 mm by default,
 adjustable; the owner: the limit only keeps the search quick).
 

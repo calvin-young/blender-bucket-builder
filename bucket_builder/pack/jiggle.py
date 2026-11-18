@@ -36,6 +36,8 @@ MIN_STEP = 0.0001        # mm (fine enough to settle a part between two neighbor
 TOL = 1e-6               # mm: less than this past a wall is rounding, not a problem
 MARGIN = 0.0001          # mm beyond the gap a moved part is held to (the referee allows 1e-6 of the volume below it)
 FAR = 20.0               # mm of penalty: a part this far wrong is for packing again, not for nudging
+STALL = 60.0             # s without a better layout: the round ends, a fresh one starts from the best
+ROUNDS = 40              # at most this many rounds in one mend
 RESEAT_SECONDS = 30.0    # a packing job's time for one new seat (8 s found none on the challenge build)
 SOFT_STEP = 0.02         # mm: smaller steps are not worth taking for the aim alone
 SOFT_GAIN = 1e-4         # of soft cost: a step must win this much to be kept for the aim alone
@@ -677,8 +679,10 @@ class Jiggler:
                         best = (size, got)
         return None if best is None else best[1]
 
-    def run(self, seconds=30.0, deadline=None, on_step=None):
-        """Mend the layout; returns the new matrices of the parts that may move."""
+    def run(self, seconds=30.0, deadline=None, on_step=None, stall=None):
+        """Mend the layout; returns the new matrices of the parts that may move.
+        `stall`: end early when the best layout has not improved for this many
+        seconds (``mend`` then starts a fresh round from the best)."""
         if deadline is None:
             deadline = time.perf_counter() + seconds
         step = {j: max(self.gap, 1.0) for j in range(self.n)}
@@ -689,7 +693,15 @@ class Jiggler:
         resets = 0
         best_key, best_M = (self.total(), self.soft_total()), [M.copy() for M in self.M[:self.n]]
         round_key = best_key
+        t_best = time.perf_counter()
+        self.stalled = False
         while time.perf_counter() < deadline:
+            if stall is not None:
+                if best_key != getattr(self, '_seen_best', None):
+                    self._seen_best, t_best = best_key, time.perf_counter()
+                elif time.perf_counter() - t_best > stall:
+                    self.stalled = True
+                    break
             costs = [(self.cost(j), j) for j in range(self.n)]
             # (a part with a hard problem goes down to the finest step; one that only
             # wants more room stops at SOFT_STEP)
@@ -774,7 +786,7 @@ class Jiggler:
                 if not self._better(self.cost(j), was_cost):
                     self._set(j, t_old)
                     got = None
-                elif was_cost[0] <= TOL and not self._better((self.total(), self.soft_total()), was_all):
+                elif not self._better((self.total(), self.soft_total()), was_all):
                     # (a move made only for the aim must help the whole layout: one
                     # that widens this part's gaps by narrowing its neighbors' makes
                     # the parts trade room for ever, and the run never moves on)
@@ -810,7 +822,7 @@ class Jiggler:
 
 
 def mend(items, vlo, vhi, gap, wall_gap, locked=(), deadline=None, seconds=30.0, on_step=None, aim=None,
-         reach=None, turns=0.0, max_turned=2, fixed=(), reseat=0):
+         reach=None, turns=0.0, max_turned=2, fixed=(), reseat=0, stall=STALL):
     """Jiggler runs until the layout passes the referee or time is up: a run
     whose result a fresh referee still faults is followed by another from
     where it ended (a fresh world settles every pair from scratch, where the
@@ -825,19 +837,19 @@ def mend(items, vlo, vhi, gap, wall_gap, locked=(), deadline=None, seconds=30.0,
     turned = {}
     reseated = []
     jg = None
-    for _ in range(4):
+    for _ in range(ROUNDS):
         jg = Jiggler(cur, vlo, vhi, gap, wall_gap, locked, aim=aim, reach=reach, turns=turns,
                      max_turned=max_turned, fixed=fixed, reseat=max(0, reseat - len(reseated)))
         jg.turned = dict(turned)              # (the count of turned parts holds across rounds)
         jg.start = first                      # (the reach counts from where the parts were given)
-        Ms = jg.run(deadline=deadline, on_step=on_step)
+        Ms = jg.run(deadline=deadline, on_step=on_step, stall=stall)
         moves += jg.moves
         turned.update(jg.turned)
         reseated += jg.reseated
         cur = [(m, M) for (m, _), M in zip(cur, Ms)]
         bad = referee.offenders([('l', m, M) for m, M in locked] + [('p', m, M) for m, M in cur],
                                 vlo, vhi, gap, wall_gap, len(locked))
-        if not bad or jg.moves == 0 or time.perf_counter() >= deadline:
+        if not bad or time.perf_counter() >= deadline or (jg.moves == 0 and not jg.stalled):
             break
     jg.moves = moves
     jg.turned = turned
