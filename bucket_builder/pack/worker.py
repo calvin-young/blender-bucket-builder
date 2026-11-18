@@ -202,6 +202,14 @@ def _fix(folder, state, parts, s, locked, start, tighten, t0):
     bad = sum(1 for j in range(jg.n) if jg.penalty(j) > jiggle.TOL)
     if bad:
         state['log'].append('%d parts still break a rule: Improve Current Layout packs them again' % bad)
+    try:
+        comp = jg.compromises()
+    except Exception:
+        comp = []
+    if comp:
+        state['compromises'] = [[int(a), int(b), float(d), float(area)] for a, b, d, area in comp]
+        state['log'].append('%d pairs closer than %.1f mm, kept apart: %s' % (
+            len(comp), s.gap, '; '.join('%.2f mm over %.0f mm2' % (d, area) for _, _, d, area in comp[:5])))
     state['finished'] = True
     _write(folder, state)
     return 0

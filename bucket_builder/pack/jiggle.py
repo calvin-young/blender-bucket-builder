@@ -425,6 +425,68 @@ class Jiggler:
                 return np.asarray(res.placements[0].matrix, float)
         return None
 
+    def compromises(self):
+        """Pairs that keep apart but closer than the least: [(a, b, closest mm,
+        area mm^2 within the least)], the largest area first (#43).  The area
+        is what makes a compromise acceptable or not."""
+        from . import contact
+        out = []
+        for key, pr in self.w.viol.items():
+            if pr.state == COLLIDE or float(pr.dist) >= self.floor:
+                continue
+            a, b = self.w.uid(key[0]), self.w.uid(key[1])
+            if a is None or b is None:
+                continue
+            low, area_a, area_b = contact.contact(self.meshes[a], self.M[a], self.meshes[b], self.M[b], self.gap)
+            out.append((a, b, float(pr.dist), max(area_a, area_b)))
+        return sorted(out, key=lambda r: -r[3])
+
+    def score(self):
+        """How good the layout is, worst first in the tuple: collisions, then
+        the compromises weighed by area (a tight gap over a speck is better than
+        one over a face, and any of them better than a collision), then the
+        rest of the hard penalty, then the soft cost."""
+        col = sum(1 for pr in self.w.viol.values() if pr.state == COLLIDE)
+        comp = sum((self.gap - d) * max(area, 1.0) for _, _, d, area in self.compromises())
+        return (col, round(comp, 3), round(self.total(), 6), round(self.soft_total(), 6))
+
+    def _reseat_group(self, group, deadline):
+        """The parts of `group` taken out together and placed again as a group
+        (each its own part, all at once), every other part held.  True if the
+        layout is better."""
+        from . import job as J
+        from .problem import Part, Settings
+        was_key = (self.total(), self.soft_total())
+        held = [(self.meshes[k], self.M[k]) for k in range(len(self.M)) if k not in group]
+        parts = [Part('g%d' % c, self.meshes[c], 1, 'fixed' if c in self.fixed else 'free', 1, self.M[c][:3, :3].copy())
+                 for c in group]
+        left = deadline - time.perf_counter()
+        if left < 5.0:
+            return False
+        s = Settings(vlo=self.vlo, vhi=self.vhi, gap=self.gap + MARGIN, wall_gap=self.wall, max_density=None,
+                     time_budget=max(2.0, min(2 * RESEAT_SECONDS, 0.5 * left)), seed=0, spread_z=False, compact=False)
+        jb = J.Job(parts, s, held, workers=1, threads=1)
+        try:
+            res = jb.run()
+        finally:
+            jb.close()
+        if len(res.placements) < len(group):
+            return False
+        old = {c: self.M[c].copy() for c in group}
+        for p in res.placements:
+            self._set_M(group[p.part], np.asarray(p.matrix, float))
+        if self._better((self.total(), self.soft_total()), was_key):
+            for c in group:
+                self.reseated.append(c)
+                self.travel[c] += float(np.linalg.norm(self.M[c][:3, 3] - old[c][:3, 3]))
+                if c in self.start_index:
+                    self.start[c] = self.M[c][:3, 3].copy()
+            self.moves += len(group)
+            return True
+        for c, M in old.items():
+            self._set_M(c, M)
+        return False
+
     def _try_reseat(self, j, deadline):
         """Re-seat the part whose removal frees most for part j: j itself or a
         part it breaks a rule with.  True if the layout is better for it."""
@@ -461,6 +523,11 @@ class Jiggler:
                         self.start[c] = new[:3, 3].copy()   # (its reach counts from its new seat)
                     return True
             self._set_M(c, M0)
+        # each alone found no seat: the cluster together (the part and the ones it
+        # breaks a rule with), which can free room none of them can alone
+        group = list(dict.fromkeys(cands))[:3]
+        if len(group) > 1 and len(self.reseated) + len(group) <= self.reseat + 2:
+            return self._reseat_group(group, deadline)
         return False
 
     def _try_turn(self, j, deadline):
@@ -837,6 +904,7 @@ def mend(items, vlo, vhi, gap, wall_gap, locked=(), deadline=None, seconds=30.0,
     turned = {}
     reseated = []
     jg = None
+    best = None                               # (score, matrices) of the best round
     for _ in range(ROUNDS):
         jg = Jiggler(cur, vlo, vhi, gap, wall_gap, locked, aim=aim, reach=reach, turns=turns,
                      max_turned=max_turned, fixed=fixed, reseat=max(0, reseat - len(reseated)))
@@ -847,10 +915,16 @@ def mend(items, vlo, vhi, gap, wall_gap, locked=(), deadline=None, seconds=30.0,
         turned.update(jg.turned)
         reseated += jg.reseated
         cur = [(m, M) for (m, _), M in zip(cur, Ms)]
+        sc = jg.score()
+        if best is None or sc < best[0]:
+            best = (sc, [M.copy() for _, M in cur])
         bad = referee.offenders([('l', m, M) for m, M in locked] + [('p', m, M) for m, M in cur],
                                 vlo, vhi, gap, wall_gap, len(locked))
         if not bad or time.perf_counter() >= deadline or (jg.moves == 0 and not jg.stalled):
             break
+    if best is not None and best[0] < jg.score():
+        cur = [(m, M) for (m, _), M in zip(cur, best[1])]   # (an earlier round was better)
+        jg = Jiggler(cur, vlo, vhi, gap, wall_gap, locked, aim=aim)
     jg.moves = moves
     jg.turned = turned
     jg.reseated = reseated

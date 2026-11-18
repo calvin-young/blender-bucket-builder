@@ -3,8 +3,8 @@
 package of the add-on) and headless (with bucket_builder/ on sys.path)."""
 
 try:
-    from ..core import World, bvh, narrow                 # noqa: F401  (inside Blender)
+    from ..core import World, bvh, narrow, tritri         # noqa: F401  (inside Blender)
     from ..core.world import COLLIDE, CLEAR, OK            # noqa: F401
 except (ImportError, ValueError):
-    from core import World, bvh, narrow                    # noqa: F401  (headless)
+    from core import World, bvh, narrow, tritri            # noqa: F401  (headless)
     from core.world import COLLIDE, CLEAR, OK              # noqa: F401
