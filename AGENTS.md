@@ -500,6 +500,18 @@ not here. `PairResult.segs`, `pa` and `pb` are relative to the first
 part's translation, not world points. Slow: about a second per move on
 parts of 200 k triangles.
 
+**2026-11-17 (1.5.4).** Jiggle about 4x faster (trial moves on the
+quick solve, kept only if better measured exactly), optional small turns
+(`turns=`, off by default; the owner's yes as an option). Packing with two
+clearances: `pack/soft.py`, `python -m pack pack --gap 1 --aim 3`, the
+worker when `Settings.gap_aim` is set; no panel control yet. An
+independent check of the referee, `tests/ref_slow.py` (no shared code with
+the engine; `tools/bench_suite.py --slow-check`); bench runs use one
+worker and seed 0 unless `--parallel`. What is next is in
+`docs/PACKER_PLAN.md` ("Built", then #24 / #26). Blender tests that load
+the add-on with `--factory-startup` need it enabled first with
+`--python-expr` (see the session's note in PACKER_PLAN if this bites).
+
 **Next (2026-11-11, the owner's notes):** issues #28 - #40: overlay
 drawing order, inside-out and non-manifold checks, hidden parts by
 default, fully-outside parts quiet until export, Jiggle feedback, one

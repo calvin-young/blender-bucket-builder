@@ -66,6 +66,9 @@ the detail.
 - 2026-11-13 [domain]: a colleague runs an older Magics; its scripting module is almost certainly not licensed, so the window route is the plan.
 - 2026-11-16 [direction]: cages, sprue racks and kits are mostly one idea (units and kits); design them on one model before building any.
 - 2026-11-16 [tested][feature]: a hand-packed challenge build as the reference for Jiggle: zero collisions, at least 1 mm, aim for 3, small moves only.
+- 2026-11-17 [direction]: repeatable runs are for measuring only; keep the independent referee check, because "clean" must really be clean.
+- 2026-11-17 [feature]: Jiggle may turn parts, as an option.
+- 2026-11-17 [direction]: soft clearance in the packer moved up: "something a human would do but an autopacker normally wouldn't".
 - 2026-11-11 [bugs]: the figurines beat their "floor": it was computed for upright parts while the comparison let them turn.
 - 2026-11-10 [direction]: a day of autonomous packer work: find weaknesses, fix them, benchmark against every packer available, Netfabb's trial included.
 - 2026-11-10 [direction]: a report for his management that places the packer against the industry and research, names packers we could still get, and quantifies headroom, hardware limits and what compiled code would buy.

@@ -249,3 +249,10 @@ Later:
 * **Assumed:** the soft cost grows faster than the shortfall (the tightest gaps first); a reach of 8 mm for "small moves"; hard rules settled before any part moves for the aim; a part never leaves the volume to escape another.
 * **Not asked:** whether small turns should be allowed (the one collision left on the challenge build may need one); whether Jiggle may take minutes.
 * **Later:** the panel's two clearance fields and the live check's tiers (SPEC_PACK step 1); Jiggle's speed; small rotations.
+
+## 2026-11-17 (1.5.4: Jiggle speed, turns, two clearances in the packer, the independent check)
+
+* **Asked (owner's answers):** the independent referee check; repeatable runs only as a bench mode; Jiggle speed, then turns as an option; soft clearance in the packer before #24 / #26; build 1.5.4.
+* **Assumed:** turns of 1, 2, 4 degrees up to the limit, at most two parts; the packer's two-clearance order (aim, then squeezed-in or everything at the least, whichever places more, then Jiggle); sampling 0.5 mm in the slow check.
+* **Not asked:** whether the packer's two-clearance run may take longer than its time setting (it overran 20 s by about 14 s on a small case).
+* **Later:** the panel's clearance fields; #24, #26; the slow check is slow on large builds (5 min on the challenge build).
