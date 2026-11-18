@@ -31,7 +31,7 @@ def run(name, desc, parts, extra, args):
     def upd(j):
         if not first and j.best is not None:
             first.append((j._best_height(), time.perf_counter() - t0))
-    jb = J.Job(parts, s, workers=args.workers)
+    jb = J.Job(parts, s, workers=args.workers if args.parallel else 1)
     try:
         res = jb.run(upd)
     finally:
@@ -43,11 +43,17 @@ def run(name, desc, parts, extra, args):
     ok = None
     if args.referee:
         ok = referee.check(items, s.vlo, s.vhi, s.gap, s.wall_gap).ok
+    slow = None
+    if args.slow_check:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tests'))
+        import ref_slow
+        problems, sv, _ref = ref_slow.compare(items, s.vlo, s.vhi, s.gap, s.wall_gap)
+        slow = 'agree' if not problems else '; '.join(problems)
     row = dict(bucket=name, placed=len(res.placements), parts=n,
                first_h=first[0][0] if first else None, first_s=first[0][1] if first else None,
                height=rep.height if rep.density is not None else None,
                density=rep.density, peak=rep.peak_layer if rep.density is not None else None,
-               seconds=wall, referee=ok)
+               seconds=wall, referee=ok, slow_check=slow)
     return row
 
 
@@ -63,6 +69,11 @@ def main():
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--workers', type=int, default=None)
     ap.add_argument('--referee', action='store_true')
+    ap.add_argument('--slow-check', action='store_true',
+                    help='also the independent check (tests/ref_slow.py), which shares no code with the engine')
+    ap.add_argument('--parallel', action='store_true',
+                    help='worker processes as in the add-on; by default one worker and seed 0, so that two '
+                         'runs of the same code give the same numbers (time limits can still differ by load)')
     ap.add_argument('--json')
     a = ap.parse_args()
     every = {**synthetic.buckets(), **synthetic.library()}
