@@ -69,6 +69,10 @@ the detail.
 - 2026-11-17 [direction]: repeatable runs are for measuring only; keep the independent referee check, because "clean" must really be clean.
 - 2026-11-17 [feature]: Jiggle may turn parts, as an option.
 - 2026-11-17 [direction]: soft clearance in the packer moved up: "something a human would do but an autopacker normally wouldn't".
+- 2026-11-18 [ui][feature]: Jiggle's three toggles and their defaults: Small Turns off, Quarter Turns off, Move Elsewhere on.
+- 2026-11-18 [domain]: 1.49 mm meets a 1.5 mm minimum; hundredths under it are not compromises.
+- 2026-11-18 [domain]: faces under 0.5 mm may fuse; rounded, edge or corner approaches can go to about 0.1 mm.
+- 2026-11-18 [direction]: pack from scratch as a user would: "1:1 ratio, fit as many as you can"; whole sets, not broken ones.
 - 2026-11-11 [bugs]: the figurines beat their "floor": it was computed for upright parts while the comparison let them turn.
 - 2026-11-10 [direction]: a day of autonomous packer work: find weaknesses, fix them, benchmark against every packer available, Netfabb's trial included.
 - 2026-11-10 [direction]: a report for his management that places the packer against the industry and research, names packers we could still get, and quantifies headroom, hardware limits and what compiled code would buy.

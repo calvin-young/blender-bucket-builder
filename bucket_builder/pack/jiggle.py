@@ -36,6 +36,7 @@ MIN_STEP = 0.0001        # mm (fine enough to settle a part between two neighbor
 TOL = 1e-6               # mm: less than this past a wall is rounding, not a problem
 MARGIN = 0.0001          # mm beyond the gap a moved part is held to (the referee allows 1e-6 of the volume below it)
 FAR = 20.0               # mm of penalty: a part this far wrong is for packing again, not for nudging
+GAP_TOL = 0.05           # mm under the least that still meets it (owner, 2026-11-18: 1.49 mm is 1.5)
 STALL = 60.0             # s without a better layout: the round ends, a fresh one starts from the best
 ROUNDS = 40              # at most this many rounds in one mend
 RESEAT_SECONDS = 30.0    # a packing job's time for one new seat (8 s found none on the challenge build)
@@ -436,8 +437,8 @@ class Jiggler:
         from . import contact
         out = []
         for key, pr in self.w.viol.items():
-            if pr.state == COLLIDE or float(pr.dist) >= self.floor:
-                continue
+            if pr.state == COLLIDE or float(pr.dist) >= self.gap - GAP_TOL:
+                continue                      # (within GAP_TOL of the least meets it: the owner counts 1.49 mm as 1.5)
             a, b = self.w.uid(key[0]), self.w.uid(key[1])
             if a is None or b is None:
                 continue

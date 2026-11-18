@@ -104,6 +104,16 @@ still open. The details are in `AGENTS.md` (Implementation notes).
 - Decision: hard limits fixed; soft weights and the height curve scale with one Part Quality setting (`problem.dial_settings`).
 - Revisit if: the case studies on real buckets show the rules need separate controls.
 
+* **A gap within 0.05 mm of the minimum meets it** (2026-11-18). The owner
+  counts 1.49 mm as meeting a 1.5 mm minimum ("my own solution was
+  1.5 mm"), so a pair within 0.05 mm under the least is not reported as a
+  compromise, nor weighed as one when Jiggle compares its rounds
+  (`jiggle.GAP_TOL`). A tolerance rather than rounding, because rounding to
+  tenths would let 1.45 mm pass as 1.5. Jiggle still aims at the exact
+  least, and the referee stays exact, so a layout called clean is clean.
+* **Jiggle's options** (2026-11-18, the owner confirmed the defaults): Small
+  Turns off, Quarter Turns off, Move Elsewhere on.
+
 ## Tried and abandoned
 
 **Hiding the snap wireframe**
