@@ -65,8 +65,14 @@ def pack(parts, s, workers=None, on_update=None, aim_share=0.45, locked=()):
     sub = [replace(parts[i], quantity=left[i]) for i in order]
     fixed = list(locked) + [(parts[p.part].mesh, np.asarray(p.matrix, float)) for p in res.placements]
 
+    def remaining():
+        return None if total is None else total - (time.perf_counter() - t0)
+
     def share(f):
-        return None if total is None else max(3.0, f * total)
+        """A share of the whole time, never more than is left (the run keeps to its time)."""
+        if total is None:
+            return None
+        return max(0.5, min(f * total, remaining()))
     s_least = replace(s, gap=least, gap_aim=None, time_budget=share(0.15), spread_z=False, compact=False)
     jb2 = J.Job(sub, s_least, fixed, workers=workers)
     try:
@@ -93,8 +99,8 @@ def pack(parts, s, workers=None, on_update=None, aim_share=0.45, locked=()):
         else:
             unplaced.append(u)
     best = (list(res.placements) + squeezed, unplaced, squeezed, 'squeezed')
-    # step 2b: everything at the least
-    if unplaced:
+    # step 2b: everything at the least (only with time enough to pack it all again)
+    if unplaced and (total is None or remaining() > 0.2 * total):
         s_all = replace(s, gap=least, gap_aim=None, time_budget=share(0.25))
         jb3 = J.Job(parts, s_all, locked, workers=workers)
         try:
@@ -106,11 +112,11 @@ def pack(parts, s, workers=None, on_update=None, aim_share=0.45, locked=()):
         if len(res3.placements) > len(best[0]):
             best = (list(res3.placements), list(res3.unplaced), list(res3.placements), 'at the least')
     placements, unplaced, squeezed, how = best
-    if squeezed:
-        # step 3: spread the slack toward the aim, by small moves
+    if squeezed and (total is None or remaining() > 1.0):
+        # step 3: spread the slack toward the aim, by small moves, in what time is left
         from . import jiggle
         items = [(parts[p.part].mesh, np.asarray(p.matrix, float)) for p in placements]
-        rest = None if total is None else max(3.0, total - (time.perf_counter() - t0))
+        rest = remaining()
         Ms, jg, _n = jiggle.mend(items, s.vlo, s.vhi, least, s.wall_gap, locked,
                                  seconds=rest if rest is not None else 30.0, aim=aim, reach=max(aim, 3.0))
         ids = {id(p) for p in squeezed}
