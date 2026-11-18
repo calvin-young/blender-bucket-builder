@@ -315,20 +315,30 @@ Select parts, press **Cage**. A dialog asks three things:
 * **Contents:** As They Are / Compact (smallest box) / Flat (lowest).
   The last two run the packer on just these parts in a box that shrinks
   until they no longer fit.
-* **Strength:** Light / Standard / Strong. Sets bar thickness and width.
-* **Window:** Automatic, or a size. Automatic is the largest window that
-  still holds the smallest part in, by its smallest bounding dimension.
+* **Strength:** Light / Standard / Strong / Custom. Bar thickness x width
+  (the owner's numbers, 2026-11-18): **Light 1 x 1.5 mm, Standard
+  1.5 x 2 mm, Strong 2 x 3 mm**; Custom takes any two numbers.
+* **Window:** a preset with an override. The owner aims for **10 - 20 mm**,
+  smaller when small parts could escape. On top of the preset, the
+  automatic check: no window larger than what holds the smallest part in
+  (by its smallest bounding dimension); if the preset is larger, the window
+  shrinks to that and the dialog says why.
+* **Clearance to the contents:** defaults to the Bucket's nominal
+  clearance (Acceptable, section 4), adjustable.
 
-The numbers behind the three strengths, the smallest window that still
-lets blasting media through, and the clearance to the contents are **not
-known yet**: they need the owner's experience and sources in
-`docs/PRINT_QUALITY.md` before the defaults mean anything. The first
-version ships with adjustable numbers under Advanced and says so.
+**Shape (the owner, 2026-11-18):** neither a plain box (packs poorly) nor
+conformal (fussy, fragile), but a **voxelized cage**: the contents grown by
+the clearance, rounded up to a grid of **10 - 20 mm** (a setting), and the
+bars laid along that grid's outer faces. It follows the parts coarsely, so
+cages nest better than boxes, and the grid is also the window size, so one
+number sets both. A grid finer than the window just means windows are
+split by extra bars. The packer treats the cage's filled outline as solid,
+since nothing else may be placed inside it. It becomes the parent of its
+contents: a unit. **Rebuild** remakes it.
 
-The cage is a box in the first version (a hull-shaped cage saves volume
-and comes later). It becomes the parent of its contents: a unit. The
-packer treats a cage as solid, because nothing else may be placed inside
-it. **Rebuild** remakes it.
+The smallest window that still lets blasting media through is not known
+from a source yet (`docs/PRINT_QUALITY.md`); the owner's 10 - 20 mm range
+is the default until one is found.
 
 ### 5.2 Kits and copies (#42)
 
@@ -367,7 +377,13 @@ A rack is a unit: one rail object and its parts, overlapping at the gates.
   to place one first (one click), instead of guessing a face.
 * **How:**
   * **Raised:** a small text body, a child of the part with the role
-    Label. Copies stay linked; nothing is cut. First to build.
+    Label, sunk about 0.5 mm into the part (overlapping, never face to
+    face: AUTOPACK.md, "Serial labels"). Copies stay linked; nothing is
+    cut. **First to build (the owner, 2026-11-18).** Mind zonal scaling:
+    when a printer scales a part per zone, a label must stay legible and
+    in place, so it overlaps the part rather than resting on it, and its
+    stroke width and height need a floor that survives the scaling (to
+    be measured on a printed sample; see the AUTOPACK.md note).
   * **Engraved:** each copy gets its own mesh with the text cut in. Costs
     memory and a boolean per copy; second.
   * **Printed:** handed to Decal Press when it is installed (its labels
@@ -420,7 +436,7 @@ Each step is useful by itself and makes the next one smaller.
 | 1 | Two clearances in the live check and in Fix Problems; the result box | #35, #32 | the engine's two thresholds, Jiggle |
 | 2 | The four actions; Add Waiting Parts (the button) | #33, #34 | the packer's lock, today's worker modes |
 | 3 | Units: Make Unit / Release, the live-check rules, the packer's union shape | #42 (first gap) | steps 1 - 2 |
-| 4 | Cage, box-shaped, around parts as they are; then Compact and Flat | #36 | step 3 |
+| 4 | Cage, voxelized on a 10 - 20 mm grid, around parts as they are; then Compact and Flat | #36 | step 3 |
 | 5 | Copies and kits; the list of section 6; the parts list per kit | #42 | step 3 |
 | 6 | Markers; Number Copies, raised first | #39 | step 5 |
 | 7 | Sprues: Replace Part and "loose from its sprue"; then the level 2 prototype | #41 | steps 3, 6 |
@@ -461,11 +477,10 @@ they should land on a check that is known to be right.
   Least"; "waiting" for bodies outside the volume; the action names.
 * **Not asked (the owner's to decide):**
   1. (Answered 2026-11-17: one action that keeps trying, section 3.2.)
-  2. Cage numbers: bar sizes for the three strengths, the smallest
-     useful window, clearance to the contents.
+  2. (Answered 2026-11-18: cage numbers, section 5.1.)
   3. The polisher's rack and hook dimensions, and parts per rack.
   4. Whether gaps between Minimum and Acceptable should ever fail the build
      (for instance more than some number of them).
-  5. Raised or engraved first, for his own jobs.
+  5. (Answered 2026-11-18: raised first.)
 * **Follow-ups:** hull-shaped cages; collection instances as units;
   proposing gate points from marked faces; a color per kit in the 3MF.
