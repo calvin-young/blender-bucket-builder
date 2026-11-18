@@ -302,6 +302,16 @@ class BucketBuilderSettings(PropertyGroup):
     pack_jiggle_time: FloatProperty(
         name="Jiggle Time", default=60.0, min=1.0, soft_max=600.0, precision=0, subtype='TIME_ABSOLUTE',
         description="The longest Jiggle may run, in seconds (it stops sooner once every rule is kept)")
+    pack_jiggle_minor: BoolProperty(
+        name="Small Turns", default=False,
+        description="Jiggle may turn a stuck part a few degrees (up to 4) about its own center")
+    pack_jiggle_major: BoolProperty(
+        name="Quarter Turns", default=False,
+        description="Jiggle may turn a stuck part by 90 or 180 degrees where it is")
+    pack_jiggle_reseat: BoolProperty(
+        name="Move Elsewhere", default=True,
+        description="Jiggle may take out a part that small moves cannot free and place it again "
+                    "in free room elsewhere in the build (up to three parts)")
     pack_overnight_hours: FloatProperty(
         name="Overnight Limit", default=12.0, min=0.1, soft_max=72.0, precision=1,
         description="Effort Overnight: the longest the packer may run, in hours")

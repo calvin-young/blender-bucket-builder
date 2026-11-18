@@ -302,6 +302,9 @@ class BUCKETBUILDER_OT_pack(Operator):
         self._mode = 'pack' if self.fix == 'NONE' else self.fix.lower()
         if self._mode != 'pack':
             s.time_budget = float(st.pack_jiggle_time)
+            s.jiggle_turns = 4.0 if st.pack_jiggle_minor else 0.0
+            s.jiggle_major = bool(st.pack_jiggle_major)
+            s.jiggle_reseat = 3 if st.pack_jiggle_reseat else 0
             self._job = None
         else:
             self._job = J.Job(self._parts, s, lock, start=self._start)

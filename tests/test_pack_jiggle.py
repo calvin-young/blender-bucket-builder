@@ -182,6 +182,23 @@ def reseat():
     check(v.ok and jg.reseated == [0], 'with re-seating it is placed again, %.0f mm away, and every rule is kept' % moved)
 
 
+def quarter():
+    print('quarter turns: a bar too long one way, room the other')
+    bar = S.box(60, 10, 10)
+    post = S.box(10, 60, 40)
+    vlo, vhi = (0, 0, 0), (300, 150, 100)
+    # two locked posts 50 mm apart along x; the bar lies along x across both
+    lock = [(post, at(150 - 30, 75, 20)), (post, at(150 + 30, 75, 20))]
+    free = [(bar, at(150, 75, 20))]
+    Ms, jg = jiggle.jiggle(free, vlo, vhi, 1.0, 5.0, locked=lock, seconds=15, reach=10)
+    v = referee.check([('l', m, L) for m, L in lock] + [('p', bar, Ms[0])], vlo, vhi, 1.0, 5.0)
+    check(not v.ok, 'without quarter turns it stays across the posts')
+    Ms, jg = jiggle.jiggle(free, vlo, vhi, 1.0, 5.0, locked=lock, seconds=40, reach=10, major=True)
+    v = referee.check([('l', m, L) for m, L in lock] + [('p', bar, Ms[0])], vlo, vhi, 1.0, 5.0)
+    check(v.ok and jg.turned.get(0) is not None and abs(jg.turned[0][1]) in (90.0, 180.0),
+          'with quarter turns it is turned between them (%s)' % (jg.turned.get(0),))
+
+
 if __name__ == '__main__':
     main()
     soft()
@@ -189,6 +206,7 @@ if __name__ == '__main__':
     rows()
     turns()
     reseat()
+    quarter()
     print()
     if FAILS:
         print('FAILED: %d' % len(FAILS))

@@ -522,6 +522,10 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
             op.improve = False
             op.fix = 'FIX_TIGHTEN'
             row.prop(st, "pack_jiggle_time", text="")
+            row = layout.row(align=True)
+            row.prop(st, "pack_jiggle_minor", toggle=True)
+            row.prop(st, "pack_jiggle_major", toggle=True)
+            row.prop(st, "pack_jiggle_reseat", toggle=True)
         layout.template_list("BUCKETBUILDER_UL_pack_parts", "", bpy.data, "meshes", context.window_manager,
                              "bucket_builder_pack_part", rows=3, maxrows=6)
         col = _split(layout)

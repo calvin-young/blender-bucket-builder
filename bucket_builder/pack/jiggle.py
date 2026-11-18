@@ -48,7 +48,7 @@ DIRS /= np.linalg.norm(DIRS, axis=1)[:, None]
 
 class Jiggler:
     def __init__(self, items, vlo, vhi, gap, wall_gap, locked=(), aim=None, reach=None, turns=0.0,
-                 max_turned=2, fixed=(), reseat=0):
+                 max_turned=2, fixed=(), reseat=0, major=False):
         """items: [(mesh, 4 x 4)] that may move; locked: [(mesh, 4 x 4)] that stay.
         gap: the least any pair may have; aim: what every pair should have
         (None or not above gap: one clearance, as before); reach: no part
@@ -71,6 +71,7 @@ class Jiggler:
         self.aim = float(aim) if aim is not None and float(aim) > self.gap else None
         self.reach = None if reach is None else float(reach)
         self.turns = float(turns or 0.0)
+        self.major = bool(major)          # also 90 and 180 degree turns where the part is
         self.max_turned = int(max_turned)
         self.fixed = set(fixed)
         self.turned = {}         # part -> (axis, degrees) of the turn it was given
@@ -271,7 +272,7 @@ class Jiggler:
         up to ``turns``, smallest first), each also followed by its way out of
         a collision.  Returns (cost after, 4 x 4, (axis, degrees)) for the best
         that lowers its hard penalty, or None.  Leaves the part as it was."""
-        if not self.turns or j in self.fixed or j >= self.n:
+        if not (self.turns or self.major) or j in self.fixed or j >= self.n:
             return None
         if j not in self.turned and len(self.turned) >= self.max_turned:
             return None
@@ -282,11 +283,13 @@ class Jiggler:
         self.moved.add(j)
         base = self._exact_cost(j)
         degs, d = [], 1.0
-        while d <= self.turns + 1e-9:
+        while self.turns and d <= self.turns + 1e-9:
             degs += [d, -d]
             d *= 2
-        if self.turns not in [abs(x) for x in degs]:
+        if self.turns and self.turns not in [abs(x) for x in degs]:
             degs += [self.turns, -self.turns]
+        if self.major:
+            degs += [90.0, -90.0, 180.0]
         best = None
         for deg in degs:
             for ax in range(3):
@@ -536,7 +539,7 @@ class Jiggler:
 
     def _try_turn(self, j, deadline):
         """Turn part j if that helps (once per part and run); True if it was turned."""
-        if not self.turns or j in self._turn_tried:
+        if not (self.turns or self.major) or j in self._turn_tried:
             return False
         self._turn_tried.add(j)
         got = self._turn(j, deadline)
@@ -893,7 +896,7 @@ class Jiggler:
 
 
 def mend(items, vlo, vhi, gap, wall_gap, locked=(), deadline=None, seconds=30.0, on_step=None, aim=None,
-         reach=None, turns=0.0, max_turned=2, fixed=(), reseat=0, stall=STALL):
+         reach=None, turns=0.0, max_turned=2, fixed=(), reseat=0, stall=STALL, major=False):
     """Jiggler runs until the layout passes the referee or time is up: a run
     whose result a fresh referee still faults is followed by another from
     where it ended (a fresh world settles every pair from scratch, where the
@@ -911,7 +914,7 @@ def mend(items, vlo, vhi, gap, wall_gap, locked=(), deadline=None, seconds=30.0,
     best = None                               # (score, matrices) of the best round
     for _ in range(ROUNDS):
         jg = Jiggler(cur, vlo, vhi, gap, wall_gap, locked, aim=aim, reach=reach, turns=turns,
-                     max_turned=max_turned, fixed=fixed, reseat=max(0, reseat - len(reseated)))
+                     max_turned=max_turned, fixed=fixed, reseat=max(0, reseat - len(reseated)), major=major)
         jg.turned = dict(turned)              # (the count of turned parts holds across rounds)
         jg.start = first                      # (the reach counts from where the parts were given)
         Ms = jg.run(deadline=deadline, on_step=on_step, stall=stall)
@@ -936,12 +939,12 @@ def mend(items, vlo, vhi, gap, wall_gap, locked=(), deadline=None, seconds=30.0,
 
 
 def jiggle(items, vlo, vhi, gap, wall_gap, locked=(), seconds=30.0, aim=None, reach=None, turns=0.0,
-           max_turned=2, fixed=(), reseat=0):
+           max_turned=2, fixed=(), reseat=0, major=False):
     """New matrices for items [(mesh, 4 x 4)] with small moves that remove
     collisions, gaps under `gap` and parts past the walls; and the last
     Jiggler (its moves are the total)."""
     Ms, jg, _n = mend(items, vlo, vhi, gap, wall_gap, locked, seconds=seconds, aim=aim, reach=reach,
-                      turns=turns, max_turned=max_turned, fixed=fixed, reseat=reseat)
+                      turns=turns, max_turned=max_turned, fixed=fixed, reseat=reseat, major=major)
     return Ms, jg
 
 
@@ -967,7 +970,8 @@ def fix(parts, start, s, locked=(), tighten=False, deadline=None, on_step=None, 
     try:
         Ms, jg, _n = mend(items, s.vlo, s.vhi, s.gap, s.wall_gap, locked, deadline=deadline, on_step=step,
                           aim=getattr(s, 'gap_aim', None), reach=getattr(s, 'jiggle_reach', None),
-                          reseat=getattr(s, 'jiggle_reseat', 0), turns=getattr(s, 'jiggle_turns', 0.0))
+                          reseat=getattr(s, 'jiggle_reseat', 0), turns=getattr(s, 'jiggle_turns', 0.0),
+                          major=getattr(s, 'jiggle_major', False))
     except Stopped:
         jg = Jiggler(items, s.vlo, s.vhi, s.gap, s.wall_gap, locked, aim=getattr(s, 'gap_aim', None))   # (stopped: as it was)
         Ms = [np.asarray(M, float) for _, M in items]
