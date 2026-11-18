@@ -347,9 +347,9 @@ class Bucket:
         f = self.f
         if cache is not None and all(x >= 0 and x + n <= N for x, n, N in zip(b, solid.shape, self.fine.shape)):
             ph = tuple(int(x) % f for x in b)
-            pooled = cache.get(('pool', ph))
+            pooled = cache.get(('pool', f, ph))     # (f too: a grid may serve buckets of other coarse cells)
             if pooled is None:
-                pooled = cache[('pool', ph)] = pool_sum(solid, f, ph)
+                pooled = cache[('pool', f, ph)] = pool_sum(solid, f, ph)
             c0 = [(int(x) - p) // f for x, p in zip(b, ph)]
             if all(c + n <= N for c, n, N in zip(c0, pooled.shape, self.count.shape)):
                 win = self.fine[b[0]:b[0] + solid.shape[0], b[1]:b[1] + solid.shape[1], b[2]:b[2] + solid.shape[2]]

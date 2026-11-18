@@ -36,6 +36,7 @@ MIN_STEP = 0.0001        # mm (fine enough to settle a part between two neighbor
 TOL = 1e-6               # mm: less than this past a wall is rounding, not a problem
 MARGIN = 0.0001          # mm beyond the gap a moved part is held to (the referee allows 1e-6 of the volume below it)
 FAR = 20.0               # mm of penalty: a part this far wrong is for packing again, not for nudging
+RESEAT_SECONDS = 30.0    # a packing job's time for one new seat (8 s found none on the challenge build)
 SOFT_STEP = 0.02         # mm: smaller steps are not worth taking for the aim alone
 SOFT_GAIN = 1e-4         # of soft cost: a step must win this much to be kept for the aim alone
 DIRS = np.array([(x, y, z) for x in (-1, 0, 1) for y in (-1, 0, 1) for z in (-1, 0, 1)
@@ -394,8 +395,6 @@ class Jiggler:
         """Part c taken out and placed again by the packer, every other part
         held (at the aim if given and it fits, else at the least).  Returns
         the new 4 x 4, or None."""
-        from dataclasses import replace
-        from . import job as J
         from .problem import Part, Settings
         held = [(self.meshes[k], self.M[k]) for k in range(len(self.M)) if k != c]
         L = self.M[c][:3, :3].copy()
@@ -404,9 +403,17 @@ class Jiggler:
         left = deadline - time.perf_counter()
         if left < 2.0:
             return None
+        from . import job as J
         for gap in ([self.aim] if self.aim else []) + [self.gap + MARGIN]:
+            # (a short packing job: its first layout tries few turns, the rest of
+            # its time all 24, which is where a new seat is usually found; the
+            # pinned parts' grids are cached across tries, pack.greedy.pin)
+            left = deadline - time.perf_counter()
+            if left < 2.0:
+                break
             s = Settings(vlo=self.vlo, vhi=self.vhi, gap=gap, wall_gap=self.wall, max_density=None,
-                         time_budget=max(1.0, min(30.0, 0.5 * left)), seed=0, spread_z=False, compact=False)
+                         time_budget=max(1.0, min(RESEAT_SECONDS, 0.5 * left)), seed=0, spread_z=False,
+                         compact=False)
             jb = J.Job([part], s, held, workers=1, threads=1)
             try:
                 res = jb.run()
@@ -414,9 +421,6 @@ class Jiggler:
                 jb.close()
             if res.placements:
                 return np.asarray(res.placements[0].matrix, float)
-            left = deadline - time.perf_counter()
-            if left < 2.0:
-                break
         return None
 
     def _try_reseat(self, j, deadline):
@@ -765,8 +769,15 @@ class Jiggler:
                 # exactly, the part is better off)
                 t_old = self.M[j][:3, 3].copy()
                 was_cost = self._exact_cost(j)
+                was_all = (self.total(), self.soft_total())
                 self._set(j, got[1])
                 if not self._better(self.cost(j), was_cost):
+                    self._set(j, t_old)
+                    got = None
+                elif was_cost[0] <= TOL and not self._better((self.total(), self.soft_total()), was_all):
+                    # (a move made only for the aim must help the whole layout: one
+                    # that widens this part's gaps by narrowing its neighbors' makes
+                    # the parts trade room for ever, and the run never moves on)
                     self._set(j, t_old)
                     got = None
             if got is not None:

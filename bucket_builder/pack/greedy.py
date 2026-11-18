@@ -37,6 +37,14 @@ def _open(mesh):
     return openness > metrics.OPEN_TOL
 
 
+# Pinned parts voxelized once: Jiggle's re-seating packs one part at a time
+# into the same build, where every other part is pinned again each time
+# (0.5 s each for parts of 200 k triangles).  Keyed by mesh, matrix, origin
+# and cell; the grids are only read.
+PIN_CACHE_SIZE = 512
+_PIN_CACHE = {}
+
+
 class Greedy:
     def __init__(self, parts, settings, threads=None):
         self.parts = parts
@@ -483,12 +491,21 @@ class Greedy:
         """A part exactly where it is (mm, 4 x 4), voxelized in the bucket's
         own grid: (grid, cell, profile, volume, top)."""
         M = np.asarray(M, float)
-        V = np.asarray(mesh.verts, float) @ M[:3, :3].T + M[:3, 3] - bucket.vlo
-        g = voxel.voxelize(V, mesh.tris, np.eye(3), bucket.h, 0.0)
+        key = (id(mesh), M.tobytes(), np.asarray(bucket.vlo, float).tobytes(), float(bucket.h))
+        hit = _PIN_CACHE.get(key)
+        if hit is not None and hit[0] is mesh:
+            g, prof, vol, top = hit[1:]
+        else:
+            V = np.asarray(mesh.verts, float) @ M[:3, :3].T + M[:3, 3] - bucket.vlo
+            g = voxel.voxelize(V, mesh.tris, np.eye(3), bucket.h, 0.0)
+            vol = abs(metrics.mesh_stats(mesh)[0] * np.linalg.det(M[:3, :3]))
+            cnt = g.solid.sum(axis=(0, 1)).astype(np.float64)
+            prof, top = cnt * (vol / max(cnt.sum(), 1.0)), float(V[:, 2].max())
+            if len(_PIN_CACHE) >= PIN_CACHE_SIZE:
+                _PIN_CACHE.pop(next(iter(_PIN_CACHE)))
+            _PIN_CACHE[key] = (mesh, g, prof, vol, top)
         b = tuple(int(x) for x in np.rint(g.origin / bucket.h).astype(int) + bucket.M)
-        vol = abs(metrics.mesh_stats(mesh)[0] * np.linalg.det(M[:3, :3]))
-        cnt = g.solid.sum(axis=(0, 1)).astype(np.float64)
-        return g, b, cnt * (vol / max(cnt.sum(), 1.0)), vol, float(V[:, 2].max())
+        return g, b, prof, vol, top
 
     def lock(self, bucket, mesh, M):
         """A part that stays where it is (mm, 4 x 4): its solid becomes taken

@@ -59,6 +59,35 @@ spends most of its time voxelizing the held parts again for every try:
 build their grid once per run), then turns, then tiers with the
 area-aware cost (needs #44's exact per-triangle distances), then #45.
 
+**Jiggle speed, measured 2026-11-18 (timeboxed; the owner's challenge
+build, least 1.5 mm, aim 3 mm, up to 6 re-seats, runs of 15 - 20 min):**
+
+* Profile of a 400 s run with re-seating (cProfile): re-seat tries 284 s,
+  of which 256 s re-voxelized the 34 held parts for every try (476 pins at
+  0.54 s each); trial moves on the quick solve 82 s; exact settles 33 s.
+* **Kept:** the held parts' grids are cached across tries
+  (`greedy._PIN_CACHE`): voxelizing fell from 256 s to 33 s in the same
+  profile. Results are identical (same grids; the coarse-count cache now
+  keys on the coarse cell too).
+* **Kept:** a move made only for the aim must lower the whole layout's
+  cost, not just the moved part's (parts traded room for ever).
+* **Tried and dropped:** re-seating with the packer's first fit alone (its
+  few orientations found no seat where a packing job found one); a packing
+  job of 8 s per try (found none either; back to 30 s); re-seating as soon
+  as a part's ways out fail instead of after the small steps run out (no
+  re-seat happened at all in two runs).
+* **Not yet solved again:** since the solving run (16 min, re-seated parts
+  32 and 34, then a new round cleared the rest), four runs re-seated the
+  same two parts but ended with one collision: the run keeps trading small
+  moves on gaps under the least (thousands of moves, no gain) and never
+  reaches the fresh round that finished the job. So the solve depended on
+  the path.
+* **Next idea:** stop on stagnation, not on the clock: when the best
+  layout has not improved for a minute, end the round and start a fresh
+  Jiggler from the best (what `mend` does after a round, which is what
+  solved it), and judge every move, hard ones too, by the whole layout's
+  cost. Target stays about a minute.
+
 Jiggle's move limit is now `Settings.jiggle_reach` (20 mm by default,
 adjustable; the owner: the limit only keeps the search quick).
 
