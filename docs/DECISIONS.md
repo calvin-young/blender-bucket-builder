@@ -123,8 +123,10 @@ still open. The details are in `AGENTS.md` (Implementation notes).
   **Correction (the owner, 2026-11-19):** the first version held the floor
   to the same rule; parts at z = 0 have never caused trouble (Netfabb puts
   them there all the time), while parts line to line with the X / Y bounds
-  have. So resting on the floor counts as inside, and Drop to Floor puts
-  parts at exactly z = 0 again. The top stays strict: nothing says contact
+  have. So resting on the floor counts as inside. **Final word (the owner,
+  2026-11-19, later):** the checker passes the floor, but every placing tool
+  (Drop to Floor, the packer, Jiggle, snapping) still leaves 0.001 mm above
+  it, to be safe (`problem.FLOOR_INSET`). The top stays strict: nothing says contact
   with the top of the build volume is safe, and with the floor exempt the
   rule errs strict on the one side where nothing is known. The packer keeps
   0.002 mm off the side walls and the top (`problem.PACK_INSET`,

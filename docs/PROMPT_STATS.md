@@ -31,7 +31,7 @@ Little things the maintainer asked for or caught, what the status page shows. Co
 
 | Bugs found | UI tweaks | New features | Direction | Total |
 |---|---|---|---|---|
-| 10 | 18 | 25 | 46 | 99 |
+| 11 | 18 | 26 | 46 | 101 |
 
 ## Sessions
 
@@ -75,6 +75,8 @@ the detail.
 - 2026-11-18 [domain]: faces under 0.5 mm may fuse; rounded, edge or corner approaches can go to about 0.1 mm.
 - 2026-11-18 [direction]: pack from scratch as a user would: "1:1 ratio, fit as many as you can"; whole sets, not broken ones.
 - 2026-11-19 [domain][bug]: correction: parts at z = 0 never cause trouble (Netfabb does it all the time); only the X / Y walls (and the top) must be strict.
+- 2026-11-19 [domain][bug]: final word: the checker passes the floor, but placing tools still leave 0.001 mm above it.
+- 2026-11-19 [direction][feature]: the packer should know when to use the pattern solver: analyse every kind, plans built from blocks, clearance escalation per block.
 - 2026-11-19 [direction]: test Netfabb to the absolute best of its abilities, with a fairness checklist an expert could not argue with.
 - 2026-11-18 [tested][bug]: Build Report said 12 parts out, the live check said in, for parts at exactly 0.000 mm from a wall; 0.001 mm counts as 0, be strict.
 - 2026-11-18 [direction][feature]: the packer must never place parts exactly at a wall.

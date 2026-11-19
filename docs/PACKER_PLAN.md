@@ -175,6 +175,45 @@ most of its time at the 3 mm aim, where nested pairs fit even less. So the
 next step is a pair and cluster search per kind, with set mode built on it
 (below, (a)).
 
+**Design: the pattern solver inside the overall strategy (agreed
+2026-11-19).** The owner expected the packer to know when to use its
+lattices. It does not: `Job.PATTERN_FROM` (20 copies) and lattices-first
+for at most 3 kinds covering 90 % of the copies send a 5-kind x 7 set
+straight to greedy, and `pattern.place` fills the bucket's lowest lattice
+points instead of making a compact block of exactly N copies. The design,
+reusing `pack/pattern.py` (no new pair search):
+
+* **A. Analyse every kind, every time** (no copy threshold): for each kind
+  with 2 or more copies, in its best few orientations and at the aim
+  (3 mm) and the least (1.5 mm): single lattices, 180-degree pairs
+  (`pairings`, `cross_free`), the most compact block of exactly N copies
+  that fits the bucket, its efficiency (N x part volume over the block's
+  box) and difficulty (block size x (1 - efficiency)); pairs across kinds
+  (`cross_free` takes two different grids). Cached per (part,
+  orientation, clearance); FFT-cheap next to greedy.
+* **B. Plans, not one pipeline:** (1) today's greedy; (2) the hardest kind
+  as a block first, the rest greedy around it; (3) every kind whose block
+  beats loose copies as blocks, largest first; (4) cross-kind pair blocks.
+  Blocks are rigid units while building (`Envelope`), dissolved into parts
+  for the final improvement, compaction and Jiggle.
+* **C. Clearance escalation per block:** the hardest block at 3 mm; if the
+  sets do not fit, rebuild it at 1.5 mm and retry; back to 3 mm when that
+  was not needed. Blocks at 1.5 mm are reported as compromises.
+* **D. Sets and N:** N from the blocks' envelopes over the usable volume
+  (with a packing factor), then N, N - 1 ..., whole sets only; the
+  cross-bucket alternative (#46) when N sets do not fit.
+* **E. Effort:** Quick = the best-scoring plan only; Normal = plans 1 - 2;
+  Thorough and Overnight = all plans with escalations and restarts.
+* **F. Where the first block goes:** the core (the owner's way) and a
+  corner or wall; the better wins.
+
+Where Claude differs, so far: the block's efficiency is measured against
+its bounding box, and these parts are open frames (one copy fills only
+3 - 8 % of its own box), so efficiency alone ranks poorly; what decides is
+whether the block's box beats N loose boxes, which is the ratio used. A
+prototype of plan 2 is in `~/data/packbench/challenge/nest/nest_set.py`
+(local), step A in `analyse.py`.
+
 **Ratios across buckets (the owner, 2026-11-18).** The job repeats (about
 150 of each), so a ratio may break inside one bucket if it holds across
 several: two buckets of 6, 6, 7, 7, 7 and 7, 7, 6, 6, 6 beat 4, 4, 4, 4, 4.

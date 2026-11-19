@@ -351,7 +351,9 @@ class BUCKETBUILDER_OT_drop_to_floor(_PartsOperator, Operator):
     bl_label = "Drop to Floor"
 
     def execute(self, context):
-        floor = float(volume_box(context)[0][2])         # (resting on the floor counts as inside)
+        from .pack.problem import FLOOR_INSET
+        # 0.001 mm above the floor: the checker passes contact, but placing keeps off it (the owner, 2026-11-19)
+        floor = float(volume_box(context)[0][2]) + FLOOR_INSET / _mm_per_unit(context)
 
         def drop(obj, dg):
             pts, _ = _world_mesh(obj, dg)
@@ -472,7 +474,9 @@ def _sync_snap(scene, context):
     lo, hi = volume_box(context or bpy.context)
     from .core.world import INSIDE_MARGIN
     m = 2.0 * INSIDE_MARGIN / _mm_per_unit(context or bpy.context)    # (snapping lands just inside the
-    lo, hi = lo + np.array([m, m, 0.0]), hi - m                      # side walls and the top; the floor is exact)
+    from .pack.problem import FLOOR_INSET
+    lo, hi = lo + np.array([m, m, FLOOR_INSET / _mm_per_unit(context or bpy.context)]), hi - m   # side walls and the top;
+                                                                                                   # 0.001 mm above the floor)
     pts = [(x, y, z) for z in (lo[2], hi[2]) for y in (lo[1], hi[1]) for x in (lo[0], hi[0])]
     if obj is None:
         me = bpy.data.meshes.new(HELPER_NAME)
