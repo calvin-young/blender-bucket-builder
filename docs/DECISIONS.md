@@ -144,6 +144,23 @@ still open. The details are in `AGENTS.md` (Implementation notes).
 * **Rack presets hold the chamber size only** (2026-11-18, #41): no maker
   publishes rack or hook geometry (`docs/POSTPROCESS_MACHINES.md`), so
   those are user settings per machine.
+* **One clearance for checker and packer** (2026-11-19, the owner's
+  report): the packer takes the checker's Clearance Between Parts and wall
+  clearance whenever the checker checks them (`packing.pack_gaps`); its own
+  Gap and Wall Gap only otherwise. An Aim clearance (default 10 mm, the
+  "roomy" tier) sits beside the minimum; Fix Issues with Relax raises gaps
+  toward it. Pack From Scratch packs at the minimum for now.
+* **Three actions** (the owner approved, 2026-11-19): Pack From Scratch,
+  Keep Trying (Improve Current Layout), Fix Issues (Jiggle's fixes, with
+  Relax). Jiggle & Tighten's separate button is gone; Jiggle lives in the
+  Packer tab under Fix Issues, because it moves parts and the Monitor tab
+  only reports.
+* **Two sidebar tabs**: Bucket Monitor (check, report, export, options) and
+  Bucket Packer (pack, arrange). Arrange went with the packer: it places
+  parts.
+* **Parts staged outside** (wholly, or more than half of their bounding box
+  outside): a quiet note, no purple, no problem row, no failed verdict
+  (`monitor._staged`, #31's first half; loud at export is still to do).
 
 ## Tried and abandoned
 

@@ -156,8 +156,8 @@ def candidates(context, selected_only, obstacles=False):
 
 
 class BUCKETBUILDER_OT_pack(Operator):
-    """Arrange the parts in the build volume automatically (experimental). Parts
-    marked Locked stay where they are and the others are packed around them"""
+    """Arrange the parts in the build volume automatically. Parts marked Locked
+    stay where they are and the others are packed around them"""
     bl_idname = "bucketbuilder.pack"
     bl_label = "Pack Parts"
     bl_options = {'UNDO'}          # (no redo panel: redoing would pack again, without progress)
@@ -169,8 +169,8 @@ class BUCKETBUILDER_OT_pack(Operator):
                                       "pack again the ones that still do, then look for a better layout")
     fix: EnumProperty(name="Jiggle", default='NONE',
                       items=(('NONE', "None", "Pack (or improve) as usual"),
-                             ('FIX', "Jiggle", "Small moves only, until no part collides, sits too close or "
-                              "past a wall: nothing is packed again elsewhere"),
+                             ('FIX', "Fix Issues", "Small moves until no part collides, sits too close or past a "
+                              "wall (and, with Relax, gaps raised toward the aim where there is room)"),
                              ('FIX_TIGHTEN', "Jiggle and Tighten", "Small moves until every rule is kept, then "
                               "every part moved down, back and left as far as the gap allows")),
                       options={'SKIP_SAVE'})
@@ -309,6 +309,8 @@ class BUCKETBUILDER_OT_pack(Operator):
                      preset=st.pack_preset.lower(), **quality_settings(st.pack_quality, st.pack_keep_low),
                      **effort_settings(st.pack_effort, st.pack_time, st.pack_best_hours, st.pack_stall_minutes,
                                       st.pack_overnight_hours))
+        if self.fix == 'FIX' and st.pack_relax and st.use_clearance and st.clearance_aim_mm > gap:
+            s.gap_aim = float(st.clearance_aim_mm)      # (Relax: Jiggle toward the aim, never below the least)
         self._settings = s
         self._start = start if (self.improve or self.fix != 'NONE') else None
         self._mode = 'pack' if self.fix == 'NONE' else self.fix.lower()

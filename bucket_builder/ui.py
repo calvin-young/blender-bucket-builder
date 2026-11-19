@@ -44,7 +44,7 @@ def _icon(tone):
 class _Base:
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "Bucket"
+    bl_category = "Bucket Monitor"
 
 
 def _split(layout):
@@ -297,6 +297,9 @@ class BUCKETBUILDER_PT_collisions(_Base, Panel):
         body = layout.column()
         body.active = st.detect_collisions
         _limit(body, st, "use_clearance", "clearance_mm")
+        sub = _split(body)
+        sub.active = st.use_clearance
+        sub.prop(st, "clearance_aim_mm", text="Aim (Packer)")
         # (which parts are checked goes for the build volume as well)
         layout.prop(st, "ignore_hidden")
         body = layout.column()
@@ -483,9 +486,9 @@ class BUCKETBUILDER_PT_report(_Base, Panel):
 # ---------------------------------------------------------------------------
 
 class BUCKETBUILDER_PT_pack(_Base, Panel):
-    bl_label = "Pack (Experimental)"
+    bl_label = "Pack"
     bl_idname = "BUCKETBUILDER_PT_pack"
-    bl_options = {'DEFAULT_CLOSED'}
+    bl_category = "Bucket Packer"
 
     def draw(self, context):
         layout = self.layout
@@ -510,31 +513,37 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
             row = layout.row()
             row.operator("bucketbuilder.pack_stop", icon='CANCEL')
         else:
+            # three actions (the owner's choice, 2026-11-19): from scratch, keep trying, fix issues
             row = layout.row()
             row.scale_y = 1.6
             op = row.operator("bucketbuilder.pack", icon='MOD_ARRAY',
-                              text=("Pack %d Selected Parts" % len(sel)) if sel else "Pack All Parts")
+                              text=("Pack %d Selected From Scratch" % len(sel)) if sel else "Pack From Scratch")
             op.selected_only = bool(sel)
             op.improve = False
+            op.fix = 'NONE'
             row = layout.row()
-            op = row.operator("bucketbuilder.pack", icon='FILE_REFRESH', text="Improve Current Layout")
+            op = row.operator("bucketbuilder.pack", icon='FILE_REFRESH', text="Keep Trying")
             op.selected_only = bool(sel)
             op.improve = True
             op.fix = 'NONE'
             row = layout.row(align=True)
-            op = row.operator("bucketbuilder.pack", icon='MOD_NOISE', text="Jiggle")
+            op = row.operator("bucketbuilder.pack", icon='MOD_NOISE', text="Fix Issues")
             op.selected_only = bool(sel)
             op.improve = False
             op.fix = 'FIX'
-            op = row.operator("bucketbuilder.pack", text="Jiggle & Tighten")
-            op.selected_only = bool(sel)
-            op.improve = False
-            op.fix = 'FIX_TIGHTEN'
             row.prop(st, "pack_jiggle_time", text="")
-            row = layout.row(align=True)
-            row.prop(st, "pack_jiggle_minor", toggle=True)
-            row.prop(st, "pack_jiggle_major", toggle=True)
-            row.prop(st, "pack_jiggle_reseat", toggle=True)
+            header, body = layout.panel("bucketbuilder_pack_fix", default_closed=True)
+            header.label(text="Fix Issues Options")
+            if body is not None:
+                row = body.row(align=True)
+                row.prop(st, "pack_relax", toggle=True)
+                sub = row.row(align=True)
+                sub.active = st.pack_relax and st.use_clearance
+                sub.prop(st, "clearance_aim_mm")
+                row = body.row(align=True)
+                row.prop(st, "pack_jiggle_minor", toggle=True)
+                row.prop(st, "pack_jiggle_major", toggle=True)
+                row.prop(st, "pack_jiggle_reseat", toggle=True)
         layout.template_list("BUCKETBUILDER_UL_pack_parts", "", bpy.data, "meshes", context.window_manager,
                              "bucket_builder_pack_part", rows=3, maxrows=6)
         col = _split(layout)
@@ -586,8 +595,9 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
             _wrapped(col, st.pack_last, 'INFO')
         col = layout.column(align=True)
         col.active = False
-        _wrapped(col, "It runs in the background: a first layout, then better ones for the time "
-                      "set. Esc or Stop keeps the best so far; Ctrl+Z puts the parts back.", 'EXPERIMENTAL')
+        _wrapped(col, "From Scratch packs every part again; Keep Trying starts from the layout as it is "
+                      "and keeps the best it finds; Fix Issues only makes small moves. All run in the "
+                      "background: Esc or Stop keeps the best so far, Ctrl+Z puts the parts back.", 'INFO')
 
 
 class BUCKETBUILDER_PT_options(_Base, Panel):
@@ -717,6 +727,7 @@ class BUCKETBUILDER_PT_units(_Base, Panel):
 class BUCKETBUILDER_PT_arrange(_Base, Panel):
     bl_label = "Arrange"
     bl_idname = "BUCKETBUILDER_PT_arrange"
+    bl_category = "Bucket Packer"
 
     def draw(self, context):
         layout = self.layout

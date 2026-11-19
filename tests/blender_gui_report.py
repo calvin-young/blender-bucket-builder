@@ -81,7 +81,7 @@ def step_enable():
     st.report_density = True
     for r in area().regions:
         if r.type == 'UI':
-            r.active_panel_category = 'Bucket'
+            r.active_panel_category = 'Bucket Monitor'
     return 3.0
 
 

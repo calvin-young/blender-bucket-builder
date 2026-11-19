@@ -99,7 +99,7 @@ def step_setup():
 def step_before():
     for r in area().regions:
         if r.type == 'UI':
-            r.active_panel_category = 'Bucket'
+            r.active_panel_category = 'Bucket Packer'
     return 1.0
 
 

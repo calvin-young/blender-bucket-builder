@@ -140,6 +140,7 @@ def main():
     check(s0['collisions'] + s0['clearance'] > 0, 'a part pushed into its neighbor breaks a rule', s0)
     keep = {o.name: np.array(o.matrix_world) for o in objs}
     st.pack_jiggle_time = 60.0
+    st.pack_relax = False              # (Relax moves every part toward the aim: checked below)
     r = bpy.ops.bucketbuilder.pack(selected_only=False, fix='FIX')
     print('  ', st.pack_last)
     check(r == {'FINISHED'} and st.pack_last.startswith('Jiggled 17 of 17'), 'Jiggle keeps every part', st.pack_last)
@@ -150,6 +151,15 @@ def main():
     moved = [float(np.linalg.norm(np.array(o.matrix_world)[:3, 3] - keep[o.name][:3, 3])) for o in objs]
     check(max(moved) < 15.0, 'with small moves only (largest %.1f mm, %d parts moved)'
           % (max(moved), sum(1 for m in moved if m > 1e-6)))
+    # Relax: Fix Issues spends spare room raising the gaps toward the aim, never below the least
+    st.pack_relax = True
+    st.clearance_aim_mm = 6.0
+    r = bpy.ops.bucketbuilder.pack(selected_only=False, fix='FIX')
+    mon = settle()
+    s = mon.status()
+    print('  ', st.pack_last)
+    check(r == {'FINISHED'} and s['collisions'] == 0 and s['clearance'] == 0 and s['partly_out'] == 0,
+          'Fix Issues with Relax keeps every rule', (st.pack_last, s))
 
     # packing a selection packs it around what is already in the volume
     keep = {o.name: np.array(o.matrix_world) for o in objs}

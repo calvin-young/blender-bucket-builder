@@ -151,7 +151,7 @@ def step_enable():
     for r in area().regions:
         if r.type == 'UI':
             try:
-                r.active_panel_category = 'Bucket'
+                r.active_panel_category = 'Bucket Monitor'
             except Exception:
                 pass
     return 0.3

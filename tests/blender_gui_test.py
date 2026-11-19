@@ -228,7 +228,7 @@ def step_enable():
     for region in view_area().regions:
         if region.type == 'UI':
             try:
-                region.active_panel_category = 'Bucket'
+                region.active_panel_category = 'Bucket Monitor'
             except Exception as ex:
                 log('could not switch sidebar tab:', ex)
     log('monitoring enabled; waiting for the add-on timer')
@@ -277,7 +277,7 @@ def step_badge_far_right():
     shot('gui_1a_badge_far_right')
     check_badge('magenta', 'under the empty part of the sidebar',
                 view_region().width - bc.overlay.TAB_STRIP * ui_scale())
-    set_tab('Bucket')
+    set_tab('Bucket Monitor')
     return 1.0
 
 

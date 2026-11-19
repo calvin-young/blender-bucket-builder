@@ -355,6 +355,18 @@ class BucketBuilderSettings(PropertyGroup):
         description="Minimum gap between parts, in millimeters; closer pairs get a warning",
         default=5.0, min=0.0, soft_max=20.0, precision=2, step=50, update=_poke)
 
+    clearance_aim_mm: FloatProperty(
+        name="Aim",
+        description="The clearance parts should have where there is room, in millimeters: Fix Issues "
+                    "with Relax spends spare room raising gaps toward it. The clearance beside "
+                    "Clearance Between Parts stays the least, below which a pair is a warning",
+        default=10.0, min=0.0, soft_max=30.0, precision=2, step=50)
+    pack_relax: BoolProperty(
+        name="Relax",
+        description="After fixing, spend spare room raising the gaps between parts toward the Aim "
+                    "clearance (without tightening the layout)",
+        default=True)
+
     detect_enclosed: BoolProperty(
         name="Parts Inside Parts",
         description="Also report a part that lies completely inside another one although "

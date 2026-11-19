@@ -31,7 +31,7 @@ Little things the maintainer asked for or caught, what the status page shows. Co
 
 | Bugs found | UI tweaks | New features | Direction | Total |
 |---|---|---|---|---|
-| 11 | 18 | 26 | 46 | 101 |
+| 14 | 21 | 30 | 47 | 112 |
 
 ## Sessions
 
@@ -75,6 +75,17 @@ the detail.
 - 2026-11-18 [domain]: faces under 0.5 mm may fuse; rounded, edge or corner approaches can go to about 0.1 mm.
 - 2026-11-18 [direction]: pack from scratch as a user would: "1:1 ratio, fit as many as you can"; whole sets, not broken ones.
 - 2026-11-19 [domain][bug]: correction: parts at z = 0 never cause trouble (Netfabb does it all the time); only the X / Y walls (and the top) must be strict.
+- 2026-11-19 [tested][ui]: parts staged fully outside light the screen up purple; only parts that stick out a little should be loud.
+- 2026-11-19 [tested][ui]: no feedback while the packer prepares; show the stage and an estimate from the start.
+- 2026-11-19 [tested][features]: pressing Pack again redid all the preparation: cache it per parts and settings.
+- 2026-11-19 [tested][bugs]: the estimate said 5 minutes and it finished in 20 s.
+- 2026-11-19 [tested][bugs]: checker 5 mm and packer 3 mm gave a "successful" pack full of clearance warnings: one clearance setting.
+- 2026-11-19 [tested][bugs]: the first Pack placed 4 of 5 kinds, the second all of them.
+- 2026-11-19 [ui][features]: split the sidebar into Bucket Monitor and Bucket Packer, drop "Experimental".
+- 2026-11-19 [direction][features]: three actions: Pack From Scratch, Keep Trying, Fix Issues with Relax.
+- 2026-11-19 [tested][features]: at Part Quality 50 % flat plates lay in XY with room above; expected some tilted.
+- 2026-11-19 [domain]: slightly tilted large flat faces stair-step, worse than the capillary defect of exactly flat ones: flat or clearly tilted, never barely.
+- 2026-11-19 [domain]: the battery holder is the part to nest first; "looking much better" for the holder-first layout.
 - 2026-11-19 [domain][bug]: final word: the checker passes the floor, but placing tools still leave 0.001 mm above it.
 - 2026-11-19 [direction][feature]: the packer should know when to use the pattern solver: analyse every kind, plans built from blocks, clearance escalation per block.
 - 2026-11-19 [direction]: test Netfabb to the absolute best of its abilities, with a fairness checklist an expert could not argue with.
