@@ -552,8 +552,15 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
         sub = col.column(align=True)
         sub.active = st.pack_mode == 'Z' or any(o.bucket_builder_pack_mode == 'Z' for o in sel)
         sub.prop(st, "pack_z_step")
-        col.prop(st, "pack_gap")
-        col.prop(st, "pack_wall_gap")
+        # one clearance for checker and packer: the checker's, when it checks it
+        if st.use_clearance:
+            col.label(text=f"Gap: {st.clearance_mm:.2f} mm (the clearance checked)")
+        else:
+            col.prop(st, "pack_gap")
+        if st.use_wall_clearance:
+            col.label(text=f"Wall Gap: {st.wall_clearance_mm:.2f} mm (the clearance checked)")
+        else:
+            col.prop(st, "pack_wall_gap")
         col.prop(st, "pack_max_density")
         header, body = layout.panel("bucketbuilder_pack_advanced", default_closed=True)
         header.label(text="Advanced")

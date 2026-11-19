@@ -266,10 +266,12 @@ class BucketBuilderSettings(PropertyGroup):
         description="How the packer may turn the parts (a part's own setting overrides this)")
     pack_gap: FloatProperty(
         name="Gap", default=3.0, min=0.0, soft_max=20.0, precision=2, step=50,
-        description="Distance the packer keeps between parts, in millimeters")
+        description="Distance the packer keeps between parts, in millimeters, when the checker does "
+                    "not check Clearance Between Parts (otherwise the packer uses that)")
     pack_wall_gap: FloatProperty(
         name="Wall Gap", default=5.0, min=0.0, soft_max=30.0, precision=2, step=50,
-        description="Distance the packer keeps from the side walls of the build volume, in millimeters")
+        description="Distance the packer keeps from the side walls of the build volume, in millimeters, when "
+                    "the checker does not check the wall clearance (otherwise the packer uses that)")
     pack_max_density: FloatProperty(
         name="Max Density", default=12.0, min=0.0, max=100.0, precision=1, subtype='NONE',
         description="Highest 3D density (part volume / build area x packed height) in percent; "

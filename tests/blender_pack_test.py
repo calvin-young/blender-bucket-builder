@@ -74,8 +74,16 @@ def main():
     check(pk.is_essential(objs[3]) and not pk.is_essential(sph), "a mesh marked essential makes its copies so")
     cube.data.bucket_builder_pack_essential = False
 
-    st.pack_gap = 3.0
-    st.pack_wall_gap = 5.0
+    st.pack_gap = 7.0                   # (not used: the packer takes the checker's clearances)
+    st.pack_wall_gap = 9.0
+    st.use_clearance = True
+    st.clearance_mm = 3.0
+    st.use_wall_clearance = True
+    st.wall_clearance_mm = 5.0
+    check(pk.pack_gaps(st) == (3.0, 5.0), "the packer uses the checker's clearances", pk.pack_gaps(st))
+    st.use_clearance = False
+    check(pk.pack_gaps(st) == (7.0, 5.0), "and its own gap when the checker does not check clearance", pk.pack_gaps(st))
+    st.use_clearance = True
     st.pack_max_density = 0.0
     st.pack_time = 8.0
     r = bpy.ops.bucketbuilder.pack(selected_only=False)

@@ -262,7 +262,7 @@ def main():
     bpy.ops.mesh.primitive_uv_sphere_add(radius=20, location=(100, 100, 100))
     bpy.ops.mesh.primitive_uv_sphere_add(radius=20, location=(130, 100, 100))
     bpy.ops.mesh.primitive_cube_add(size=30, location=(100, 100, 142))      # 2 mm above the first sphere
-    bpy.ops.mesh.primitive_cube_add(size=30, location=(-5, 100, 100))       # through the wall
+    bpy.ops.mesh.primitive_cube_add(size=30, location=(5, 100, 100))        # a third through the wall (not staged)
     for i in range(14):                                                    # a long problem list
         bpy.ops.mesh.primitive_cube_add(size=10, location=(20 + 12 * i, 250, 20))
     ctx.view_layer.update()

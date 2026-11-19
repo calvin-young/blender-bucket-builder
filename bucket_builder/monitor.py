@@ -126,7 +126,7 @@ class View:
     the user ignores, and without pair results while collisions are not
     being checked.  ``muted`` maps what is ignored to 1, or 2 if for good:
     pair keys, and ('V', slot) / ('W', slot)."""
-    __slots__ = ('stamp', 'viol', 'oob', 'wall', 'muted', 'counts')
+    __slots__ = ('stamp', 'viol', 'oob', 'wall', 'muted', 'counts', 'staged')
 
 
 def _executor():
@@ -168,6 +168,22 @@ def _visible(obj, view_layer):
         return obj.visible_get(view_layer=view_layer)
     except Exception:
         return not obj.hide_viewport
+
+
+STAGED_SHARE = 0.5      # a part with more than this share of its bounding box outside the volume is staged
+
+
+def _staged(r, volume):
+    """Whether an out-of-volume result is a part staged outside (wholly, or
+    mostly by its bounding box) rather than one that sticks out a little."""
+    if r.state == OUTSIDE:
+        return True
+    if volume is None:
+        return False
+    lo, hi = np.asarray(r.lo, float), np.asarray(r.hi, float)
+    size = np.maximum(hi - lo, 1e-12)
+    inside = np.clip(np.minimum(hi, volume[1]) - np.maximum(lo, volume[0]), 0.0, None)
+    return float(np.prod(inside / size)) < 1.0 - STAGED_SHARE
 
 
 def _reaches_into(obj, lo, hi):
@@ -572,6 +588,11 @@ class Monitor:
                         v.muted[(kind, slot)] = level
                     else:
                         dst[slot] = r
+        # Parts wholly or mostly outside are staged there on purpose (the owner,
+        # 2026-11-19): a quiet note, not the purple of a part that sticks out a little.
+        v.staged = {slot: r for slot, r in v.oob.items() if _staged(r, w.volume)}
+        if v.staged:
+            v.oob = {slot: r for slot, r in v.oob.items() if slot not in v.staged}
         nc = sum(1 for pr in v.viol.values() if pr.state == COLLIDE)
         npart = sum(1 for r in v.oob.values() if r.state == PARTIAL)
         v.counts = (nc, len(v.viol) - nc, npart, len(v.oob) - npart, len(v.wall))
@@ -1292,6 +1313,7 @@ class Monitor:
             'clearance': ncl,
             'partly_out': npart,
             'touching': sum(1 for r in w.oob.values() if getattr(r, 'touch', None)),
+            'staged': len(view.staged),
             'outside': nout,
             'near_wall': nwall,
             'skipped': skipped,
@@ -1348,7 +1370,10 @@ class Monitor:
                 'slots': key,
                 'ignored': muted.get(key, 0),
             })
+        staged = self.view().staged
         for slot, r in w.oob.items():
+            if slot in staged:
+                continue                     # (staged outside: a note in the verdict, not a problem)
             c = 0.5 * (r.lo + r.hi)
             touch = getattr(r, 'touch', None)
             out.append({

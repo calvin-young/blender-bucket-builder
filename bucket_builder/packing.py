@@ -90,6 +90,17 @@ def is_essential(o):
     return bool(o.bucket_builder_pack_essential or getattr(o.data, 'bucket_builder_pack_essential', False))
 
 
+def pack_gaps(st):
+    """(gap, wall gap) in mm for the packer: the checker's own clearances when
+    they are on, so a pack the packer calls clean is clean to the checker too
+    (the owner, 2026-11-19: 5 mm in the checker and 3 mm in the packer gave a
+    'successful' pack full of clearance warnings); the packer's own values only
+    when the checker does not check that distance."""
+    gap = st.clearance_mm if st.use_clearance else st.pack_gap
+    wall = st.wall_clearance_mm if st.use_wall_clearance else st.pack_wall_gap
+    return float(gap), float(wall)
+
+
 def mm_per_unit(scene, objects):
     mon = monitor.get(scene)
     if mon is not None:
@@ -291,7 +302,8 @@ class BUCKETBUILDER_OT_pack(Operator):
         self._objects = [g[1] for g in groups.values()]
         self._k = k
         self._vlo, self._vhi = vlo, vhi
-        s = Settings(vlo=vlo, vhi=vhi, gap=st.pack_gap, wall_gap=st.pack_wall_gap,
+        gap, wall_gap = pack_gaps(st)
+        s = Settings(vlo=vlo, vhi=vhi, gap=gap, wall_gap=wall_gap,
                      h=st.pack_cell, z_step=st.pack_z_step,
                      max_density=(st.pack_max_density / 100.0) or None,
                      preset=st.pack_preset.lower(), **quality_settings(st.pack_quality, st.pack_keep_low),

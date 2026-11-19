@@ -1149,6 +1149,9 @@ def summary(status, local=None):
         k = status.get(key, 0)
         if k:
             rows.append((_count(k, what) + " ignored", 'note'))
+    k = status.get('staged', 0)
+    if k:
+        rows.append((_count(k, "part") + " staged outside the volume (not printable as is)", 'note'))
     k = status.get('hidden_skipped', 0)
     if k:
         n_in = status.get('hidden_inside', 0)
