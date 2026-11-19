@@ -81,6 +81,7 @@ SCAN_SECONDS = 2.0      # the scene is searched for unchecked things at most thi
 SCAN_INSTANCES = 20000  # instances looked at per search
 NON_MESH = {'CURVE', 'SURFACE', 'FONT', 'META'}   # objects with faces that are not read
 # the order of the list of problems: the most serious kind first
+WALL_NAMES = ('the left wall (X)', 'the front wall (Y)', 'the floor', 'the right wall (X)', 'the back wall (Y)', 'the top')
 PROBLEM_RANK = {'PARTIAL': 0, 'OUTSIDE': 1, 'COLLIDE': 2, 'CLEAR': 3, 'WALL': 4}
 BIG_SKIPS = ('too many triangles', 'not enough memory', 'error')
 
@@ -1290,6 +1291,7 @@ class Monitor:
             'collisions': nc,
             'clearance': ncl,
             'partly_out': npart,
+            'touching': sum(1 for r in w.oob.values() if getattr(r, 'touch', None)),
             'outside': nout,
             'near_wall': nwall,
             'skipped': skipped,
@@ -1348,10 +1350,12 @@ class Monitor:
             })
         for slot, r in w.oob.items():
             c = 0.5 * (r.lo + r.hi)
+            touch = getattr(r, 'touch', None)
             out.append({
                 'kind': 'PARTIAL' if r.state == PARTIAL else 'OUTSIDE',
                 'a': name(slot), 'b': '',
-                'dist_mm': 0.0,
+                'dist_mm': touch[1] * self.mm_per_unit if touch else 0.0,
+                'touch': WALL_NAMES[touch[0]] if touch else None,
                 'center': c,
                 'radius': 0.5 * float(np.linalg.norm(r.hi - r.lo)),
                 'approx': False,

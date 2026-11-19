@@ -1066,8 +1066,12 @@ def summary(status, local=None):
     volume = status['volume']
     checked = pairs or volume
     rows = []
-    if nout:
-        rows.append((_count(nout, "Part") + " Outside Build Volume", 'out'))
+    ntouch = status.get('touching', 0)
+    if nout > ntouch:
+        rows.append((_count(nout - ntouch, "Part") + " Outside Build Volume", 'out'))
+    if ntouch:
+        # (at a wall, not past it: printers may reject it all the same)
+        rows.append((_count(ntouch, "Part") + " Touching a Wall (needs 0.001 mm)", 'out'))
     if nc:
         rows.append((_count(nc, "Collision") + " Detected", 'fail'))
     warnings = []

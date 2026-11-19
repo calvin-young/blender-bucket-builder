@@ -1092,6 +1092,26 @@ def main():
     mon = settle()
     check(mon.status()['collisions'] == 1 and mon.world.stats()['geoms'] == geoms, 'and goes on as before')
 
+    # a part exactly on the floor touches it: named plainly, and Move Inside fixes it
+    fl = add_cube('Floorer', (300.0, 200.0, 20.0))      # (a 40 mm cube: its bottom at z = 0)
+    update()
+    mon = settle()
+    s = mon.status()
+    tp = [p for p in mon.problems() if p.get('touch')]
+    check(s['touching'] == 1 and len(tp) == 1 and tp[0]['touch'] == 'the floor'
+          and 'Touching a Wall' in ' '.join(t for t, _ in bc.overlay.summary(s)[1]),
+          'a part on the floor is touching it, and the verdict says so', (s, tp))
+    check(bc.ops.describe(tp[0]).endswith('0.000 mm, needs at least 0.001 mm'), 'with the gap and what it needs',
+          bc.ops.describe(tp[0]))
+    bpy.ops.bucketbuilder.move_inside()
+    update()
+    mon = settle()
+    check(mon.status()['touching'] == 0 and oob(mon, fl) is None and abs(fl.location.z - 20.002) < 1e-6,
+          'Move Inside lifts it 0.002 mm', (mon.status(), fl.location.z))
+    bpy.data.objects.remove(fl)
+    update()
+    mon = settle()
+
     import addon_utils
     addon_utils.disable(PKG)
     check(not hasattr(bpy.types.Scene, 'bucket_builder'), 'add-on unregisters cleanly')

@@ -168,6 +168,8 @@ def describe(pr):
     if pr['kind'] == 'WALL':
         return f"{pr['a']} is {pr['dist_mm']:.2f} mm from a side wall"
     if pr['kind'] == 'PARTIAL':
+        if pr.get('touch'):
+            return f"{pr['a']} touching {pr['touch']}: {pr['dist_mm']:.3f} mm, needs at least 0.001 mm"
         return f"{pr['a']} reaches outside the build volume"
     return f"{pr['a']} is outside the build volume"
 
@@ -938,7 +940,38 @@ class BUCKETBUILDER_MT_printers(Menu):
         layout.operator("bucketbuilder.profiles_reset")
 
 
+class BUCKETBUILDER_OT_move_inside(Operator):
+    """Move every part that touches a wall of the build volume just inside it (0.002 mm)"""
+    bl_idname = "bucketbuilder.move_inside"
+    bl_label = "Move Inside"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        from mathutils import Matrix
+        from .core.world import INSIDE_MARGIN
+        mon = monitor.get(context.scene)
+        if mon is None:
+            return {'CANCELLED'}
+        w = mon.world
+        want = 2.0 * INSIDE_MARGIN / mon.mm_per_unit          # (twice the margin: room for rounding)
+        by_uid = {monitor._uid(o): o for o in context.view_layer.objects if o is not None}
+        n = 0
+        for slot, r in list(w.oob.items()):
+            touch = getattr(r, 'touch', None)
+            obj = by_uid.get(w.uid(slot))
+            if touch is None or obj is None:
+                continue
+            axis, gap = touch[0] % 3, touch[1]
+            d = [0.0, 0.0, 0.0]
+            d[axis] = (want - gap) * (1.0 if touch[0] < 3 else -1.0)
+            obj.matrix_world = Matrix.Translation(d) @ obj.matrix_world
+            n += 1
+        self.report({'INFO'}, f"{n} part(s) moved inside")
+        return {'FINISHED'}
+
+
 CLASSES = (
+    BUCKETBUILDER_OT_move_inside,
     BUCKETBUILDER_OT_focus_problem,
     BUCKETBUILDER_OT_step_problem,
     BUCKETBUILDER_OT_isolate,

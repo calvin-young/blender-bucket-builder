@@ -102,6 +102,8 @@ class BUCKETBUILDER_PT_main(_Base, Panel):
         # a mistake: so all of them are plain.)
         for text, tone in rows:
             col.label(text=text, **_icon(tone))
+        if status and status.get('touching'):
+            box.operator("bucketbuilder.move_inside", icon='ARROW_LEFTRIGHT')
         if status and status.get('printer'):
             col.label(text=status['printer'], icon='INFO')
         if mon is not None and mon.error:
@@ -129,6 +131,8 @@ def problem_text(pr):
     if pr['kind'] == 'WALL':
         return f"{_mm(pr)}  {pr['a']}  |  wall"
     if pr['kind'] == 'PARTIAL':
+        if pr.get('touch'):
+            return f"{pr['a']}   touching {pr['touch']}"
         return f"{pr['a']}   partly outside"
     return f"{pr['a']}   outside"
 

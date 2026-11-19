@@ -151,7 +151,9 @@ class PairResult:
 
 class OobResult:
     """Build-volume status of one object (geometry in world space)."""
-    __slots__ = ('state', 'tris', 'lo', 'hi', 'band_only', 'serial')
+    __slots__ = ('state', 'tris', 'lo', 'hi', 'band_only', 'serial', 'touch')
+    # touch: (wall, gap) when nothing reaches past a wall but the part is closer to
+    # one than the inside margin; wall is 0 - 5 for x, y, z low, then x, y, z high
 
 
 class WallResult:
@@ -1823,6 +1825,9 @@ class World:
             r.band_only = False
             r.serial = self._serial
             r.state = OUTSIDE if outside[i] else PARTIAL
+            gaps = np.concatenate([lo[i] - vlo, vhi - hi[i]])
+            r.touch = (int(gaps.argmin()), max(0.0, float(gaps.min()))) \
+                if r.state == PARTIAL and gaps.min() >= -self.eps_len else None
             if r.state == PARTIAL:
                 todo[slot] = None
             self.oob[slot] = r

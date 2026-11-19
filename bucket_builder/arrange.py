@@ -286,6 +286,15 @@ def _turn(obj, R, points):
 # the build volume
 # ---------------------------------------------------------------------------
 
+def _mm_per_unit(context):
+    from . import monitor
+    mon = monitor.get(context.scene)
+    if mon is None:
+        mon = monitor.Monitor(context.scene)
+        mon.mm_per_unit, _ = mon._resolve_units(context.scene, props.settings(context.scene))
+    return mon.mm_per_unit
+
+
 def volume_box(context):
     """The build volume as (lo, hi) in scene units."""
     from . import monitor
@@ -342,7 +351,9 @@ class BUCKETBUILDER_OT_drop_to_floor(_PartsOperator, Operator):
     bl_label = "Drop to Floor"
 
     def execute(self, context):
-        floor = float(volume_box(context)[0][2])
+        from .core.world import INSIDE_MARGIN
+        # just above the floor: a part exactly on it is not inside (core.world.bounds_state)
+        floor = float(volume_box(context)[0][2]) + 2.0 * INSIDE_MARGIN / _mm_per_unit(context)
 
         def drop(obj, dg):
             pts, _ = _world_mesh(obj, dg)
@@ -461,6 +472,9 @@ def _sync_snap(scene, context):
                 bpy.data.meshes.remove(me)
         return
     lo, hi = volume_box(context or bpy.context)
+    from .core.world import INSIDE_MARGIN
+    m = 2.0 * INSIDE_MARGIN / _mm_per_unit(context or bpy.context)    # (snapping lands just inside)
+    lo, hi = lo + m, hi - m
     pts = [(x, y, z) for z in (lo[2], hi[2]) for y in (lo[1], hi[1]) for x in (lo[0], hi[0])]
     if obj is None:
         me = bpy.data.meshes.new(HELPER_NAME)
