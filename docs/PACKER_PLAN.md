@@ -160,6 +160,21 @@ years of packing; he believes few colleagues would reach 7), and he wants
 to put this bucket to the company as a challenge: "how many copies can
 YOU fit?"
 
+**Why the packer nested nothing (diagnosis, 2026-11-19).** The owner
+started his 7 sets by nesting the L-shaped holders; our runs never nest a
+pair. (1) Nesting only exists in the lattice packer (`pack/pattern.py`:
+single and double lattices), and it runs only for kinds with
+`Job.PATTERN_FROM` = 20 copies or more; the challenge has 5 - 7 of each,
+and the whole-sets runs (`sets_N*`) even made every copy its own part of
+quantity 1, so no lattice was ever tried. (2) Greedy places one copy at a
+time against the heap, scored by height and contact, with the first
+layout limited to two orientations per box shape: a copy turned 180
+degrees into its twin's hollow is never a candidate as a pair, and the
+improvement stages move single parts too. (3) The two-clearance run spends
+most of its time at the 3 mm aim, where nested pairs fit even less. So the
+next step is a pair and cluster search per kind, with set mode built on it
+(below, (a)).
+
 **Ratios across buckets (the owner, 2026-11-18).** The job repeats (about
 150 of each), so a ratio may break inside one bucket if it holds across
 several: two buckets of 6, 6, 7, 7, 7 and 7, 7, 6, 6, 6 beat 4, 4, 4, 4, 4.

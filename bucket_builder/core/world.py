@@ -52,19 +52,27 @@ from . import bvh, narrow
 
 PENDING, OK, CLEAR, COLLIDE = -1, 0, 1, 2
 INSIDE, PARTIAL, OUTSIDE = 0, 1, 2
-INSIDE_MARGIN = 1e-3      # mm a part must be inside every wall to count as in (the owner, 2026-11-18:
-                          # 0.001 mm counts as 0, better too strict than a build the printer rejects)
+INSIDE_MARGIN = 1e-3      # mm a part must keep from the side walls and the top to count as in (the owner,
+                          # 2026-11-18: 0.001 mm counts as 0); the floor is exempt (2026-11-19: parts at z = 0
+                          # never caused trouble; parts line to line with the X / Y bounds did)
 
 
 def bounds_state(lo, hi, vlo, vhi, margin):
     """(inside, outside) for parts with extents lo, hi ((n, 3) or (3,)).  Inside
-    means at least `margin` from every wall of the volume (floor and top too);
-    outside means not reaching `margin` into it.  The one rule every bounds
-    check uses: the live check, the Build Report and the referee."""
+    means at least `margin` from the side walls and the top, and not below the
+    floor (resting on it is fine); outside means not reaching `margin` into it.
+    The one rule every bounds check uses: the live check, the Build Report and
+    the referee."""
     lo, hi = np.asarray(lo, float), np.asarray(hi, float)
-    slack = 1e-9 * (1.0 + float(np.max(np.abs(vhi - vlo))))     # (a part placed exactly at the margin)
-    inside = ((lo >= vlo + margin - slack) & (hi <= vhi - margin + slack)).all(axis=-1)
-    outside = ((hi <= vlo + margin) | (lo >= vhi - margin)).any(axis=-1)
+    vlo, vhi = np.asarray(vlo, float), np.asarray(vhi, float)
+    size = 1.0 + float(np.max(np.abs(vhi - vlo)))
+    slack = 1e-9 * size                                          # (a part placed exactly at the margin)
+    # The floor: contact is inside, and a part resting on it may read a little below it, because
+    # the engine keeps posed vertices in single precision (about 1e-7 of the scene's size).
+    m_lo = np.array([margin - slack, margin - slack, -1e-6 * size])
+    inside = ((lo >= vlo + m_lo) & (hi <= vhi - margin + slack)).all(axis=-1)
+    m_lo = np.array([margin, margin, 0.0])
+    outside = ((hi <= vlo + m_lo) | (lo >= vhi - margin)).any(axis=-1)
     return inside, outside
 
 MAX_BATCH = 96
@@ -1826,6 +1834,7 @@ class World:
             r.serial = self._serial
             r.state = OUTSIDE if outside[i] else PARTIAL
             gaps = np.concatenate([lo[i] - vlo, vhi - hi[i]])
+            gaps[2] = np.inf                 # (the floor: contact is allowed)
             r.touch = (int(gaps.argmin()), max(0.0, float(gaps.min()))) \
                 if r.state == PARTIAL and gaps.min() >= -self.eps_len else None
             if r.state == PARTIAL:

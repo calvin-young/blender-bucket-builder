@@ -351,9 +351,7 @@ class BUCKETBUILDER_OT_drop_to_floor(_PartsOperator, Operator):
     bl_label = "Drop to Floor"
 
     def execute(self, context):
-        from .core.world import INSIDE_MARGIN
-        # just above the floor: a part exactly on it is not inside (core.world.bounds_state)
-        floor = float(volume_box(context)[0][2]) + 2.0 * INSIDE_MARGIN / _mm_per_unit(context)
+        floor = float(volume_box(context)[0][2])         # (resting on the floor counts as inside)
 
         def drop(obj, dg):
             pts, _ = _world_mesh(obj, dg)
@@ -473,8 +471,8 @@ def _sync_snap(scene, context):
         return
     lo, hi = volume_box(context or bpy.context)
     from .core.world import INSIDE_MARGIN
-    m = 2.0 * INSIDE_MARGIN / _mm_per_unit(context or bpy.context)    # (snapping lands just inside)
-    lo, hi = lo + m, hi - m
+    m = 2.0 * INSIDE_MARGIN / _mm_per_unit(context or bpy.context)    # (snapping lands just inside the
+    lo, hi = lo + np.array([m, m, 0.0]), hi - m                      # side walls and the top; the floor is exact)
     pts = [(x, y, z) for z in (lo[2], hi[2]) for y in (lo[1], hi[1]) for x in (lo[0], hi[0])]
     if obj is None:
         me = bpy.data.meshes.new(HELPER_NAME)

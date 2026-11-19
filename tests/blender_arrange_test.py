@@ -61,7 +61,7 @@ def main():
     only(a, b)
     check(bpy.ops.bucketbuilder.drop_to_floor() == {'FINISHED'}, 'drop to floor runs')
     za, zb = world(a)[:, 2].min(), world(b)[:, 2].min()
-    check(abs(za - 0.002) < 1e-4 and abs(zb - 0.002) < 1e-4, 'each selected part rests just above the floor (0.002 mm)', (za, zb))
+    check(abs(za) < 1e-4 and abs(zb) < 1e-4, 'each selected part rests on the floor', (za, zb))
     check(abs(b.location.x - 120) < 1e-9 and abs(b.location.y - 50) < 1e-9, 'and only moved down')
     km = [kmi for km, kmi in arrange._keymaps if kmi.idname == 'bucketbuilder.drop_to_floor']
     check(km and km[0].type == 'DOWN_ARROW' and km[0].ctrl, 'Ctrl+Down Arrow drops to the floor')
@@ -123,8 +123,8 @@ def main():
           'switched on: a wireframe of the volume', helper)
     lo, hi = arrange.volume_box(bpy.context)
     v = np.array([vv.co for vv in helper.data.vertices])
-    check(np.allclose(v.min(axis=0), lo + 0.002) and np.allclose(v.max(axis=0), hi - 0.002),
-          'on the volume, 0.002 mm inside (snapping lands inside)', (lo, hi))
+    check(np.allclose(v.min(axis=0), lo + (0.002, 0.002, 0)) and np.allclose(v.max(axis=0), hi - 0.002),
+          'on the volume, 0.002 mm inside the side walls and the top (snapping lands inside)', (lo, hi))
     check(helper.hide_select and helper.hide_render and not helper.hide_get(), 'not selectable, not rendered, visible')
     mon.need_resync = True
     time.sleep(monitor.IDLE_SECONDS + 0.05)
@@ -134,10 +134,10 @@ def main():
     check(helper not in bb.ops.ignored_objects(bpy.context.scene), 'nor listed among ignored parts')
     st.volume_size = (300.0, 200.0, 250.0)
     v = np.array([vv.co for vv in helper.data.vertices])
-    check(np.allclose(v.max(axis=0) - v.min(axis=0), (299.996, 199.996, 249.996)), 'it follows the volume', v.max(axis=0))
+    check(np.allclose(v.max(axis=0) - v.min(axis=0), (299.996, 199.996, 249.998)), 'it follows the volume', v.max(axis=0))
     st.volume_align = 'CENTER_XY'
     v = np.array([vv.co for vv in helper.data.vertices])
-    check(np.allclose(v.min(axis=0), (-149.998, -99.998, 0.002)), 'also when the volume moves', v.min(axis=0))
+    check(np.allclose(v.min(axis=0), (-149.998, -99.998, 0.0)), 'also when the volume moves', v.min(axis=0))
     only(a)
     bpy.ops.object.select_all(action='SELECT')
     check(not helper.select_get(), 'Select All does not pick it')

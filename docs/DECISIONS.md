@@ -113,15 +113,23 @@ still open. The details are in `AGENTS.md` (Implementation notes).
   least, and the referee stays exact, so a layout called clean is clean.
 * **Jiggle's options** (2026-11-18, the owner confirmed the defaults): Small
   Turns off, Quarter Turns off, Move Elsewhere on.
-* **One bounds rule, strict at the walls** (2026-11-18, #48). The Build
-  Report and the live check disagreed about parts exactly at a wall (an
-  absolute 1e-6 mm against 1e-6 of the scene size). Now one function,
-  `core.world.bounds_state`, decides for both and for the referee: a part
-  is inside only if it is at least 0.001 mm from every wall, floor
-  included (the owner: 0.001 mm counts as 0; better too strict than a
-  printer rejecting a build the prep software accepted). The packer keeps
-  0.002 mm off every wall (`problem.PACK_INSET`); its cells shrink by about
-  0.001 % instead of losing a row.
+* **One bounds rule, strict at the side walls and the top** (2026-11-18,
+  #48; corrected 2026-11-19). The Build Report and the live check disagreed
+  about parts exactly at a wall (an absolute 1e-6 mm against 1e-6 of the
+  scene size). Now one function, `core.world.bounds_state`, decides for both
+  and for the referee: a part is inside only if it is at least 0.001 mm from
+  the X and Y walls and the top (the owner: 0.001 mm counts as 0; better too
+  strict than a printer rejecting a build the prep software accepted).
+  **Correction (the owner, 2026-11-19):** the first version held the floor
+  to the same rule; parts at z = 0 have never caused trouble (Netfabb puts
+  them there all the time), while parts line to line with the X / Y bounds
+  have. So resting on the floor counts as inside, and Drop to Floor puts
+  parts at exactly z = 0 again. The top stays strict: nothing says contact
+  with the top of the build volume is safe, and with the floor exempt the
+  rule errs strict on the one side where nothing is known. The packer keeps
+  0.002 mm off the side walls and the top (`problem.PACK_INSET`,
+  `Settings.pack_lo` / `pack_hi`). A part line to line with a side wall is
+  named as touching it, and Move Inside nudges it in.
 * **Hidden parts are left out by default** (2026-11-18, #30): checks,
   Build Report and packing. A hidden part that reaches into the volume is
   still named in the verdict ("1 hidden part in the volume, not checked")

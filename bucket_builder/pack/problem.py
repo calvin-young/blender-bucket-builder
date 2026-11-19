@@ -14,7 +14,7 @@ from . import printers
 MODES = ('fixed', 'z', 'free')
 
 
-PACK_INSET = 0.002      # mm the packer keeps off every wall: never exactly at one, so a placed
+PACK_INSET = 0.002      # mm the packer keeps off the side walls and the top: never exactly at one, so a placed
                         # part is inside by the bounds rule (core.world.INSIDE_MARGIN, 0.001 mm)
 
 
@@ -90,7 +90,7 @@ class Settings:
         in from the real volume, which the referee and the reports judge by.
         (A volume whose size is a whole number of cells loses its last row of
         cells to this; shrinking the cells instead cost boxy parts a cell.)"""
-        return self.vlo + PACK_INSET
+        return self.vlo + np.array([PACK_INSET, PACK_INSET, 0.0])     # (the floor: contact is inside)
 
     @property
     def pack_hi(self):
