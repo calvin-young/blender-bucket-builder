@@ -244,7 +244,11 @@ def main():
     tops = [c.bl_label for c in ui.CLASSES if issubclass(c, bpy.types.Panel) and not getattr(c, 'bl_parent_id', '')]
     assert tops == ['Bucket Builder', 'Collision Detection', 'Build Volume', 'Arrange', 'Build Report', 'Pack', 'Options',
                     'Export'], tops
-    assert bpy.ops.bucketbuilder.export_3mf() == {'CANCELLED'}, 'the placeholder must do nothing'
+    try:                                                # (without the 3MF add-on Export writes nothing)
+        r = bpy.ops.bucketbuilder.export_3mf()
+    except RuntimeError:
+        r = {'CANCELLED'}
+    assert r == {'CANCELLED'}, 'without the 3MF add-on Export must do nothing'
     assert bpy.ops.bucketbuilder.status() == {'CANCELLED'}
     # the sign at the top says nothing that is untrue while both switches are off
     texts = [t for k, t in LOG[n0:] if k == 'operator_text']

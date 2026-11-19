@@ -347,8 +347,8 @@ def main():
     check(oob(mon, a) == OUTSIDE, 'part fully outside (live)')
     s = mon.status()
     check(mon.walls()[0] == (F, F, F, F, F, F) and s['staged'] == 1 and s['outside'] == 0
-          and badge(s)[0] != 'FAIL' and any('staged outside' in t for t in badge(s)[2]),
-          'outside altogether: staged there, a quiet note and no wall lit (the owner, 2026-11-19)', (mon.walls(), s, badge(s)))
+          and badge(s)[:2] == ('STAGED', '1 Part Staged Outside the Bucket') and 'Build OK' not in badge(s)[2],
+          'outside altogether: staged there, its own verdict and no wall lit (the owner, 2026-11-19)', (mon.walls(), s, badge(s)))
     a.location = (370.0, 275.0, 100.0)             # through two walls at once
     update()
     check(mon.walls()[0] == (F, F, F, T, T, F), 'a part in a corner goes through two walls', mon.walls())

@@ -161,9 +161,29 @@ still open. The details are in `AGENTS.md` (Implementation notes).
 * **Two sidebar tabs**: Bucket Monitor (check, report, export, options) and
   Bucket Packer (pack, arrange). Arrange went with the packer: it places
   parts.
-* **Parts staged outside** (wholly, or more than half of their bounding box
-  outside): a quiet note, no purple, no problem row, no failed verdict
-  (`monitor._staged`, #31's first half; loud at export is still to do).
+* **Parts staged outside** (wholly outside; the first version also counted
+  parts more than half out, and the owner corrected it the same day: any
+  part partly out is loud and lights its wall purple, whatever the amount).
+  A part wholly outside tints the whole bucket a shade between its blue and
+  the error purple, and the verdict has its own state, STAGED ("1 Part
+  Staged Outside the Bucket", a triangle in that shade), not Build OK; no
+  problem row (`monitor._staged`, #31's first half). Picture:
+  `docs/images/bounds/partly_and_staged.png`.
+* **Export Print File** (#9, 2026-11-19): only through the 3MF add-on's
+  API (`io_mesh_3mf` in `bpy.app.driver_namespace`: names, colors, its
+  features); without it the panel offers **Install the 3MF Add-on** (from
+  the extensions platform, or its page when online access is off). The
+  owner chose no fallback: Bucket Builder's own `pack.meshio.write_3mf`
+  came with the stand-alone packer engine, for its command line, benchmark
+  files and tests, and nothing in the add-on's interface uses it.
+  Model-level metadata in the `bb:` namespace (`urn:bucket-builder`):
+  printer, packing settings, tool and version, last check, export time; no
+  operator. Problems found by the check are warnings, not a refusal. The
+  add-on scales by the scene's unit setting, so Bucket Builder passes its
+  own millimeters-per-unit as `global_scale`. `bb:packed` (when the layout
+  was packed) is not written yet: the time of export is.
+* **Leave Room for More Parts** approved as designed (the owner,
+  2026-11-19): an option, off by default.
 
 ## Tried and abandoned
 

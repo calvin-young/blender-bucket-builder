@@ -104,6 +104,14 @@ def weld(mesh):
 # --------------------------------------------------------------------------- 3MF
 
 _ATTR = re.compile(rb'([A-Za-z_:][\w:.-]*)\s*=\s*"([^"]*)"')
+
+
+def _unescape(text):
+    """An attribute value as written: XML's entities decoded (a name with & or quotes in it)."""
+    if '&' not in text:
+        return text
+    import html
+    return html.unescape(text)
 _CHUNK = 1 << 24
 
 
@@ -161,6 +169,15 @@ class _Obj:
     comps: list = field(default_factory=list)  # (path | None, objectid, 4x4)
 
 
+def _tag_end(xml, j):
+    """Where the tag whose attributes start at j ends: the first '>' outside a
+    quoted value ('>' is allowed inside one, as in a part named "a > b")."""
+    gt = xml.find(b'>', j)
+    while gt >= 0 and xml.count(b'"', j, gt) % 2:
+        gt = xml.find(b'>', gt + 1)
+    return gt
+
+
 def _elements(xml, tag):
     """(attribute text, body or None) of every `<tag ...>` element, found with
     `bytes.find`: regular expressions are 10 x slower on a 100 MB model."""
@@ -174,7 +191,7 @@ def _elements(xml, tag):
         if j < n and xml[j:j + 1] not in b' \t\r\n/>':
             pos = j                                  # <objects>, not <object>
             continue
-        gt = xml.find(b'>', j)
+        gt = _tag_end(xml, j)
         if gt < 0:
             return
         attrs = xml[j:gt]
@@ -204,11 +221,11 @@ def _inside(body, tag):
 def _parse_model(xml):
     """Objects and build items of one model file."""
     m = re.search(rb'<model\b[^>]*>', xml)
-    head = dict((k.decode(), v.decode()) for k, v in _ATTR.findall(m.group(0))) if m else {}
+    head = dict((k.decode(), _unescape(v.decode())) for k, v in _ATTR.findall(m.group(0))) if m else {}
     scale = UNITS_MM.get(head.get('unit', 'millimeter'), 1.0)
     objs = {}
     for attrs, body in _elements(xml, b'object'):
-        a = dict((k.decode(), v.decode()) for k, v in _ATTR.findall(attrs))
+        a = dict((k.decode(), _unescape(v.decode())) for k, v in _ATTR.findall(attrs))
         body = body or b''
         o = _Obj(a.get('id', ''), a.get('name') or a.get('partnumber') or '',
                  a.get('type', 'model'))
@@ -218,7 +235,7 @@ def _parse_model(xml):
             o.mesh = (_numbers(vb, 3) * scale, _triangles(tb))
         cb = _inside(body, b'components')
         for cm in re.finditer(rb'<component\b([^>]*)/?>', cb or b''):
-            c = dict((k.decode(), v.decode()) for k, v in _ATTR.findall(cm.group(1)))
+            c = dict((k.decode(), _unescape(v.decode())) for k, v in _ATTR.findall(cm.group(1)))
             o.comps.append((c.get('p:path') or c.get('path'), c.get('objectid', ''),
                             _parse_transform(c.get('transform', ''), scale)))
         objs[o.id] = o
@@ -226,7 +243,7 @@ def _parse_model(xml):
     bm = _inside(xml, b'build')
     if bm:
         for im in re.finditer(rb'<item\b([^>]*)/?>', bm):
-            a = dict((k.decode(), v.decode()) for k, v in _ATTR.findall(im.group(1)))
+            a = dict((k.decode(), _unescape(v.decode())) for k, v in _ATTR.findall(im.group(1)))
             items.append((a.get('p:path') or a.get('path'), a.get('objectid', ''),
                           _parse_transform(a.get('transform', ''), scale), a.get('partnumber', '')))
     return scale, objs, items
@@ -238,7 +255,7 @@ def _root_model_path(z):
     except KeyError:
         rels = b''
     for m in re.finditer(rb'<Relationship\b([^>]*)/?>', rels):
-        a = dict((k.decode(), v.decode()) for k, v in _ATTR.findall(m.group(1)))
+        a = dict((k.decode(), _unescape(v.decode())) for k, v in _ATTR.findall(m.group(1)))
         if a.get('Type', '').endswith('/3dmodel') and 'Target' in a:
             return a['Target'].lstrip('/')
     return '3D/3dmodel.model'
@@ -327,6 +344,11 @@ def write_stl(path, mesh):
         f.write(rec.tobytes())
 
 
+def escape_attr(text):
+    from xml.sax.saxutils import escape
+    return escape(str(text), {'"': '&quot;'})
+
+
 FLOOR_TOL = 1e-4          # mm: a part this little below z = 0 is on the floor (rounding), and is written so
 
 
@@ -345,9 +367,10 @@ def clamp_floor(verts, M, z0=0.0, tol=FLOOR_TOL):
     return M
 
 
-def write_3mf(path, parts, unit='millimeter'):
+def write_3mf(path, parts, unit='millimeter', metadata=None, namespaces=None):
     """parts: list of (mesh, 4x4 matrix, name); meshes used more than once are
-    written once and referenced (instancing)."""
+    written once and referenced (instancing). `metadata`: {name: string} written
+    at the top of the model; `namespaces`: {prefix: URI} declared for them."""
     ids, objs = {}, []
     for mesh, _, _ in parts:
         if id(mesh) not in ids:
@@ -356,16 +379,20 @@ def write_3mf(path, parts, unit='millimeter'):
             t = '\n'.join('<triangle v1="%d" v2="%d" v3="%d"/>' % tuple(r) for r in mesh.tris.tolist())
             objs.append('<object id="%d" type="model" name="%s"><mesh><vertices>\n%s\n</vertices>'
                         '<triangles>\n%s\n</triangles></mesh></object>'
-                        % (ids[id(mesh)], mesh.name, v, t))
+                        % (ids[id(mesh)], escape_attr(mesh.name), v, t))
     items = []
     for mesh, M, name in parts:
         M = clamp_floor(mesh.verts, M)
         R = np.asarray(M)[:3, :3].T.ravel().tolist() + np.asarray(M)[:3, 3].tolist()
         items.append('<item objectid="%d" transform="%s" partnumber="%s"/>'
-                     % (ids[id(mesh)], ' '.join(repr(float(x)) for x in R), name))
+                     % (ids[id(mesh)], ' '.join(repr(float(x)) for x in R), escape_attr(name)))
+    from xml.sax.saxutils import escape, quoteattr
+    ns = ''.join(' xmlns:%s=%s' % (p, quoteattr(u)) for p, u in (namespaces or {}).items())
+    meta = ''.join('<metadata name=%s preserve="1">%s</metadata>\n' % (quoteattr(k), escape(str(v)))
+                   for k, v in (metadata or {}).items())
     xml = ('<?xml version="1.0" encoding="UTF-8"?>\n<model unit="%s" '
-           'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n<resources>\n%s\n'
-           '</resources>\n<build>\n%s\n</build>\n</model>' % (unit, '\n'.join(objs), '\n'.join(items)))
+           'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"%s>\n%s<resources>\n%s\n'
+           '</resources>\n<build>\n%s\n</build>\n</model>' % (unit, ns, meta, '\n'.join(objs), '\n'.join(items)))
     with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
         z.writestr('[Content_Types].xml',
                    '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/'

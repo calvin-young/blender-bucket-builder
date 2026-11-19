@@ -331,7 +331,7 @@ def _box_faces(lo, hi):
     return np.ascontiguousarray(c[f])
 
 
-def _build_group(mon, pairs, oobs, walls, vol, shaders, hidden):
+def _build_group(mon, pairs, oobs, walls, vol, shaders, hidden, staged=()):
     """Create the batches for the given problems.  ``hidden``: slots of parts
     that are checked although the user has hidden them; their surfaces are
     left alone."""
@@ -342,7 +342,7 @@ def _build_group(mon, pairs, oobs, walls, vol, shaders, hidden):
     # lines: 'collide' the curves along which parts cut through each other,
     # 'clear' the closest points of parts that are too close, 'inside' the
     # box around a part that lies inside another one
-    line_parts = {'collide': [], 'clear': [], 'inside': [], 'outside': [], 'wall': []}
+    line_parts = {'collide': [], 'clear': [], 'inside': [], 'outside': [], 'wall': [], 'staged': []}
     inner = w.inner_box()
     for (a, b), pr in pairs:
         off = w.O_T[a]
@@ -466,9 +466,13 @@ def _groups(mon, shaders, only=None, view=0):
             stat_wall.append((slot, r))
             skey.append(-1 - slot)
             skey.append(r.serial)
+    stat_staged = [(slot, r) for slot, r in getattr(res, 'staged', {}).items() if only is None or slot in only]
+    for slot, r in stat_staged:
+        skey.append(-10 - slot)
+        skey.append(r.serial)
     skey = hash(tuple(skey))
     if entry['static'].key != skey:
-        entry['static'] = _build_group(mon, stat_pairs, stat_oob, stat_wall, vol, shaders, hidden)
+        entry['static'] = _build_group(mon, stat_pairs, stat_oob, stat_wall, vol, shaders, hidden, stat_staged)
         entry['static'].key = skey
     hkey = (res.stamp, mon.move_serial, len(hot_pairs), len(hot_oob), len(hot_wall), skey)
     if entry['hot'].key != hkey:
@@ -753,6 +757,10 @@ def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport,
 
         w = mon.world
         if props.volume_shown(st):
+            # a part staged wholly outside tints the whole bucket, between its blue and the error purple:
+            # subtle, but clearly not a good build (the owner, 2026-11-19)
+            if mon.view().staged:
+                col_v = tuple(0.5 * (a + b) for a, b in zip(col_v, col_o))
             _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only)
 
         if st.show_overlay:
@@ -1120,8 +1128,11 @@ def summary(status, local=None):
             rows += [("No Parts", 'dim'), ("no mesh objects to check", '')]
         else:
             # short lines: the same text has to fit the sidebar
+            n_staged = status.get('staged', 0)
             if gaps:
                 rows.append(("Not Everything Checked", 'warn'))
+            elif n_staged:
+                pass                          # (the headline is the parts staged outside, added below)
             elif pairs and volume:
                 rows.append(("Build OK", 'ok'))
             elif ignored:
@@ -1136,7 +1147,10 @@ def summary(status, local=None):
                 if pairs:
                     rows.append((parts + ", no collisions", ''))
                 if volume:
-                    rows.append(("all inside the build volume" if pairs else parts + ", all inside", ''))
+                    if n_staged:
+                        rows.append(("the others inside the build volume", ''))
+                    else:
+                        rows.append(("all inside the build volume" if pairs else parts + ", all inside", ''))
     if local is not None:
         rows.append((f"Local view: {local[0]} of {_count(local[1], 'part')} shown", 'view'))
     with_hidden = status.get('hidden_problems', 0)
@@ -1149,9 +1163,6 @@ def summary(status, local=None):
         k = status.get(key, 0)
         if k:
             rows.append((_count(k, what) + " ignored", 'note'))
-    k = status.get('staged', 0)
-    if k:
-        rows.append((_count(k, "part") + " staged outside the volume (not printable as is)", 'note'))
     k = status.get('hidden_skipped', 0)
     if k:
         n_in = status.get('hidden_inside', 0)
@@ -1166,8 +1177,16 @@ def summary(status, local=None):
         rows.append(("Not checking collisions", 'dim'))
     if not volume:
         rows.append(("Not checking the build volume", 'dim'))
+    staged = status.get('staged', 0)
+    if staged:
+        # (parts wholly outside: not a failure of the parts inside, but not a build the printer can make as
+        # is either; the headline, unless something worse is the headline)
+        line = (_count(staged, "Part") + " Staged Outside the Bucket", 'staged')
+        rows.insert(0 if not (nc or nout) else len(rows), line)
     if nc or nout:
         state = 'FAIL'
+    elif staged and not working:
+        state = 'STAGED'
     elif working or (measuring and not warnings):
         state = 'BUSY'
     elif not checked or (n == 0 and not gaps):
@@ -1246,7 +1265,7 @@ def _badge_prims(state, cx, cy, r, color):
             prims.append((x1, y1, x2, y2, 0.5 * width, 0.0, color))
 
     pen = 0.2 * r
-    if state == 'WARN':
+    if state in ('WARN', 'STAGED'):
         # corners on a circle a little smaller than the ring of the other
         # states, and lowered so that the triangle looks centered
         q = 0.98 * r
@@ -1287,7 +1306,8 @@ def _palette(p):
     amber = tuple(p.color_clearance) if p else (1.0, 0.72, 0.0, 1.0)
     mag = tuple(p.color_outside) if p else (0.95, 0.1, 0.85, 1.0)
     blue = tuple(p.color_volume) if p else (0.35, 0.75, 1.0, 1.0)
-    return {'fail': red, 'out': mag, 'warn': amber, 'wall': amber, 'note': amber,
+    staged = tuple(0.5 * (a + b) for a, b in zip(blue, mag))     # (between the bucket's blue and the error purple)
+    return {'fail': red, 'out': mag, 'warn': amber, 'wall': amber, 'note': amber, 'staged': staged,
             'ok': (0.25, 0.85, 0.35, 1.0), 'dim': (0.75, 0.75, 0.75, 1.0),
             '': (0.92, 0.92, 0.92, 1.0), 'view': (0.92, 0.92, 0.92, 1.0),
             'printer': (blue[0], blue[1], blue[2], 1.0)}

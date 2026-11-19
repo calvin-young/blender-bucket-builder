@@ -41,6 +41,7 @@ Cursor and Gemini CLI read it directly.
     blender --background --python tests/blender_large_test.py    # large parts, memory
     blender --background --python tests/blender_report_test.py   # Build Report
     blender --background --python tests/blender_pack_test.py     # the Pack operator
+    blender --background --python tests/blender_export_test.py   # Export Print File, round trip
     blender --background --python tests/blender_gpu_test.py -- out   # overlay, off screen
     SDL_VIDEO_FORCE_EGL=1 bash tests/gui_on_xvfb.sh blender out [blender_gui_test.py|blender_gui_undo.py|blender_gui_stress.py]
     blender --background --python tests/blender_upgrade_test.py -- old.zip new.zip   # empty profile

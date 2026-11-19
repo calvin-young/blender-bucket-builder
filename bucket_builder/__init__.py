@@ -23,7 +23,7 @@ if "bpy" in locals():
 
 import bpy
 
-from . import arrange, icons, monitor, ops, overlay, packing, props, ui
+from . import arrange, export, icons, monitor, ops, overlay, packing, props, ui  # noqa: F401  (export: bc.export in tests)
 
 
 def _seed_later():

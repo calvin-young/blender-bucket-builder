@@ -8,6 +8,7 @@ import sys
 import time
 
 import bpy
+from bpy_extras.io_utils import ExportHelper
 import numpy as np
 from bpy.props import BoolProperty, IntProperty, StringProperty
 from bpy.types import Menu, Operator
@@ -519,29 +520,56 @@ def export_warnings(scene):
     return lines
 
 
-class BUCKETBUILDER_OT_export_3mf(Operator):
-    """Write the build to a 3MF file for the printer. Not in this version: it is what comes next"""
-    bl_idname = "bucketbuilder.export_3mf"
-    bl_label = "Export 3MF"
+class BUCKETBUILDER_OT_get_3mf_addon(Operator):
+    """Install the 3MF Import/Export add-on, which Export Print File writes through"""
+    bl_idname = "bucketbuilder.get_3mf_addon"
+    bl_label = "Install the 3MF Add-on"
 
     def execute(self, context):
-        warnings = export_warnings(context.scene)
-
-        def draw(menu, _context):
-            col = menu.layout.column(align=True)
-            for line in warnings:
-                col.label(text=line, icon='ERROR')
-            if warnings:
-                col.separator()
-            col.label(text="Not in this version yet.")
-            col.label(text="Writing the build to a 3MF file is what comes next.")
-
-        if context.window is not None and not bpy.app.background:
-            context.window_manager.popup_menu(draw, title="Export 3MF", icon='EXPORT')
-        for line in warnings:
-            self.report({'WARNING'}, line)
-        self.report({'INFO'}, "3MF export is not in this version yet: it is what comes next")
+        from . import export
+        if export.install_addon():
+            self.report({'INFO'}, "The 3MF add-on is installed: Export Print File is ready")
+            return {'FINISHED'}
+        bpy.ops.wm.url_open(url=export.ADDON_URL)
+        self.report({'WARNING'}, "Could not install it here (online access may be off): its page is open "
+                                 "in the browser; or Edit > Preferences > Get Extensions, search 3MF")
         return {'CANCELLED'}
+
+
+class BUCKETBUILDER_OT_export_3mf(Operator, ExportHelper):
+    """Write the build to a 3MF file for the printer: every part the check looks at, where it is, with the build's
+    printer, packing settings and last check in the file"""
+    bl_idname = "bucketbuilder.export_3mf"
+    bl_label = "Export Print File"
+    filename_ext = ".3mf"
+    filter_glob: StringProperty(default="*.3mf", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            name = bpy.path.basename(bpy.data.filepath) or "build"
+            self.filepath = bpy.path.ensure_ext(name.rsplit('.', 1)[0], ".3mf")
+        return super().invoke(context, event)
+
+    def draw(self, context):
+        from . import export
+        col = self.layout.column(align=True)
+        for line in export.problems(context):
+            col.label(text=line, icon='ERROR')
+
+    def execute(self, context):
+        from . import export
+        if export.threemf_api() is None:
+            self.report({'ERROR'}, "Export needs the 3MF add-on: install it from the Export panel")
+            return {'CANCELLED'}
+        for line in export.problems(context):
+            self.report({'WARNING'}, line)               # (a warning, not a refusal: the file is still written)
+        try:
+            n = export.write(context, self.filepath)
+        except Exception as e:                           # noqa: BLE001
+            self.report({'ERROR'}, "Could not write the file: %s" % e)
+            return {'CANCELLED'}
+        self.report({'INFO'}, "%d part%s written to %s" % (n, "s" if n != 1 else "", bpy.path.basename(self.filepath)))
+        return {'FINISHED'}
 
 
 class BUCKETBUILDER_OT_frame_volume(Operator):
@@ -980,6 +1008,7 @@ CLASSES = (
     BUCKETBUILDER_OT_ignore_problem,
     BUCKETBUILDER_OT_count_all_problems,
     BUCKETBUILDER_OT_status,
+    BUCKETBUILDER_OT_get_3mf_addon,
     BUCKETBUILDER_OT_export_3mf,
     BUCKETBUILDER_OT_frame_volume,
     BUCKETBUILDER_OT_recheck,

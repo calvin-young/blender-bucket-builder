@@ -23,7 +23,7 @@ TAB_WIDTH = 0.3       # of the color tab of a row in the list of problems, in in
 _TONE_ICON = {'fail': ('cross', 'CANCEL'), 'out': ('box', 'SHADING_BBOX'), 'warn': ('warn', 'ERROR'),
               'wall': ('gap', 'SHADING_BBOX'), 'ok': ('ok', 'CHECKMARK'), 'note': ('note', 'INFO'),
               'dim': ('dot', 'DOT'), '': (None, 'BLANK1'), 'printer': (None, 'BLANK1'),
-              'view': (None, 'VIEWZOOM')}
+              'view': (None, 'VIEWZOOM'), 'staged': ('box', 'SHADING_BBOX')}
 # The list of problems has Blender's own icons, in the color of its text: a
 # colored icon on every row was too loud.  The color of a kind is a slim
 # tab at the left end of its row (see props._tab).
@@ -752,10 +752,14 @@ class BUCKETBUILDER_PT_export(_Base, Panel):
         layout = self.layout
         row = layout.row()
         row.scale_y = 1.3
+        from . import export
+        ready = export.threemf_api() is not None
+        row.enabled = ready
         row.operator("bucketbuilder.export_3mf", icon='EXPORT')
-        col = layout.column(align=True)
-        col.active = False
-        col.label(text="Coming in a later version.")
+        if not ready:
+            col = layout.column(align=True)
+            _wrapped(col, "Export writes through the 3MF Import/Export add-on, which is not installed.", 'INFO')
+            col.operator("bucketbuilder.get_3mf_addon", icon='IMPORT')
 
 
 CLASSES = (

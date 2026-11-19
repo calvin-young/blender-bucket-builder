@@ -170,20 +170,10 @@ def _visible(obj, view_layer):
         return not obj.hide_viewport
 
 
-STAGED_SHARE = 0.5      # a part with more than this share of its bounding box outside the volume is staged
-
-
 def _staged(r, volume):
-    """Whether an out-of-volume result is a part staged outside (wholly, or
-    mostly by its bounding box) rather than one that sticks out a little."""
-    if r.state == OUTSIDE:
-        return True
-    if volume is None:
-        return False
-    lo, hi = np.asarray(r.lo, float), np.asarray(r.hi, float)
-    size = np.maximum(hi - lo, 1e-12)
-    inside = np.clip(np.minimum(hi, volume[1]) - np.maximum(lo, volume[0]), 0.0, None)
-    return float(np.prod(inside / size)) < 1.0 - STAGED_SHARE
+    """Whether an out-of-volume result is a part staged outside: wholly out.
+    A part that is out only in part is a problem, however little or much."""
+    return r.state == OUTSIDE        # (any part partly out is loud: the owner, 2026-11-19, over the 50 % first tried)
 
 
 def _reaches_into(obj, lo, hi):
@@ -588,8 +578,8 @@ class Monitor:
                         v.muted[(kind, slot)] = level
                     else:
                         dst[slot] = r
-        # Parts wholly or mostly outside are staged there on purpose (the owner,
-        # 2026-11-19): a quiet note, not the purple of a part that sticks out a little.
+        # Parts wholly outside are staged there on purpose (the owner, 2026-11-19):
+        # a quiet note and a faint box, not the purple of a part that is partly out.
         v.staged = {slot: r for slot, r in v.oob.items() if _staged(r, w.volume)}
         if v.staged:
             v.oob = {slot: r for slot, r in v.oob.items() if slot not in v.staged}

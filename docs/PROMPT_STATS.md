@@ -31,7 +31,7 @@ Little things the maintainer asked for or caught, what the status page shows. Co
 
 | Bugs found | UI tweaks | New features | Direction | Total |
 |---|---|---|---|---|
-| 15 | 21 | 32 | 48 | 116 |
+| 15 | 22 | 33 | 49 | 119 |
 
 ## Sessions
 
@@ -75,6 +75,9 @@ the detail.
 - 2026-11-18 [domain]: faces under 0.5 mm may fuse; rounded, edge or corner approaches can go to about 0.1 mm.
 - 2026-11-18 [direction]: pack from scratch as a user would: "1:1 ratio, fit as many as you can"; whole sets, not broken ones.
 - 2026-11-19 [domain][bug]: correction: parts at z = 0 never cause trouble (Netfabb does it all the time); only the X / Y walls (and the top) must be strict.
+- 2026-11-19 [ui][features]: a part partly out of bounds always lights the wall, whatever the fraction; a part wholly out tints the whole bucket and the badge says so, no lit wall.
+- 2026-11-19 [direction]: no fallback writer in the add-on: Export only through the 3MF add-on, with an install button.
+- 2026-11-19 [features]: Export was still "coming in a later version": build it, through the 3MF add-on when installed, with the bb: build metadata.
 - 2026-11-19 [domain][bugs]: the top is strict too; -Z is the only bound that may be line to line; never write a tiny negative z on export.
 - 2026-11-19 [direction][features]: in a final layout parts take all the breathing room they have (spread evenly), unless room is left for more parts; aim stays 10 mm.
 - 2026-11-19 [domain]: large flat faces: 0 degrees capillary defect, 0 - 10 degrees stair-stepping, 10 degrees and more fine.
