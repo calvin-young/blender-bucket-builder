@@ -261,7 +261,7 @@ class Job:
         modes = {p.mode for p in self.parts}
         turns = 'free' if modes == {'free'} else modes.pop()
         got = stack.build([self.parts[q[0]].mesh for q, _ in group], [R for _, R in group],
-                          self.s.vlo, self.s.vhi, self.s.gap, self.s.wall_gap, log=self.log, turns=turns)
+                          self.s.pack_lo, self.s.pack_hi, self.s.gap, self.s.wall_gap, log=self.log, turns=turns)
         if got is None:
             return
         vol = sum(abs(float(metrics.mesh_stats(self.parts[q[0]].mesh)[0])) * abs(float(np.linalg.det(R))) for q, R in group)
@@ -1809,7 +1809,7 @@ class Job:
             sum(self.g.pin(b, m, M)[3] for m, M in self.locked)
         min_h = vol / (b.area * self.s.max_density) if self.s.max_density else 0.0
         h0 = self._best_height()
-        c = Compactor(items, self.s.vlo, self.s.vhi, self.s.gap, self.s.wall_gap, self.locked, min_h)
+        c = Compactor(items, self.s.pack_lo, self.s.pack_hi, self.s.gap, self.s.wall_gap, self.locked, min_h)
         yield
         tops = [c._extent(j)[1][2] - self.s.vlo[2] for j in range(c.n)]
         order = sorted(range(c.n), key=lambda j: (c._extent(j)[0][2], j))
@@ -1877,7 +1877,7 @@ class Job:
         qs2 = sorted(self.final)
         from .compact import Compactor
         items = [(self.parts[q[0]].mesh, self.final[q]) for q in qs2]
-        c2 = Compactor(items, self.s.vlo, self.s.vhi, self.s.gap, self.s.wall_gap, self.locked, 0.0)
+        c2 = Compactor(items, self.s.pack_lo, self.s.pack_hi, self.s.gap, self.s.wall_gap, self.locked, 0.0)
         yield
         tops = [c2._extent(j)[1][2] - self.s.vlo[2] for j in range(c2.n)]
         for j in sorted(range(c2.n), key=lambda j: (c2._extent(j)[0][2], j)):

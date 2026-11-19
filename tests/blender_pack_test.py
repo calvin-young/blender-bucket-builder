@@ -52,7 +52,7 @@ def main():
         bpy.ops.mesh.primitive_torus_add(major_radius=20, minor_radius=5, location=rng.uniform(40, 60, 3))
         objs.append(bpy.context.active_object)
     objs[-1].bucket_builder_pack_mode = 'FREE'
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(190, 142, 5))
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(190, 142, 5.01))   # (off the floor: on it is not inside)
     plate = bpy.context.active_object
     plate.scale = (200, 120, 10)
     plate.rotation_euler = (0, 0, 0.2)

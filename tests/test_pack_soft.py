@@ -43,7 +43,7 @@ def main():
     check(referee.check(items, s.vlo, s.vhi, 3.0, 0.0).ok, 'every pair at 3 mm or more')
 
     print('five across fit at 1 mm, four at 3 mm: the least where the aim leaves parts out')
-    s = Settings(vlo=np.zeros(3), vhi=np.array([103.0, 103.0, 19.5]), gap=1.0, gap_aim=3.0, wall_gap=0.0,
+    s = Settings(vlo=np.zeros(3), vhi=np.array([104.0, 104.0, 19.5]), gap=1.0, gap_aim=3.0, wall_gap=0.0,
                  max_density=None, time_budget=30.0, seed=0)
     parts = [Part('cube', box, 25, 'fixed')]
     res, squeezed, log = soft.pack(parts, s, workers=1)

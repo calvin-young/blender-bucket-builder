@@ -361,11 +361,12 @@ class BucketBuilderSettings(PropertyGroup):
         default=True, update=_poke)
     ignore_hidden: BoolProperty(
         name="Ignore Hidden Parts",
-        description="Leave parts that are hidden in the viewport out of the checks. When this "
-                    "is off a hidden part is still checked, because it is still in the build. "
+        description="Leave parts that are hidden in the viewport out of the checks, the Build "
+                    "Report and packing. A hidden part inside the build volume is still named "
+                    "in the verdict. When this is off a hidden part is checked like any other. "
                     "(A part that is disabled in viewports, or whose collection is excluded "
                     "from the view layer, is never checked)",
-        default=False, update=_poke)
+        default=True, update=_poke)
 
     unit_mode: EnumProperty(
         name="Units", description="How scene coordinates map to millimeters",

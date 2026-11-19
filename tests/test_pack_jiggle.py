@@ -24,8 +24,10 @@ def check(ok, msg):
 
 
 def at(x, y, z):
+    """A pose; z is lifted 0.01 mm so that a part "on the floor" is inside by
+    the bounds rule (core.world.bounds_state)."""
     M = np.eye(4)
-    M[:3, 3] = (x, y, z)
+    M[:3, 3] = (x, y, z + 0.01)
     return M
 
 

@@ -14,6 +14,10 @@ from . import printers
 MODES = ('fixed', 'z', 'free')
 
 
+PACK_INSET = 0.002      # mm the packer keeps off every wall: never exactly at one, so a placed
+                        # part is inside by the bounds rule (core.world.INSIDE_MARGIN, 0.001 mm)
+
+
 @dataclass(eq=False)
 class Part:
     """A part to place, `quantity` times.  `base` is its linear part as given
@@ -79,6 +83,18 @@ class Settings:
             self.vhi = np.array(size, float)
         self.vlo = np.asarray(self.vlo, float)
         self.vhi = np.asarray(self.vhi, float)
+
+    @property
+    def pack_lo(self):
+        """Where the packer's grid, stacks and compaction may go: PACK_INSET
+        in from the real volume, which the referee and the reports judge by.
+        (A volume whose size is a whole number of cells loses its last row of
+        cells to this; shrinking the cells instead cost boxy parts a cell.)"""
+        return self.vlo + PACK_INSET
+
+    @property
+    def pack_hi(self):
+        return self.vhi - PACK_INSET
 
     @property
     def area(self):

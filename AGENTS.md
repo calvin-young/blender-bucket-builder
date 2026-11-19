@@ -268,8 +268,10 @@ Interface (1.1.0, from the owner's list after his first trial):
 * **No collision distance.** Parts collide when they touch (closer than
   `eps_touch`, 2e-6 of the scene size) or cut through each other. The engine
   still has `coll_thr`; the one use for it is a red tier for gaps that fuse.
-* **A hidden part is checked** unless Ignore Hidden Parts is ticked (his
-  wording: the checkbox is off by default). Hidden means `visible_get()` is
+* **A hidden part is left out** while Ignore Hidden Parts is ticked, which
+  it is by default since 2026-11-18 (it was off before); one that reaches
+  into the volume is still named in the verdict (`Monitor.hidden_inside`)
+  and the Build Report. Hidden means `visible_get()` is
   false but the dependency graph evaluates the object (the eye, H, a hidden
   layer collection). *Disabled in viewports* is not evaluated: its matrix is
   stale or identity after a reload, so it cannot be checked; it is counted
@@ -520,6 +522,18 @@ toggle beside Isolate (#44 part 1). Two-clearance packing keeps to its
 time and gives the aim all of it while every part fits. Questionnaire for
 challenge builds: `docs/CHALLENGE_BUCKETS.md` (the builds and the catalog
 stay local).
+
+**2026-11-18 (not yet in a build).** One bounds rule
+(`core.world.bounds_state`, #48): a part is inside only if at least
+0.001 mm from every wall, floor included; the live check, the Build Report
+and the referee all use it. The packer keeps `problem.PACK_INSET`
+(0.002 mm) off every wall (`Settings.pack_lo` / `pack_hi` for the grid,
+stacks and compaction), so a volume whose size is a whole number of cells
+loses its last row. Tests that set parts exactly on the floor now lift
+them. Hidden parts are ignored by default (#30). Cage numbers, raised
+labels, the owner's whole-set method (#47), campaigns (#46) and
+`docs/POSTPROCESS_MACHINES.md` are in the docs. Netfabb 2027 on the
+challenge parts: results local, `~/data/packbench/challenge/netfabb/`.
 
 **Next (2026-11-11, the owner's notes):** issues #28 - #40: overlay
 drawing order, inside-out and non-manifold checks, hidden parts by

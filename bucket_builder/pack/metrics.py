@@ -27,7 +27,6 @@ from dataclasses import dataclass, field
 import numpy as np
 
 CHUNK = 1 << 19
-EPS = 1e-6                    # mm: tolerance of the inside / outside tests
 OPEN_TOL = 1e-6               # |sum of vector areas| / sum of areas above which a mesh is open
 
 INSIDE, PARTIAL, OUTSIDE = 'inside', 'partial', 'outside'
@@ -249,12 +248,11 @@ class PartResult:
         return self.openness > OPEN_TOL
 
 
-def classify(lo, hi, vlo, vhi, eps=EPS):
-    if np.any(hi <= vlo + eps) or np.any(lo >= vhi - eps):
-        return OUTSIDE
-    if np.all(lo >= vlo - eps) and np.all(hi <= vhi + eps):
-        return INSIDE
-    return PARTIAL
+def classify(lo, hi, vlo, vhi):
+    """The live check's rule (core.world.bounds_state), in mm."""
+    from ._core import INSIDE_MARGIN, bounds_state
+    inside, outside = bounds_state(lo, hi, np.asarray(vlo, float), np.asarray(vhi, float), INSIDE_MARGIN)
+    return OUTSIDE if outside else INSIDE if inside else PARTIAL
 
 
 def n_bands(vlo, vhi, band):

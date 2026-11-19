@@ -133,7 +133,7 @@ def test_locked():
     big = S.box(120, 80, 30)
     L = np.eye(4)
     L[:3, :3] = S.rot('z', 20)
-    L[:3, 3] = (90, 60, 15)                         # on the floor, turned, in the middle
+    L[:3, 3] = (90, 60, 15.01)                      # just off the floor (inside by the bounds rule), turned
     parts = [Part('cube', S.box(20, 20, 20), 12, 'fixed')]
     s = Settings(vlo=(0, 0, 0), vhi=(180, 120, 100), gap=2.0, wall_gap=0.0, max_density=None)
     g = greedy.Greedy(parts, s, threads=1)

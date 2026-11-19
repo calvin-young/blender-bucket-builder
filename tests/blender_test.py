@@ -226,11 +226,19 @@ def main():
           'identical copy is recognized and shares geometry too')
 
     # ------------------------------------------------- visibility / ignoring
-    # A hidden part is still in the build: it stays in the check unless the
-    # user says otherwise.
+    # Hidden parts are left out by default (the owner, 2026-11-18), and one
+    # inside the volume is named in the verdict.
     badge = bc.overlay.badge_text
+    check(st.ignore_hidden, 'Ignore Hidden Parts is on in a new scene')
     d.hide_set(True)
     update()
+    mon = settle()
+    s = mon.status()
+    check(s['objects'] == 4 and s['hidden_skipped'] == 1 and s['hidden_inside'] == 1,
+          'by default a hidden part leaves the check and is counted as in the volume', s)
+    check('1 hidden part in the volume, not checked' in badge(s)[2], 'and the verdict names it', badge(s))
+    # With the option off, a hidden part stays in the check.
+    st.ignore_hidden = False
     mon = settle()
     s = mon.status()
     check(s['objects'] == 5 and s['hidden'] == 1 and s['hidden_problems'] == 0,

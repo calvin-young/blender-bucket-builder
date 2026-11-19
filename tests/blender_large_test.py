@@ -152,6 +152,7 @@ def main():
     bpy.ops.object.delete()
     sc = bpy.context.scene
     st = sc.bucket_builder
+    st.ignore_hidden = False          # (on by default since 2026-11-18; this test checks hidden parts)
     p = props.prefs()
     p.memory_gb = 0.0
     st.use_volume = False

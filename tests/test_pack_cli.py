@@ -45,10 +45,10 @@ def main():
     parts = []
     for i in range(4):
         M = np.eye(4)
-        M[:3, 3] = [20 + 40 * i, 20, 10]
+        M[:3, 3] = [20 + 40 * i, 20, 10.5]               # (just off the floor: on it is not inside)
         parts.append((cube, M, 'AcmeSocket-%d' % i))
     M = np.eye(4)
-    M[:3, 3] = [375, 20, 10]                         # sticks out of the 380 mm wall
+    M[:3, 3] = [375, 20, 10.5]                       # sticks out of the 380 mm wall
     parts.append((cube, M, 'AcmeSocket-out'))
     meshio.write_3mf(secret, parts)
 
@@ -59,7 +59,7 @@ def main():
     check('4 inside, 1 partly outside, 0 outside' in text, 'one part is partly outside')
     # 5 cubes of 8000 mm3 = 40 cm3; packed height 20 mm; area 380 x 284
     check('volume         40.0 cm3' in text, 'volume 40.0 cm3')
-    check('packed height  20.0 mm' in text, 'height 20 mm')
+    check('packed height  20.5 mm' in text, 'height 20.5 mm (from the floor)')
     want = 40000 / (380 * 284 * 20) * 100
     m = re.search(r'3D density\s+([\d.]+) %', text)
     check(m is not None and abs(float(m.group(1)) - want) < 0.06, 'density %.2f %%' % want)

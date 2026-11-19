@@ -112,8 +112,8 @@ def main():
     bpy.ops.object.delete()
     sc = scene()
     st = sc.bucket_builder
-    a = add_cube('A', (50, 50, 20))
-    b = add_sphere('B', (150, 50, 30))
+    a = add_cube('A', (50, 50, 21))              # (1 mm off the floor: a part must be inside, not on it)
+    b = add_sphere('B', (150, 50, 31))
     c = add_cube('C', (250, 50, 20), 30.0)
     c.rotation_euler = (0.3, 0.5, 0.2)
     c.location.z = 40

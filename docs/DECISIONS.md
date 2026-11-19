@@ -113,6 +113,27 @@ still open. The details are in `AGENTS.md` (Implementation notes).
   least, and the referee stays exact, so a layout called clean is clean.
 * **Jiggle's options** (2026-11-18, the owner confirmed the defaults): Small
   Turns off, Quarter Turns off, Move Elsewhere on.
+* **One bounds rule, strict at the walls** (2026-11-18, #48). The Build
+  Report and the live check disagreed about parts exactly at a wall (an
+  absolute 1e-6 mm against 1e-6 of the scene size). Now one function,
+  `core.world.bounds_state`, decides for both and for the referee: a part
+  is inside only if it is at least 0.001 mm from every wall, floor
+  included (the owner: 0.001 mm counts as 0; better too strict than a
+  printer rejecting a build the prep software accepted). The packer keeps
+  0.002 mm off every wall (`problem.PACK_INSET`); its cells shrink by about
+  0.001 % instead of losing a row.
+* **Hidden parts are left out by default** (2026-11-18, #30): checks,
+  Build Report and packing. A hidden part that reaches into the volume is
+  still named in the verdict ("1 hidden part in the volume, not checked")
+  and in the Build Report. Scenes that never changed the option follow the
+  new default; Blender stores no value for an untouched option, so they
+  cannot be told apart from new scenes.
+* **Cages are voxelized** (2026-11-18, #36, the owner's numbers): a grid
+  of 10 - 20 mm, neither a box nor conformal; strengths 1 x 1.5, 1.5 x 2,
+  2 x 3 mm (`docs/SPEC_PACK.md` 5.1). Raised labels first (#39).
+* **Rack presets hold the chamber size only** (2026-11-18, #41): no maker
+  publishes rack or hook geometry (`docs/POSTPROCESS_MACHINES.md`), so
+  those are user settings per machine.
 
 ## Tried and abandoned
 

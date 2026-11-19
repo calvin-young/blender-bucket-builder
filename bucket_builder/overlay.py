@@ -1147,7 +1147,11 @@ def summary(status, local=None):
             rows.append((_count(k, what) + " ignored", 'note'))
     k = status.get('hidden_skipped', 0)
     if k:
-        rows.append((_count(k, "hidden part") + " not checked", 'note'))
+        n_in = status.get('hidden_inside', 0)
+        if n_in:
+            rows.append((_count(n_in, "hidden part") + " in the volume, not checked", 'warn'))
+        if k > n_in:
+            rows.append((_count(k - n_in, "hidden part") + " not checked", 'note'))
     if not working and measuring:
         # collisions are settled; some gaps are still being measured exactly
         rows.append(("measuring clearances...", 'dim'))

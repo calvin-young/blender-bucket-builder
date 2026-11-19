@@ -211,21 +211,24 @@ def test_status_and_report():
     print('inside / partial / outside, density, warnings')
     b = mk(meshes.box((10.0, 10.0, 10.0)), 'cube')
     vlo, vhi = [0, 0, 0], [100, 100, 100]
-    parts = [('in', b, pose(t=(20, 20, 5))),            # z 0 .. 10, exactly on the floor
+    parts = [('in', b, pose(t=(20, 20, 5))),            # z 0 .. 10, exactly on the floor: not inside
              ('in2', b, pose(t=(50, 50, 25))),          # z 20 .. 30
              ('half', b, pose(t=(98, 50, 25))),         # x 93 .. 103: partly out
              ('far', b, pose(t=(300, 0, 5)))]           # wholly outside
     rep = metrics.measure(parts, vlo, vhi, band=1.0)
-    check((rep.n_inside, rep.n_partial, rep.n_outside) == (2, 1, 1), 'statuses 2 / 1 / 1: %s'
+    check((rep.n_inside, rep.n_partial, rep.n_outside) == (1, 2, 1), 'statuses 1 / 2 / 1: %s'
           % ((rep.n_inside, rep.n_partial, rep.n_outside),))
     wall = metrics.measure([('t', b, pose(t=(105, 50, 25)))], vlo, vhi, band=1.0)   # x 100 .. 110
     check(wall.n_outside == 1 and wall.n_partial == 0, 'touching a wall from outside is outside')
+    # the owner's rule (2026-11-18): a part must be at least 0.001 mm inside every wall, floor included
+    rnd = metrics.measure([('t', b, pose(t=(94.9995, 50, 25)))], vlo, vhi, band=1.0)  # 0.0005 mm from a wall
+    check(rnd.n_partial == 1, 'under 0.001 mm from a wall is not inside')
     close(rep.volume, 3000.0, 1e-9, 'volume counts inside and partial parts, not the outside one')
     close(rep.volume_outside, 1000.0, 1e-9, 'volume outside is kept apart')
     close(rep.height, 30.0, 1e-9, 'height is the highest point above the floor')
     close(rep.density, 3000.0 / (100 * 100 * 30), 1e-12, 'density = volume / (area x height)')
     check(any('partly outside' in w for w in rep.warnings), 'a warning sits with the density when a part is partly out')
-    check(rep.partial_parts == ['half'] and rep.outside_parts == ['far'], 'the offenders are named')
+    check(rep.partial_parts == ['in', 'half'] and rep.outside_parts == ['far'], 'the offenders are named')
     # the layers add up to the volume of the counted parts
     close(rep.layer_volume.sum(), 3000.0, 1e-9, 'layer volumes add up')
     close(rep.layer_density[:10], 3 * 100 / (100 * 100 * 1.0) * np.ones(10) / 3 * 1, 1e-12,
@@ -235,7 +238,7 @@ def test_status_and_report():
     mid = metrics.measure([('c', b, pose(t=(50, 50, 55)))], vlo, vhi)
     close(mid.bottom, 50.0, 1e-9, 'bottom is the lowest point above the floor')
     close(mid.density, floor.density, 1e-12, 'density counts only the height the parts fill, from bottom to top')
-    clean = metrics.measure(parts[:2], vlo, vhi)
+    clean = metrics.measure(parts[1:2], vlo, vhi)
     check(not clean.warnings, 'no warnings for a clean build')
     # an empty-ish build
     e = metrics.measure([], vlo, vhi)

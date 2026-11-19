@@ -423,6 +423,12 @@ def main():
     objs[2].hide_viewport = True
     ctx.view_layer.update()
     mon = settle()
+    n0 = len(LOG)
+    draw_all(ctx, 'one part hidden (left out by default), one disabled')
+    labels = labels_since(n0)
+    assert any('hidden part' in t and 'not checked' in t for t in labels), labels
+    st.ignore_hidden = False                            # hidden parts checked like any other
+    mon = settle()
     bpy.ops.bucketbuilder.focus_problem(index=0)        # the list from its top
     n0 = len(LOG)
     draw_all(ctx, 'one part hidden, one disabled in viewports')
@@ -432,6 +438,7 @@ def main():
     assert any('(hidden)' in t for k, t in LOG[n0:] if k == 'row'), 'hidden part not marked'
     objs[1].hide_set(False)
     objs[2].hide_viewport = False
+    st.ignore_hidden = True
     ctx.view_layer.update()
     mon = settle()
 

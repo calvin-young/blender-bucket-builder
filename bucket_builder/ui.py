@@ -451,6 +451,11 @@ class BUCKETBUILDER_PT_report(_Base, Panel):
             row = col.row()
             row.label(text=key)
             row.label(text=value, **({'icon': 'ERROR'} if tone == 'warn' else {}))
+        n_in = getattr(mon, 'hidden_inside', 0)
+        if n_in:
+            row = col.row()
+            row.label(text="Hidden, Not Counted")
+            row.label(text='%d' % n_in, icon='ERROR')
         if working:
             col.label(text="Updating...", icon='TIME')
         if res.warnings:

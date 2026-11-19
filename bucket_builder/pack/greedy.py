@@ -469,7 +469,7 @@ class Greedy:
         s = self.s
         close = max([2 if (p.close_cells is None) else p.close_cells for p in self.parts] + [0])
         margin = voxel.gap_cells(s.gap, s.h) + close + 2
-        bucket = Bucket(s.vlo, s.vhi, s.h, s.wall_gap, margin, s.coarse)
+        bucket = Bucket(s.pack_lo, s.pack_hi, s.h, s.wall_gap, margin, s.coarse)
         for mesh, M in locked:
             self.lock(bucket, mesh, M)
         return bucket

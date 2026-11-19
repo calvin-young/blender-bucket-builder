@@ -12,6 +12,7 @@ sys.path.insert(0, HERE)
 
 from core import World, OK, CLEAR, COLLIDE, PARTIAL, OUTSIDE  # noqa: E402
 from core import bvh, narrow, tritri  # noqa: E402
+from core.world import bounds_state  # noqa: E402
 import meshes  # noqa: E402
 
 
@@ -489,7 +490,7 @@ def wall_tests(rng):
         'floor': ((190.0, 142.0, 20.5), None),      # the floor and the top are not walls
         'top': ((190.0, 142.0, 359.5), None),
         'just_clear': ((25.01, 142.0, 190.0), None),
-        'touching': ((20.0, 142.0, 190.0), 0.0),
+        'touching': ((20.0, 142.0, 190.0), None),   # at the wall: not inside (bounds_state), so an error
         'through': ((15.0, 142.0, 190.0), None),    # crosses the wall: an error, not this warning
     }
     for uid, (t, _) in cases.items():
@@ -512,7 +513,8 @@ def wall_tests(rng):
             # the marker sits in the margin, not in the middle of the part
             assert ((r.center < ilo) | (r.center > ihi)).any(), (uid, r.center)
     assert w.oob[w.slot('through')].state == PARTIAL and w.slot('through') not in w.wall
-    assert w.counts()[4] == 6, w.counts()
+    assert w.oob[w.slot('touching')].state == PARTIAL and w.slot('touching') not in w.wall
+    assert w.counts()[4] == 5, w.counts()
 
     # moving a part in and out of the margin, and changing the margin
     w.set_matrix('x_lo', meshes.matrix(None, (40.0, 142.0, 190.0)))
@@ -524,15 +526,15 @@ def wall_tests(rng):
     w.set_volume(vlo, vhi, 1.5)
     w.step()
     near = {w.uid(s) for s in w.wall}
-    assert near == {'y_hi', 'touching'}, near
+    assert near == {'y_hi'}, near
     w.set_volume(vlo, vhi, 0.0)
     w.step()
     assert not w.wall and w.inner_box() is None
     w.set_volume(vlo, vhi, 5.0)
     w.step()
-    assert len(w.wall) == 6
-    w.remove_object('corner')
     assert len(w.wall) == 5
+    w.remove_object('corner')
+    assert len(w.wall) == 4
     w.set_volume(None, None)
     w.step()
     assert not w.wall and not w.oob
@@ -823,7 +825,7 @@ def scale_tests(rng):
             w = World()
             w.set_scale(400.0 * unit, 0.5 * unit)
             w.set_thresholds(0.0, 5.0 * unit)
-            w.set_volume((-40 * unit,) * 3, (40 * unit,) * 3)
+            w.set_volume((-40 * unit,) * 3, (40 * unit,) * 3, inside_margin=1e-3 * unit)   # (0.001 mm in scene units)
             for i, (v, f) in enumerate(parts):
                 w.add_geom(i, v * unit, f)
                 M = mats[i].copy()
@@ -983,8 +985,7 @@ def check_volume(w, uid, label):
     r = w.oob.get(slot)
     lo = P.min(axis=(0, 1))
     hi = P.max(axis=(0, 1))
-    inside = (lo >= vlo - w.eps_len).all() and (hi <= vhi + w.eps_len).all()
-    outside = (lo > vhi + w.eps_len).any() or (hi < vlo - w.eps_len).any()
+    inside, outside = bounds_state(lo, hi, vlo, vhi, w.inside_margin)
     want = None if inside else (OUTSIDE if outside else PARTIAL)
     got = None if r is None else r.state
     assert got == want, (label, uid, got, want)

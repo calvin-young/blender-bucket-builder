@@ -53,6 +53,7 @@ from bpy.app.handlers import persistent
 
 from . import props, report
 from .core import World, OK, CLEAR, COLLIDE, PARTIAL, OUTSIDE, bvh
+from .core.world import INSIDE_MARGIN
 
 _monitors = {}          # scene.session_uid -> Monitor
 _timer_running = False
@@ -168,6 +169,16 @@ def _visible(obj, view_layer):
         return not obj.hide_viewport
 
 
+def _reaches_into(obj, lo, hi):
+    """True if the object's bounding box reaches into the box lo, hi (scene units)."""
+    try:
+        M = np.array(obj.matrix_world, dtype=np.float64)
+        B = np.array([c[:] for c in obj.bound_box], dtype=np.float64) @ M[:3, :3].T + M[:3, 3]
+    except Exception:
+        return False
+    return bool(np.all(B.max(axis=0) > lo) and np.all(B.min(axis=0) < hi))
+
+
 def _evaluated(obj, depsgraph):
     """True if the dependency graph evaluates the object at all.  It does so
     for an object that is merely hidden (the eye in the Outliner, H), with its
@@ -281,10 +292,11 @@ class Monitor:
         self.rows = 0             # rows the list of problems has been given for this build
         self.mem_limit = -1       # the cache limit last given to the world
         self.unchecked = {}       # what the scene holds that is not checked: kind -> count
-        self.ignore_hidden = False    # the scene's setting, as last applied
+        self.ignore_hidden = True     # the scene's setting, as last applied
         self.disabled = 0         # mesh objects disabled in viewports (they are not checked)
         self.ignored_parts = 0    # mesh objects left out with the Ignore switch
         self.hidden_skipped = 0   # hidden mesh objects left out by Ignore Hidden Parts
+        self.hidden_inside = 0    # ... of which reach into the build volume (named in the verdict)
         self.ignore = {}          # problems the user ignores (see _read_ignored)
         self.ignore_serial = 0
         self._view = None
@@ -405,7 +417,7 @@ class Monitor:
             self._redraw = True
         self.volume_on = props.volume_checked(st)
         if self.volume_on:
-            w.set_volume(lo, hi, st.wall_clearance_mm * k if st.use_wall_clearance else 0.0)
+            w.set_volume(lo, hi, st.wall_clearance_mm * k if st.use_wall_clearance else 0.0, INSIDE_MARGIN * k)
         else:
             w.set_volume(None, None)
         limit = props.memory_limit()
@@ -688,7 +700,8 @@ class Monitor:
         left_out = set()
         w = self.world
         ignore_hidden = self.ignore_hidden
-        disabled = ignored = skipped = 0
+        disabled = ignored = skipped = inside = 0
+        vol = w.volume                # (scene units; None when the volume is not checked)
         for obj in view_layer.objects:
             if obj is None or obj.type != 'MESH' or obj.get("bucket_builder_helper"):
                 continue          # (the snap wireframe is not part of the build)
@@ -707,6 +720,8 @@ class Monitor:
                     continue
                 if ignore_hidden:
                     skipped += 1
+                    if vol is not None and _reaches_into(obj, *vol):
+                        inside += 1
                     left_out.add(_uid(obj))
                     continue
             uid = _uid(obj)
@@ -752,8 +767,10 @@ class Monitor:
         self.left_out = left_out
         if self.coming or any(w.incoming):
             self._expect()
-        if (disabled, ignored, skipped) != (self.disabled, self.ignored_parts, self.hidden_skipped):
+        if (disabled, ignored, skipped, inside) != (self.disabled, self.ignored_parts, self.hidden_skipped,
+                                                    self.hidden_inside):
             self.disabled, self.ignored_parts, self.hidden_skipped = disabled, ignored, skipped
+            self.hidden_inside = inside
             self._redraw = True               # the badge says how many are left out
         self._count_waiting()
 
@@ -1283,6 +1300,7 @@ class Monitor:
             'ignored_problems': len(view.muted),
             'ignored_parts': self.ignored_parts,
             'hidden_skipped': self.hidden_skipped,
+            'hidden_inside': self.hidden_inside,
             # the verdict is final once every part is read and every pair has a
             # result; exact-distance refinement and the periodic resync that
             # may still be queued do not make it provisional

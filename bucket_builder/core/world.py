@@ -52,6 +52,20 @@ from . import bvh, narrow
 
 PENDING, OK, CLEAR, COLLIDE = -1, 0, 1, 2
 INSIDE, PARTIAL, OUTSIDE = 0, 1, 2
+INSIDE_MARGIN = 1e-3      # mm a part must be inside every wall to count as in (the owner, 2026-11-18:
+                          # 0.001 mm counts as 0, better too strict than a build the printer rejects)
+
+
+def bounds_state(lo, hi, vlo, vhi, margin):
+    """(inside, outside) for parts with extents lo, hi ((n, 3) or (3,)).  Inside
+    means at least `margin` from every wall of the volume (floor and top too);
+    outside means not reaching `margin` into it.  The one rule every bounds
+    check uses: the live check, the Build Report and the referee."""
+    lo, hi = np.asarray(lo, float), np.asarray(hi, float)
+    slack = 1e-9 * (1.0 + float(np.max(np.abs(vhi - vlo))))     # (a part placed exactly at the margin)
+    inside = ((lo >= vlo + margin - slack) & (hi <= vhi - margin + slack)).all(axis=-1)
+    outside = ((hi <= vlo + margin) | (lo >= vhi - margin)).any(axis=-1)
+    return inside, outside
 
 MAX_BATCH = 96
 OOB_TRI_CAP = 60000
@@ -211,6 +225,7 @@ class World:
         self.detect_enclosed = True   # report parts completely inside other parts
         self.volume = None        # (lo, hi) in world space
         self.wall_margin = 0.0    # wanted distance to the side walls (X and Y), 0 = off
+        self.inside_margin = INSIDE_MARGIN   # (set_volume: in scene units)
         self.set_scale(100.0, 0.5)
 
         self.pairs = {}           # (slot_a, slot_b), a < b -> PairResult
@@ -293,15 +308,20 @@ class World:
             self.detect_enclosed = flag
             self.invalidate_all()
 
-    def set_volume(self, lo, hi, wall_margin=0.0):
+    def set_volume(self, lo, hi, wall_margin=0.0, inside_margin=INSIDE_MARGIN):
         """Build volume, and optionally the distance parts should keep from
-        its side walls (X and Y; the top and bottom are not included)."""
+        its side walls (X and Y; the top and bottom are not included).
+        `inside_margin` is INSIDE_MARGIN in scene units (bounds_state)."""
         if lo is None:
             new = None
         else:
             new = (np.array(lo, dtype=np.float64), np.array(hi, dtype=np.float64))
         margin = max(0.0, float(wall_margin)) if new is not None else 0.0
         old = self.volume
+        inner = float(inside_margin)
+        if inner != self.inside_margin:
+            self.inside_margin = inner
+            self._oob_all = True
         if margin == self.wall_margin and (new is None) == (old is None) and (
                 new is None or (np.array_equal(new[0], old[0]) and np.array_equal(new[1], old[1]))):
             return
@@ -1756,8 +1776,7 @@ class World:
         # most cases.
         lo = self.O_LO[slots] + self.O_T[slots]
         hi = self.O_HI[slots] + self.O_T[slots]
-        inside = ((lo >= vlo - e) & (hi <= vhi + e)).all(axis=1)
-        outside = ((lo > vhi + e) | (hi < vlo - e)).any(axis=1)
+        inside, outside = bounds_state(lo, hi, vlo, vhi, self.inside_margin)
         if self.inner_box() is not None:
             # gaps to the four side walls (x low, y low, x high, y high); the
             # floor and the top do not count
