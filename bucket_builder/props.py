@@ -361,6 +361,12 @@ class BucketBuilderSettings(PropertyGroup):
                     "with Relax spends spare room raising gaps toward it. The clearance beside "
                     "Clearance Between Parts stays the least, below which a pair is a warning",
         default=10.0, min=0.0, soft_max=30.0, precision=2, step=50)
+    pack_leave_room: BoolProperty(
+        name="Leave Room for More Parts",
+        description="Pack dense and low, leaving the rest of the volume free for parts added later. "
+                    "Off: at the end the parts are spread out to take all the room they have, from "
+                    "each other and from the walls, without raising the build",
+        default=False)
     pack_relax: BoolProperty(
         name="Relax",
         description="After fixing, spend spare room raising the gaps between parts toward the Aim "

@@ -249,6 +249,49 @@ spliced into its model text, so names, metadata, colors and anything this
 tool does not understand come out byte for byte as they went in. It
 prints where each part went, or that there was no room and why.
 
+### 3.5 Three actions, Relax and Spread (the owner's choice, 2026-11-19; built in 1.6.0 - 1.6.1)
+
+The panel has three buttons, and the steps behind them are stages, not
+more buttons:
+
+* **Pack From Scratch**: every part packed again (first layout, the
+  improvement stages, compaction), then **Spread** unless Leave Room for More
+  Parts is on.
+* **Keep Trying**: starts from the layout as it is: fixes what breaks a
+  rule, then the improvement stages, keeping the best and saying so when it
+  found nothing better; then Spread, as above.
+* **Fix Issues**: small moves only (Jiggle), until no part collides, sits
+  too close or touches a side wall; with **Relax** (on by default) the gaps
+  are then raised toward the Aim clearance where there is room. Jiggle's
+  toggles (small turns, quarter turns, move elsewhere) are its options.
+
+The old Jiggle & Tighten and Improve Current Layout buttons are gone;
+tightening is a stage of packing, Relax and Spread are the stages that spend
+spare room.
+
+**Spread** (`pack/spread.py`): in a final layout parts take all the
+breathing room they have, from each other and from the walls, without
+raising the build (height costs print time). It is Jiggle with an aim
+clearance, the aim raised by half again each time every pair reached it,
+the walls held to half the aim, and the volume's top lowered to the build's
+own top. A step that would break a rule is not taken. Ten spheres in a row
+along one wall end up over the whole floor (every pair 50 mm apart, same
+height):
+
+![Spread: ten spheres before and after](images/spread/sphere10_spread.png)
+
+![Spread: twenty figurines before and after](images/spread/figurine20_spread.png)
+
+**Leave Room for More Parts** (off by default; a scene setting, saved with
+the file): when more parts will be added later, the packer packs dense and
+low and leaves the rest of the volume free instead; no Spread. Keep Trying
+and Fix Issues respect the same option.
+
+Where Claude differed from the proposal: the walls are held to half the aim
+rather than the whole aim (evenly spread parts are about half a gap from a
+wall), and Spread has its own time (a quarter of the packing time, 15 s -
+2 min).
+
 ## 4. Clearance tiers (#35, revised 2026-11-17)
 
 Not two numbers but tiers, from the owner's practice for builds like the

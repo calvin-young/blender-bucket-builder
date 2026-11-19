@@ -41,6 +41,9 @@ class Settings:
     vhi: np.ndarray = None
     gap: float = 5.0                  # between parts, mm
     gap_aim: float = None             # with two clearances: what pairs should have; `gap` is then the least
+    spread_aim: float = None          # mm: after packing, spread the parts toward this clearance and beyond, within
+                                      # the packed height (pack.spread); None: leave them dense (room for more parts)
+    spread_seconds: float = 60.0      # time the final spread may take
     jiggle_reseat: int = 3            # Jiggle may take out and place again this many parts that small moves
                                       # cannot free (0: never); what solved the owner's challenge build
     jiggle_major: bool = False        # Jiggle may turn a stuck part by 90 / 180 degrees where it is

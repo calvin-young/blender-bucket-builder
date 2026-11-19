@@ -31,7 +31,8 @@ from .problem import Part, Settings
 SETTINGS = ('gap', 'gap_aim', 'jiggle_reach', 'jiggle_reseat', 'jiggle_turns', 'jiggle_major', 'wall_gap', 'h', 'coarse', 'phases', 'z_step', 'max_density', 'layer_cap',
             'layer_weight', 'candidates', 'time_limit', 'time_budget', 'preset', 'seed', 'compact', 'spread_z',
             'stall_time', 'restarts', 'jiggle', 'flat_rules', 'flat_pair_weight', 'flat_wall_weight',
-            'flat_top_weight', 'spread_scale', 'height_far', 'height_top', 'height_band', 'near_top_extra')
+            'flat_top_weight', 'spread_scale', 'height_far', 'height_top', 'height_band', 'near_top_extra',
+            'spread_aim', 'spread_seconds')
 
 
 def write_job(folder, parts, settings, locked=(), start=None, mode='pack'):
@@ -140,14 +141,32 @@ def main(folder):
                 report()
         finally:
             jb.close()
-        state['finished'] = True
         report(final=True)
+        if s.spread_aim and not jb.cancel and state.get('placements'):
+            _spread(folder, state, parts, s, locked, stop)
+        state['finished'] = True
+        _write(folder, state)
     except Exception:
         state['error'] = safe.tidy(traceback.format_exc()[-2000:])
         state['finished'] = True
         _write(folder, state)
         return 1
     return 0
+
+
+def _spread(folder, state, parts, s, locked, stop):
+    """The final Spread (pack.spread): parts take the room they have, within
+    the packed height. Rewrites the placements in `state`."""
+    from . import spread
+    state['phase'] = 'spreading'
+    _write(folder, state)
+    rows = state['placements']
+    items = [(parts[i].mesh, np.asarray(M, float).reshape(4, 4)) for i, _c, _k, M in rows]
+    Ms, reached, steps = spread.spread(items, s.vlo, s.vhi, s.gap, s.wall_gap, locked, aim=s.spread_aim,
+                                       seconds=s.spread_seconds, stop=lambda: os.path.exists(stop))
+    state['placements'] = [[i, c, k, np.asarray(M).ravel().tolist()] for (i, c, k, _M), M in zip(rows, Ms)]
+    state['log'] = list(state.get('log') or []) + ['spread: every pair at least %.1f mm apart (%d steps)' % (reached, steps)]
+    state['version'] = int(state.get('version') or 0) + 1
 
 
 def _soft(folder, state, parts, s, locked, t0):

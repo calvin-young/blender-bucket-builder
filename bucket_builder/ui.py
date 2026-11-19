@@ -508,6 +508,7 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
                 b = job.get('budget') or 0.0
                 frac = 1.0 - (job['time_left'] or 0.0) / b if b > 0 else 0.0
                 text = ("Jiggling%s" % left) if job.get('phase') == 'jiggling' else \
+                    "Spreading the parts out" if job.get('phase') == 'spreading' else \
                     ("Improving: %.1f mm%s" % (job['height'], left))
                 row.progress(factor=frac, type='BAR', text=text)
             row = layout.row()
@@ -571,6 +572,7 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
         else:
             col.prop(st, "pack_wall_gap")
         col.prop(st, "pack_max_density")
+        layout.prop(st, "pack_leave_room")
         header, body = layout.panel("bucketbuilder_pack_advanced", default_closed=True)
         header.label(text="Advanced")
         if body is not None:

@@ -309,6 +309,10 @@ class BUCKETBUILDER_OT_pack(Operator):
                      preset=st.pack_preset.lower(), **quality_settings(st.pack_quality, st.pack_keep_low),
                      **effort_settings(st.pack_effort, st.pack_time, st.pack_best_hours, st.pack_stall_minutes,
                                       st.pack_overnight_hours))
+        if self.fix == 'NONE' and not st.pack_leave_room:
+            # (the final Spread: parts take the room they have, within the packed height)
+            s.spread_aim = float(st.clearance_aim_mm) if st.use_clearance and st.clearance_aim_mm > gap else max(10.0, gap)
+            s.spread_seconds = float(min(120.0, max(15.0, 0.25 * (s.time_budget or 240.0))))
         if self.fix == 'FIX' and st.pack_relax and st.use_clearance and st.clearance_aim_mm > gap:
             s.gap_aim = float(st.clearance_aim_mm)      # (Relax: Jiggle toward the aim, never below the least)
         self._settings = s
