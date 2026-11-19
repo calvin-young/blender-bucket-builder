@@ -327,6 +327,24 @@ def write_stl(path, mesh):
         f.write(rec.tobytes())
 
 
+FLOOR_TOL = 1e-4          # mm: a part this little below z = 0 is on the floor (rounding), and is written so
+
+
+def clamp_floor(verts, M, z0=0.0, tol=FLOOR_TOL):
+    """M with its translation raised so that a part resting a rounding error
+    below the floor (lowest point in [z0 - tol, z0)) ends exactly on it: the
+    only bound that may be line to line is -Z, and nothing written should
+    say -0.00000001 (the owner, 2026-11-19). Other placements are unchanged."""
+    M = np.array(M, dtype=np.float64)
+    z = float((np.asarray(verts, float) @ M[2, :3]).min() + M[2, 3])
+    if z0 - tol <= z < z0:
+        M[2, 3] += z0 - z
+        z = float((np.asarray(verts, float) @ M[2, :3]).min() + M[2, 3])
+        if z < z0:                                  # (one more ulp where the sum rounds down)
+            M[2, 3] = np.nextafter(M[2, 3], np.inf)
+    return M
+
+
 def write_3mf(path, parts, unit='millimeter'):
     """parts: list of (mesh, 4x4 matrix, name); meshes used more than once are
     written once and referenced (instancing)."""
@@ -341,6 +359,7 @@ def write_3mf(path, parts, unit='millimeter'):
                         % (ids[id(mesh)], mesh.name, v, t))
     items = []
     for mesh, M, name in parts:
+        M = clamp_floor(mesh.verts, M)
         R = np.asarray(M)[:3, :3].T.ravel().tolist() + np.asarray(M)[:3, 3].tolist()
         items.append('<item objectid="%d" transform="%s" partnumber="%s"/>'
                      % (ids[id(mesh)], ' '.join(repr(float(x)) for x in R), name))

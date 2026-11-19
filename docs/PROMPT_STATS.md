@@ -31,7 +31,7 @@ Little things the maintainer asked for or caught, what the status page shows. Co
 
 | Bugs found | UI tweaks | New features | Direction | Total |
 |---|---|---|---|---|
-| 14 | 21 | 30 | 47 | 112 |
+| 15 | 21 | 32 | 48 | 116 |
 
 ## Sessions
 
@@ -75,6 +75,10 @@ the detail.
 - 2026-11-18 [domain]: faces under 0.5 mm may fuse; rounded, edge or corner approaches can go to about 0.1 mm.
 - 2026-11-18 [direction]: pack from scratch as a user would: "1:1 ratio, fit as many as you can"; whole sets, not broken ones.
 - 2026-11-19 [domain][bug]: correction: parts at z = 0 never cause trouble (Netfabb does it all the time); only the X / Y walls (and the top) must be strict.
+- 2026-11-19 [domain][bugs]: the top is strict too; -Z is the only bound that may be line to line; never write a tiny negative z on export.
+- 2026-11-19 [direction][features]: in a final layout parts take all the breathing room they have (spread evenly), unless room is left for more parts; aim stays 10 mm.
+- 2026-11-19 [domain]: large flat faces: 0 degrees capillary defect, 0 - 10 degrees stair-stepping, 10 degrees and more fine.
+- 2026-11-19 [direction][features]: one central place for every print-quality rule and threshold, changed in one place.
 - 2026-11-19 [tested][ui]: parts staged fully outside light the screen up purple; only parts that stick out a little should be loud.
 - 2026-11-19 [tested][ui]: no feedback while the packer prepares; show the stage and an estimate from the start.
 - 2026-11-19 [tested][features]: pressing Pack again redid all the preparation: cache it per parts and settings.

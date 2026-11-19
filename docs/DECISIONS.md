@@ -126,7 +126,10 @@ still open. The details are in `AGENTS.md` (Implementation notes).
   have. So resting on the floor counts as inside. **Final word (the owner,
   2026-11-19, later):** the checker passes the floor, but every placing tool
   (Drop to Floor, the packer, Jiggle, snapping) still leaves 0.001 mm above
-  it, to be safe (`problem.FLOOR_INSET`). The top stays strict: nothing says contact
+  it, to be safe (`problem.FLOOR_INSET`). Confirmed (2026-11-19): the top
+  is strict like X / Y; -Z is the only bound that may be line to line, and
+  nothing written should place a part a rounding error below the floor: the
+  3MF writer clamps such a part to exactly z = 0 (`meshio.clamp_floor`). The top stays strict: nothing says contact
   with the top of the build volume is safe, and with the floor exempt the
   rule errs strict on the one side where nothing is known. The packer keeps
   0.002 mm off the side walls and the top (`problem.PACK_INSET`,

@@ -289,6 +289,18 @@ def test_scale():
     check(dt / (m.nt / 1e6) < 3.0, 'parse speed is a few seconds per million triangles')
 
 
+def test_clamp_floor():
+    print('a part a rounding error below the floor is written exactly on it')
+    V = np.array([[0.0, 0, 0], [1, 1, 1], [0, 1, 0.5]])
+    M = np.eye(4); M[2, 3] = -3e-9
+    C = meshio.clamp_floor(V, M)
+    check(float((V @ C[2, :3]).min() + C[2, 3]) >= 0.0 and abs(C[2, 3]) < 1e-8, 'raised to exactly 0')
+    M[2, 3] = -0.5
+    check(np.allclose(meshio.clamp_floor(V, M), M), 'a part really below the floor is left alone')
+    M[2, 3] = 0.001
+    check(np.allclose(meshio.clamp_floor(V, M), M), 'and so is one above it')
+
+
 if __name__ == '__main__':
     test_stl()
     test_3mf_roundtrip()
@@ -296,6 +308,7 @@ if __name__ == '__main__':
     test_components()
     test_properties_on_triangles()
     test_scale()
+    test_clamp_floor()
     print()
     if FAILS:
         print('FAILED:')
