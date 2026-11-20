@@ -2,18 +2,16 @@
 
 Who packs a build, and what a good result means to them. Each use case
 drives a preset: how long the packer runs, what it tries to do, and which
-alternatives it offers. The first three are the owner's framing
-(2026-11-18). The others are Claude's additions and are assumed until the
-owner confirms them.
+alternatives it offers.
 
-| Use case | Time budget | Objective | Alternatives offered | Benchmark |
-| --- | --- | --- | --- | --- |
-| Production repeat | hours, up to 48 h | best density for a set ratio; whole sets | ratio across buckets, compromises | challenge parts (local), whole sets |
-| Service bureau | until a deadline (say 5 pm) | most parts by priority, before the deadline | fewer parts with better quality | `bureau-day` |
-| R&D quick look | seconds | a rough layout and a clear list of what is left out | none | `one-offs`, `mix-a` |
-| Kits and cages (assumed) | minutes | N complete kits, small parts caged | cage or no cage | to build: a kit bucket |
-| Racks for post-processing (assumed) | minutes | racks that fit the machine, then a dense bucket of racks | parts per rack | to build: a rack bucket |
-| Fill the gaps (assumed) | seconds to minutes | add waiting parts to a layout without moving locked ones | none | `bureau-day` with locked parts |
+| Use case | Type | Time Budget | Objective | Alternatives Offered | Benchmark |
+| --- | --- | --- | --- | --- | --- |
+| Full Production | full bucket | no limit | a client is producing one or more parts at scale, over a prolonged period; the parts must be produced in particular ratios; a marginal increase in packing efficiency can make a big difference on part cost; maximize packing efficiency given the PQ requirements | achieve specified ratio across multiple buckets, if it cannot be accomplished in a single bucket; compromises to PQ to improve packing efficiency | challenge buckets packed by an expert human (existing algorithms cannot compete) |
+| Service Bureau | full bucket | minutes to hours | an assortment of random parts need to be packed into as few buckets as possible; parts can be sorted by priority, and packing must be finished before the deadline | compromises to PQ to avoid a small number of leftover parts | `bureau-day` |
+| Quick Job | partial or full bucket | seconds | a small number of parts that are expected to fit into a single bucket; prioritize speed over efficiency | improved efficiency in exchange for more packing time | `one-offs`, `mix-a` |
+| Kits and Cages | assembly | seconds | small parts that need to be packed into a cage; sometimes to group together and print in multiples for easy distribution; other times to simplify extraction and prevent small parts from being lost | different arrangement of parts to make the kits easier to nest into a bucket | tba |
+| Sprues and Racks for Post-Processing | assembly | minutes | small parts that need to be assembled into a rack; simplifies extraction, bead blasting, and vapor polishing; racks should be designed to fit in all three machines | number of parts per rack; optimized for one process or another | tba |
+| Part injection | amending a bucket | seconds to minutes | add additional parts to an existing bucket with or without (user specified) moving the existing parts | none | `bureau-day` with locked parts |
 
 ## Production repeat (the owner's framing)
 
