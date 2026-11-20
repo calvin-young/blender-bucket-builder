@@ -171,8 +171,10 @@ still open. The details are in `AGENTS.md` (Implementation notes).
   `docs/images/bounds/partly_and_staged.png`.
 * **Export Print File** (#9, 2026-11-19): only through the 3MF add-on's
   API (`io_mesh_3mf` in `bpy.app.driver_namespace`: names, colors, its
-  features); without it the panel offers **Install the 3MF Add-on** (from
-  the extensions platform, or its page when online access is off). The
+  features); without it the panel offers **Install the 3MF Add-on**:
+  Blender's own extension installer (no network code in Bucket Builder:
+  `tests/test_privacy.py`), or, when online access is off, Preferences >
+  Get Extensions opened to search for it. The
   owner chose no fallback: Bucket Builder's own `pack.meshio.write_3mf`
   came with the stand-alone packer engine, for its command line, benchmark
   files and tests, and nothing in the add-on's interface uses it.

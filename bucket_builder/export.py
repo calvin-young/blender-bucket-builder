@@ -93,7 +93,6 @@ def _set_scene_metadata(scene, entries, api):
 
 
 ADDON_ID = "ThreeMF_io"          # the 3MF add-on's id on the Blender extensions platform
-ADDON_URL = "https://extensions.blender.org/search/?q=3mf"
 
 
 class NoAddon(RuntimeError):

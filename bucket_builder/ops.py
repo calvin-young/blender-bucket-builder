@@ -530,9 +530,12 @@ class BUCKETBUILDER_OT_get_3mf_addon(Operator):
         if export.install_addon():
             self.report({'INFO'}, "The 3MF add-on is installed: Export Print File is ready")
             return {'FINISHED'}
-        bpy.ops.wm.url_open(url=export.ADDON_URL)
-        self.report({'WARNING'}, "Could not install it here (online access may be off): its page is open "
-                                 "in the browser; or Edit > Preferences > Get Extensions, search 3MF")
+        try:
+            bpy.ops.screen.userpref_show(section='EXTENSIONS')    # (Blender's own Get Extensions, to search there)
+        except Exception:                                        # noqa: BLE001
+            pass
+        self.report({'WARNING'}, "Could not install it here (online access may be off): in Preferences > "
+                                 "Get Extensions, search for 3MF")
         return {'CANCELLED'}
 
 
