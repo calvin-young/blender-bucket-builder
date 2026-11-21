@@ -368,14 +368,15 @@ def _build_group(mon, pairs, oobs, walls, vol, shaders, hidden, staged=()):
         shown = slot not in hidden
         if r.tris is not None and len(r.tris) and vol is not None and shown:
             tri_parts['outside'].append((r.tris, zero))
-        if r.state == OUTSIDE or r.band_only or r.tris is None or not shown:
+        if not shown:
+            # (a hidden part has no surface drawn: its box says where the problem is)
             line_parts['outside'].append((_box_edges(r.lo, r.hi), zero))
     for slot, r in walls:
         shown = slot not in hidden
         # drawn where it lies outside the inner box, i.e. inside the margin
         if r.tris is not None and len(r.tris) and inner is not None and shown:
             tri_parts['wall'].append((r.tris, zero))
-        if r.band_only or not shown:
+        if not shown:
             line_parts['wall'].append((_box_edges(r.lo, r.hi), zero))
 
     hatch = shaders['hatch']
@@ -527,14 +528,26 @@ def _draw_tris(shaders, batch, color, style, spacing, fill, vp, bias, xray, srgb
     batch.draw(hatch)
 
 
-def _draw_lines(shaders, batch, color, width, viewport, xray=True):
+def _draw_lines(shaders, batch, color, width, viewport, xray=True, bias=None):
+    """``bias``: (k1, k2, k3) as for the hatching, to pull the lines toward the viewer (the
+    volume's outline over the snap wireframe that lies a hair inside it)."""
     sh = shaders['line']
     sh.bind()
     sh.uniform_float("viewportSize", viewport)
     sh.uniform_float("lineWidth", width)
     sh.uniform_float("color", color)
     gpu.state.depth_test_set('NONE' if xray else 'LESS_EQUAL')
-    batch.draw(sh)
+    if bias is None or xray:
+        batch.draw(sh)
+        return
+    import mathutils
+    k1, k2, k3 = bias
+    P = gpu.matrix.get_projection_matrix()
+    Q = mathutils.Matrix(P)
+    Q[2] = P[2] * k2 + P[3] * (k1 * k2 + k3)        # z' = (z + k1 w) k2 + k3 w
+    with gpu.matrix.push_pop_projection():
+        gpu.matrix.load_projection_matrix(Q)
+        batch.draw(sh)
 
 
 def _colliding(mon, only=None, view=0):
@@ -687,7 +700,7 @@ def _volume_batches(mon, st, shaders):
     return entry
 
 
-def _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only=None):
+def _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only=None, bias=None):
     """The build volume.  It keeps its own color; only the walls something
     goes through turn to the out-of-volume color, and only the sides of the
     wall-gap box that something is too close to turn to the warning color."""
@@ -706,7 +719,8 @@ def _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only=No
         flat.uniform_float("color", (col_v[0], col_v[1], col_v[2], 0.05 * fill))
         v['floor'].draw(flat)
     _draw_lines(shaders, v['edges'], (col_v[0], col_v[1], col_v[2], 0.25), 1.0 * ui, viewport, xray=True)
-    _draw_lines(shaders, v['edges'], (col_v[0], col_v[1], col_v[2], 0.9), 1.6 * ui, viewport, xray=False)
+    _draw_lines(shaders, v['edges'], (col_v[0], col_v[1], col_v[2], 0.9), 1.6 * ui, viewport, xray=False,
+               bias=bias)
     if any(out):
         if fill > 0.0:
             gpu.state.depth_test_set('LESS_EQUAL')
@@ -718,7 +732,8 @@ def _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only=No
         for i, (edge, face) in enumerate(v['walls']):
             if out[i]:
                 _draw_lines(shaders, edge, (col_o[0], col_o[1], col_o[2], 0.45), 1.6 * ui, viewport, xray=True)
-                _draw_lines(shaders, edge, (col_o[0], col_o[1], col_o[2], 1.0), 2.6 * ui, viewport, xray=False)
+                _draw_lines(shaders, edge, (col_o[0], col_o[1], col_o[2], 1.0), 2.6 * ui, viewport, xray=False,
+                           bias=bias)
     if v['inner'] is not None:
         # the limit parts should stay inside of
         _draw_lines(shaders, v['inner'], (col_v[0], col_v[1], col_v[2], 0.16), 1.0 * ui, viewport, xray=True)
@@ -728,6 +743,10 @@ def _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only=No
                 edge = v['inner_walls'][k][0]
                 _draw_lines(shaders, edge, (col_w[0], col_w[1], col_w[2], 0.35), 1.4 * ui, viewport, xray=True)
                 _draw_lines(shaders, edge, (col_w[0], col_w[1], col_w[2], 1.0), 2.2 * ui, viewport, xray=False)
+
+
+def _snap_helper_on(st):
+    return bool(getattr(st, 'snap_to_volume', False))
 
 
 def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport, ui,
@@ -755,31 +774,32 @@ def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport,
         gpu.state.depth_mask_set(False)
         gpu.state.face_culling_set('NONE')
 
+        # How far the overlay is pulled toward the viewer to sit on top of
+        # the surface it marks, as (k1, k2, k3) for z' = (z + k1 w) k2 + k3.
+        # With a very small clip start the depth buffer is coarse at
+        # working distance, so the pull grows with it.
+        a = window_matrix[2][2]
+        if window_matrix[3][3] == 0.0:              # perspective: a relative pull
+            rel = 0.0015
+            near = abs(window_matrix[2][3] / (a - 1.0)) if a != 1.0 else 0.0
+            if near > 0.0:
+                rel = min(0.02, max(rel, 6.0 * view_distance / (near * 16777216.0)))
+            bias = (a * rel, 1.0 / (1.0 - rel), 0.0)
+            tint_bias = (a * 0.4 * rel, 1.0 / (1.0 - 0.4 * rel), 0.0)
+        else:                                       # orthographic: an absolute one
+            pull = 0.004 * max(view_distance, 1e-9)
+            bias = (0.0, 1.0, a * pull)
+            tint_bias = (0.0, 1.0, a * 0.4 * pull)
         w = mon.world
         if props.volume_shown(st):
             # a part staged wholly outside tints the whole bucket, between its blue and the error purple:
             # subtle, but clearly not a good build (the owner, 2026-11-19)
             if mon.view().staged:
                 col_v = tuple(0.5 * (a + b) for a, b in zip(col_v, col_o))
-            _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only)
+            _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only,
+                         bias if _snap_helper_on(st) else None)
 
         if st.show_overlay:
-            # How far the overlay is pulled toward the viewer to sit on top of
-            # the surface it marks, as (k1, k2, k3) for z' = (z + k1 w) k2 + k3.
-            # With a very small clip start the depth buffer is coarse at
-            # working distance, so the pull grows with it.
-            a = window_matrix[2][2]
-            if window_matrix[3][3] == 0.0:              # perspective: a relative pull
-                rel = 0.0015
-                near = abs(window_matrix[2][3] / (a - 1.0)) if a != 1.0 else 0.0
-                if near > 0.0:
-                    rel = min(0.02, max(rel, 6.0 * view_distance / (near * 16777216.0)))
-                bias = (a * rel, 1.0 / (1.0 - rel), 0.0)
-                tint_bias = (a * 0.4 * rel, 1.0 / (1.0 - 0.4 * rel), 0.0)
-            else:                                       # orthographic: an absolute one
-                pull = 0.004 * max(view_distance, 1e-9)
-                bias = (0.0, 1.0, a * pull)
-                tint_bias = (0.0, 1.0, a * 0.4 * pull)
             if st.show_tint:
                 drawn[0] = _draw_tint(mon, p, shaders, persp_matrix, tint_bias, srgb, viewport, ui,
                                       col_c, only, view)
@@ -1170,6 +1190,9 @@ def summary(status, local=None):
             rows.append((_count(n_in, "hidden part") + " in the volume, not checked", 'warn'))
         if k > n_in:
             rows.append((_count(k - n_in, "hidden part") + " not checked", 'note'))
+    k = status.get('tiny', 0)
+    if k:
+        rows.append((_count(k, "part") + " under 0.5 mm: imported in meters?", 'warn'))
     if not working and measuring:
         # collisions are settled; some gaps are still being measured exactly
         rows.append(("measuring clearances...", 'dim'))

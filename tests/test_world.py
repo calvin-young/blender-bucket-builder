@@ -492,6 +492,7 @@ def wall_tests(rng):
         'just_clear': ((25.01, 142.0, 190.0), None),
         'touching': ((20.0, 142.0, 190.0), None),   # at the wall: not inside (bounds_state), so an error
         'through': ((15.0, 142.0, 190.0), None),    # crosses the wall: an error, not this warning
+        'pierce': ((190.0, 142.0, 10.0), None),     # through the floor: outside, never "touching"
     }
     for uid, (t, _) in cases.items():
         w.add_object(uid, 's', meshes.matrix(None, t))
@@ -514,6 +515,10 @@ def wall_tests(rng):
             assert ((r.center < ilo) | (r.center > ihi)).any(), (uid, r.center)
     assert w.oob[w.slot('through')].state == PARTIAL and w.slot('through') not in w.wall
     assert w.oob[w.slot('touching')].state == PARTIAL and w.slot('touching') not in w.wall
+    assert w.oob[w.slot('touching')].touch is not None and w.oob[w.slot('touching')].touch[0] == 0
+    assert w.oob[w.slot('through')].touch is None
+    # (2026-11-20: a part through the floor was reported as touching a wall, the floor being exempt)
+    assert w.oob[w.slot('pierce')].state == PARTIAL and w.oob[w.slot('pierce')].touch is None
     assert w.counts()[4] == 5, w.counts()
 
     # moving a part in and out of the margin, and changing the margin

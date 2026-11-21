@@ -86,6 +86,8 @@ PROBLEM_RANK = {'PARTIAL': 0, 'OUTSIDE': 1, 'COLLIDE': 2, 'CLEAR': 3, 'WALL': 4}
 BIG_SKIPS = ('too many triangles', 'not enough memory', 'error')
 
 
+TINY_MM = 0.5            # parts smaller than this across are named: likely imported in meters
+
 class ObjState:
     __slots__ = ('uid', 'name', 'in_world', 'skipped', 'data_uid', 'shareable', 'ntri', 'sig',
                  'hidden')
@@ -334,10 +336,15 @@ class Monitor:
         self.ready_s = None       # seconds from the start to the first complete verdict
         self._problems = (None, [])
         self._active = (None, '', -1)
-        self._auto_mm = None
+        self._follow = (None, '', None)  # (selected part, problem key then, its first row)
 
     # ------------------------------------------------------------ parameters
     def _resolve_units(self, scene, st):
+        """(millimeters per scene unit, a note for the Units panel). Never guessed from the parts
+        (the owner, 2026-11-20: up to 1.6.2 a default scene was read as meters when the first parts
+        the monitor saw were small, so the bucket shrank 1000 times without a word, and which way it
+        went depended on whether the parts came before the monitor). Parts too small to print are
+        named in the verdict instead (`tiny`)."""
         us = scene.unit_settings
         # scale_length is single precision: 0.001 arrives as 0.0010000000475
         scale = float(f"{us.scale_length:.7g}") if us.system != 'NONE' else 1.0
@@ -347,19 +354,17 @@ class Monitor:
             return scale * 1000.0, "scene units"
         if us.system != 'NONE' and abs(scale - 1.0) > 1e-9:
             return scale * 1000.0, "scene units"
-        # Default scene scale: decide from the size of the parts.  Printable
-        # parts measured in meters are well below 1 unit; millimeter numbers
-        # are well above.
+        return 1.0, "1 unit = 1 mm"
+
+    def tiny_parts(self):
+        """How many parts are under TINY_MM across: in a scene read as millimeters that usually means
+        a file imported in meters (objects scaled 0.001)."""
         w = self.world
         slots = list(w._slot_of.values())
-        if slots and self._auto_mm is None:
-            ext = (w.O_HI[slots] - w.O_LO[slots]).max(axis=1)
-            self._auto_mm = 1.0 if float(np.median(ext)) > 1.5 else 1000.0
-        if self._auto_mm is None:
-            return 1.0, "1 unit = 1 mm"
-        if self._auto_mm == 1.0:
-            return 1.0, "1 unit = 1 mm (detected)"
-        return 1000.0, "scene units, meters (detected)"
+        if not slots or self.mm_per_unit != 1.0:
+            return 0
+        ext = (w.O_HI[slots] - w.O_LO[slots]).max(axis=1)
+        return int((ext < TINY_MM).sum())
 
     def volume_box(self, st):
         """Build volume as (lo, hi) in scene units."""
@@ -1315,6 +1320,7 @@ class Monitor:
             'ignored_parts': self.ignored_parts,
             'hidden_skipped': self.hidden_skipped,
             'hidden_inside': self.hidden_inside,
+            'tiny': self.tiny_parts(),
             # the verdict is final once every part is read and every pair has a
             # result; exact-distance refinement and the periodic resync that
             # may still be queued do not make it provisional
@@ -1418,6 +1424,27 @@ class Monitor:
                 index = next((i for i, d in enumerate(problems) if d['id'] == key), -1)
         self._active = (problems, key, index)
         return index
+
+    def list_index(self, st, active=None):
+        """The row the list lights: the problem the user last went to, or, when a part has been
+        selected in the viewport since then, that part's first problem (the owner, 2026-11-20).
+        Only the lit row follows the selection: nothing moves and the view does not jump."""
+        key = st.problem_key
+        follow = self._follow
+        if active != follow[0]:
+            problems = self.problems()
+            hit = next((i for i, d in enumerate(problems) if active in d['names']), None) if active else None
+            follow = self._follow = (active, key, hit)
+        if follow[2] is not None and follow[1] == key:
+            problems = self.problems()
+            i = follow[2]
+            if i < len(problems) and active in problems[i]['names']:
+                return i
+            hit = next((i for i, d in enumerate(problems) if active in d['names']), None)
+            self._follow = (active, key, hit)
+            if hit is not None:
+                return hit
+        return self.active_index(st)
 
 
 # ---------------------------------------------------------------------------

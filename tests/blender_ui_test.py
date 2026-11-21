@@ -100,7 +100,7 @@ class FakeLayout:
             n0 = len(LOG)
             layout = FakeLayout()
             cls.draw_item(ListHolder, CONTEXT[0], layout, data, rows[i], 0, active_data, active_prop, i)
-            texts = [t for k, t in LOG[n0:] if k == 'label']
+            texts = [t for k, t in LOG[n0:] if k == 'label' and t]   # (an icon alone is not text)
             assert len(texts) == 1, ('a row of the list has one line of text', texts)
             LOG.append(('row' + tag, texts[0]))
             if i == active and not tag:
@@ -242,7 +242,7 @@ def main():
     assert 'Collision' in labels and 'Clearance' in labels, 'the display switches have no headings'
     # the panels are separate ones now, each with its own header
     tops = [c.bl_label for c in ui.CLASSES if issubclass(c, bpy.types.Panel) and not getattr(c, 'bl_parent_id', '')]
-    assert tops == ['Bucket Builder', 'Collision Detection', 'Build Volume', 'Arrange', 'Build Report', 'Pack', 'Options',
+    assert tops == ['Bucket Builder', 'Build Volume', 'Collision Detection', 'Manual Packing', 'Build Report', 'Autopacking', 'Options',
                     'Export'], tops
     try:                                                # (without the 3MF add-on Export writes nothing)
         r = bpy.ops.bucketbuilder.export_3mf()

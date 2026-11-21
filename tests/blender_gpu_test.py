@@ -226,6 +226,11 @@ def main():
     assert s['clearance'] >= 1, s
     assert s['partly_out'] == 1, s
 
+    # with Snap to Build Volume on, the outline is drawn pulled toward the viewer (over the snap
+    # wireframe a hair inside it): same picture, no error
+    st.snap_to_volume = True
+    render(mon, st, 'snap', (520, -330, 330), (180, 130, 60))
+    st.snap_to_volume = False
     r, a, m = render(mon, st, 'overview', (520, -330, 330), (180, 130, 60))
     assert r > 300, 'no collision hatch visible'
     assert a > 100, 'no clearance hatch visible'
@@ -306,6 +311,7 @@ def main():
     ring = bpy.data.objects['Ring']
     render(mon, st, 'ring_shown', (150, -20, 150), (112, 110, 64))
     shown = LAST['drawn']
+    st.ignore_hidden = False                     # (hidden parts are left out by default since 2026-11-18)
     ring.hide_set(True)
     bpy.context.view_layer.update()
     mon = settle()

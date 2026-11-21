@@ -13,84 +13,98 @@ alternatives it offers.
 | Sprues and Racks for Post-Processing | assembly | minutes | small parts that need to be assembled into a rack; simplifies extraction, bead blasting, and vapor polishing; racks should be designed to fit in all three machines | number of parts per rack; optimized for one process or another | tba |
 | Part injection | amending a bucket | seconds to minutes | add additional parts to an existing bucket with or without (user specified) moving the existing parts | none | `bureau-day` with locked parts |
 
-## Production repeat (the owner's framing)
+The table is the owner's (2026-11-20). The sections below expand it; where
+they go beyond the table they say so.
 
-* **Who:** an engineer preparing a build that will be printed hundreds of
-  times, for example 150 of each part of a product.
-* **In their words:** "I don't care if it takes 48 hours; I want the
-  optimal pack, because I'll print this 3MF hundreds of times."
-* **Goal:** the most complete sets per bucket. A ratio may break inside
-  one bucket if it holds across buckets (#46): two buckets of
-  6, 6, 7, 7, 7 and 7, 7, 6, 6, 6 beat 4, 4, 4, 4, 4. Yield comes back per
-  bucket, and counts get adjusted when a tight pair fails.
-* **Good means:** more sets than an expert reaches by hand. The owner's
-  7 sets on the challenge parts is the bar (#47).
-* **Features that matter:** set mode, aligned faces, the clearance tiers
-  with compromises reported for the user to accept, Jiggle, alternatives
-  (#45), long effort levels (Overnight and longer).
-* **Benchmark:** the challenge parts at 1:1, whole sets (local), against
-  Netfabb and Magics with the same cascade (7, 6, 5 ... until all fit).
+## Full Production
 
-## Service bureau (the owner's framing)
+* **Who:** a client producing one or more parts at scale over a long
+  period, in set ratios (for example 150 of each part of a product).
+* **Goal:** the best packing efficiency the print-quality requirements
+  allow. A marginal gain matters, because it multiplies over every bucket
+  printed.
+* **Time:** no limit. (The longest Effort today, Overnight, stops at 12 h.)
+* **Alternatives offered:** the ratio met across several buckets when one
+  bucket can't hold it (#46): two buckets of 6, 6, 7, 7, 7 and 7, 7, 6, 6, 6
+  beat 4, 4, 4, 4, 4; and compromises on print quality that buy density,
+  for the user to accept.
+* **Benchmark:** challenge buckets packed by an expert by hand. Existing
+  packers can't reach those yet; the owner's 7 sets on the challenge parts
+  is the bar (#47). Netfabb and Magics are run on the same parts with the
+  same cascade (7, 6, 5 ... until every copy fits).
+* **Features that matter:** set mode (#47), the clearance tiers with
+  compromises reported, Jiggle, alternatives (#45), long runs.
 
-* **Who:** a bureau operator with a printer that starts at a fixed time.
-* **In their words:** "The printer starts at 5 pm; squeeze in as many
-  parts as you can before then; printed once."
-* **Goal:** the most parts, by priority (essential parts first, big parts
-  before small ones), packed before the deadline.
-* **Good means:** nothing essential left out; what is left out is small
-  and easy to fit tomorrow; the run ends on time.
-* **Features that matter:** priorities (tiers), a time budget given as a
-  clock time, the list of left-out parts, adding waiting parts to an
-  existing layout.
+## Service Bureau
+
+* **Who:** a bureau with an assortment of unrelated parts and a printer
+  that starts at a fixed time.
+* **Goal:** as few buckets as possible, parts sorted by priority, packing
+  finished before the deadline.
+* **Time:** minutes to hours.
+* **Alternatives offered:** compromises on print quality that avoid
+  leaving a few parts over.
 * **Benchmark:** `bureau-day` (synthetic, `tools/bench_suite.py`).
+* **Features that matter:** priorities (tiers), a time budget as a clock
+  time, the list of left-out parts, and packing into more than one bucket
+  (not built: the packer fills one bucket at a time).
 
-## R&D quick look (the owner's framing)
+## Quick Job
 
-* **Who:** an engineer who wants to see what fits today.
-* **In their words:** "Pack this ASAP so I can see what fits and what to
-  prioritize for today vs tomorrow."
-* **Goal:** a layout in seconds; rough is fine.
-* **Good means:** fast, a clear count of what fits, and a leftovers list
-  the user can act on.
-* **Features that matter:** the Quick effort, the leftovers list, the
-  Build Report.
+* **Who:** anyone with a few parts that should fit in one bucket, partly or
+  wholly filling it.
+* **Goal:** speed over efficiency.
+* **Time:** seconds.
+* **Alternatives offered:** a denser layout in exchange for more packing
+  time (Keep Trying).
 * **Benchmark:** `one-offs` and `mix-a` with a 15 s budget.
+* **Features that matter:** the Quick effort, the leftovers list, the
+  density evaluation.
 
-## Kits and cages (assumed)
+## Kits and Cages
 
-* **Who:** someone who prints sets of parts that belong together, with the
-  small ones caged so they survive blasting.
-* **Goal:** N complete kits, each kit's small parts in one cage
+* **Who:** someone printing small parts that belong in a cage: grouped and
+  printed in multiples for easy distribution, or caged so they are easy to
+  extract and don't get lost.
+* **Goal:** an assembly: the parts packed into a cage
   (`docs/SPEC_PACK.md` 5.1, 5.2).
-* **Good means:** every kit complete, cages that pack well, no part able
-  to escape its cage.
-* **Benchmark:** none yet; to build from synthetic kits.
+* **Time:** seconds.
+* **Alternatives offered:** other arrangements of the parts that make the
+  kits nest into a bucket more easily.
+* **Benchmark:** to be announced.
 
-## Racks for post-processing (assumed)
+## Sprues and Racks for Post-Processing
 
-* **Who:** someone who vapor-smooths or dyes many small parts on racks
-  (AMT, DyeMansion; `docs/POSTPROCESS_MACHINES.md`).
-* **Goal:** racks that fit the machine's chamber, then as many racks per
-  bucket as fit.
-* **Good means:** every part on its rack, racks within the chamber, dense
-  bucket.
-* **Benchmark:** none yet; needs the owner's rack measurements.
+* **Who:** someone whose small parts go through extraction, bead blasting
+  and vapor polishing (AMT, DyeMansion; `docs/POSTPROCESS_MACHINES.md`).
+* **Goal:** an assembly: the parts on a rack or sprue that fits all three
+  machines.
+* **Time:** minutes.
+* **Alternatives offered:** the number of parts per rack, and a rack
+  optimized for one process or another.
+* **Benchmark:** to be announced. The machines' rack and hook geometry
+  isn't published, so it has to come from measurements of the owner's
+  machines.
 
-## Fill the gaps (assumed)
+## Part Injection
 
-* **Who:** anyone who packed or placed parts by hand and has more waiting.
-* **Goal:** add the waiting parts without moving what is locked or
-  already placed.
-* **Good means:** as many waiting parts placed as fit, nothing else moved.
-* **Benchmark:** `bureau-day` with half its parts locked.
+* **Who:** anyone who packed or placed parts and has more waiting.
+* **Goal:** amend a bucket: add parts to it, with or without moving the
+  parts already there, as the user chooses.
+* **Time:** seconds to minutes.
+* **Alternatives offered:** none.
+* **Benchmark:** `bureau-day` with locked parts.
+* **Features that matter:** locking, Keep Trying, and adding parts from the
+  command line (#34).
 
 ## How the presets follow
 
 The packer's Effort and Goal settings map onto these use cases. The
 mapping is a proposal, not built yet:
 
-* Production repeat: Goal "Whole Sets", Effort "Overnight" or longer,
-  alternatives on.
-* Service bureau: Goal "Big Parts First", Effort by deadline.
-* R&D quick look: Goal "Most Parts", Effort "Quick".
+* Full Production: Goal "Whole Sets", no time limit, alternatives on.
+* Service Bureau: Goal "Big Parts First", Effort by deadline.
+* Quick Job: Effort "Quick".
+* Kits and Cages, Sprues and Racks: their own actions (`docs/SPEC_PACK.md`),
+  not Pack From Scratch.
+* Part Injection: Keep Trying with the existing parts locked or free.

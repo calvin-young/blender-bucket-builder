@@ -390,8 +390,8 @@ class BucketBuilderSettings(PropertyGroup):
 
     unit_mode: EnumProperty(
         name="Units", description="How scene coordinates map to millimeters",
-        items=(('AUTO', "Auto", "Use the scene's unit scale; a default scene holding "
-                "millimeter-sized numbers (the usual STL import) is treated as 1 unit = 1 mm"),
+        items=(('AUTO', "Auto", "1 unit = 1 mm, unless the scene's units say otherwise (a unit scale "
+                "other than 1). Never guessed from the parts"),
                ('MM', "1 unit = 1 mm", "Coordinates are millimeters, whatever the scene "
                 "unit settings say"),
                ('SCENE', "Scene Units", "Use the scene's unit scale as it is")),
@@ -540,7 +540,10 @@ def _row_get(self):
     try:
         scene = bpy.context.scene
         mon = monitor.get(scene)
-        return mon.active_index(settings(scene)) if mon is not None else -1
+        if mon is None:
+            return -1
+        obj = bpy.context.view_layer.objects.active
+        return mon.list_index(settings(scene), obj.name if obj is not None and obj.select_get() else None)
     except Exception:
         return -1
 

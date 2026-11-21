@@ -103,7 +103,9 @@ class BUCKETBUILDER_PT_main(_Base, Panel):
         for text, tone in rows:
             col.label(text=text, **_icon(tone))
         if status and status.get('touching'):
-            box.operator("bucketbuilder.move_inside", icon='ARROW_LEFTRIGHT')
+            row = box.row(align=True)
+            row.operator("bucketbuilder.move_inside", text="Move All Inside", icon='ARROW_LEFTRIGHT').selected_only = False
+            row.operator("bucketbuilder.move_inside", text="Move Selected", icon='RESTRICT_SELECT_OFF').selected_only = True
         if status and status.get('printer'):
             col.label(text=status['printer'], icon='INFO')
         if mon is not None and mon.error:
@@ -175,6 +177,10 @@ class BUCKETBUILDER_UL_pack_parts(UIList):
                  else 'SOLO_OFF', emboss=False)
 
 
+def _selected_names(context):
+    return {o.name for o in context.selected_objects}
+
+
 class BUCKETBUILDER_UL_problems(UIList):
     """The list of problems.  Blender's own list widget: text at the left,
     the row one is at lit, a scroll bar when there are many.  Its rows come
@@ -202,7 +208,12 @@ class BUCKETBUILDER_UL_problems(UIList):
         # the problem itself: a click on the row goes there.  Grayed when it is ignored.
         sub = row.row(align=True)
         sub.active = not ignored
+        # a row about a part that is selected in the viewport carries the selection's arrow
+        sel = _selected_names(context)
+        picked = any(n in sel for n in pr['names'])
         sub.label(text=problem_text(pr), icon=_KIND_ICON[pr['kind']])
+        if picked:
+            row.label(text="", icon='RESTRICT_SELECT_OFF')
         # ... and its three buttons: on its own, ignore, ignore for good
         local = getattr(context.space_data, 'local_view', None) is not None
         alone = st.isolate and local and index == mon.active_index(st)
@@ -297,9 +308,6 @@ class BUCKETBUILDER_PT_collisions(_Base, Panel):
         body = layout.column()
         body.active = st.detect_collisions
         _limit(body, st, "use_clearance", "clearance_mm")
-        sub = _split(body)
-        sub.active = st.use_clearance
-        sub.prop(st, "clearance_aim_mm", text="Aim (Packer)")
         # (which parts are checked goes for the build volume as well)
         layout.prop(st, "ignore_hidden")
         body = layout.column()
@@ -479,6 +487,7 @@ class BUCKETBUILDER_PT_report(_Base, Panel):
             row.template_icon(icon_value=value, scale=9.0)
             box.label(text="0 to %.1f %% across, %.0f mm up" % (
                 max(res.peak_layer, 0.05) * 108.0, res.height))
+            box.label(text="Orange: dense layers. Gray: sparse. Line: the mean")
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +495,7 @@ class BUCKETBUILDER_PT_report(_Base, Panel):
 # ---------------------------------------------------------------------------
 
 class BUCKETBUILDER_PT_pack(_Base, Panel):
-    bl_label = "Pack"
+    bl_label = "Autopacking"
     bl_idname = "BUCKETBUILDER_PT_pack"
     bl_category = "Bucket Packer"
 
@@ -538,9 +547,6 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
             if body is not None:
                 row = body.row(align=True)
                 row.prop(st, "pack_relax", toggle=True)
-                sub = row.row(align=True)
-                sub.active = st.pack_relax and st.use_clearance
-                sub.prop(st, "clearance_aim_mm")
                 row = body.row(align=True)
                 row.prop(st, "pack_jiggle_minor", toggle=True)
                 row.prop(st, "pack_jiggle_major", toggle=True)
@@ -548,6 +554,9 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
         layout.template_list("BUCKETBUILDER_UL_pack_parts", "", bpy.data, "meshes", context.window_manager,
                              "bucket_builder_pack_part", rows=3, maxrows=6)
         col = _split(layout)
+        sub = col.row()
+        sub.active = st.use_clearance          # (the aim is above the checker's clearance)
+        sub.prop(st, "clearance_aim_mm")
         col.prop(st, "pack_preset")
         col.prop(st, "pack_quality", slider=True)
         col.prop(st, "pack_effort")
@@ -727,7 +736,7 @@ class BUCKETBUILDER_PT_units(_Base, Panel):
 # ---------------------------------------------------------------------------
 
 class BUCKETBUILDER_PT_arrange(_Base, Panel):
-    bl_label = "Arrange"
+    bl_label = "Manual Packing"
     bl_idname = "BUCKETBUILDER_PT_arrange"
     bl_category = "Bucket Packer"
 
@@ -767,9 +776,9 @@ CLASSES = (
     BUCKETBUILDER_UL_pack_parts,
     BUCKETBUILDER_PT_main,
     BUCKETBUILDER_PT_problems,
+    BUCKETBUILDER_PT_volume,
     BUCKETBUILDER_PT_collisions,
     BUCKETBUILDER_PT_parts,
-    BUCKETBUILDER_PT_volume,
     BUCKETBUILDER_PT_arrange,
     BUCKETBUILDER_PT_report,
     BUCKETBUILDER_PT_pack,

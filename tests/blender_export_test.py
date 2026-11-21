@@ -79,6 +79,22 @@ def main():
     check(model.count('<vertices>') == 2, 'the linked copies share one mesh (%d meshes written)' % model.count('<vertices>'))
     check('operator' not in model, 'and no operator field')
 
+    # a unitless scene: the 3MF fork reads a unit as a millimeter there (2.7.7-fork.16), and the parts
+    # still land where they are (Bucket Builder asks the add-on its unit instead of assuming meters)
+    sc.unit_settings.system = 'NONE'
+    path2 = path.replace('build.3mf', 'unitless.3mf')
+    r = bpy.ops.bucketbuilder.export_3mf(filepath=path2, thumbnail_mode='NONE', coordinate_precision=6)
+    back = meshio.read(path2)
+    it = next(it for it in back.items if it.name == a.name)
+    V = np.asarray(it.mesh.verts, float) @ it.matrix[:3, :3].T + it.matrix[:3, 3]
+    W = np.array([a.matrix_world @ v.co for v in a.data.vertices])
+    check(r == {'FINISHED'} and np.allclose(np.sort(V, axis=0), np.sort(W, axis=0), atol=1e-3),
+          'in a unitless scene too, at the same size and place', (V.min(axis=0), W.min(axis=0)))
+    with zipfile.ZipFile(path2) as z:
+        check('Metadata/thumbnail.png' not in z.namelist(), 'the dialog\'s options reach the add-on (no thumbnail)',
+              z.namelist())
+    sc.unit_settings.system = 'METRIC'
+
 
 main()
 print()

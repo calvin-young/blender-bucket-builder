@@ -31,7 +31,7 @@ Little things the maintainer asked for or caught, what the status page shows. Co
 
 | Bugs found | UI tweaks | New features | Direction | Total |
 |---|---|---|---|---|
-| 15 | 22 | 33 | 49 | 119 |
+| 20 | 29 | 36 | 50 | 135 |
 
 ## Sessions
 
@@ -74,6 +74,22 @@ the detail.
 - 2026-11-18 [domain]: 1.49 mm meets a 1.5 mm minimum; hundredths under it are not compromises.
 - 2026-11-18 [domain]: faces under 0.5 mm may fuse; rounded, edge or corner approaches can go to about 0.1 mm.
 - 2026-11-18 [direction]: pack from scratch as a user would: "1:1 ratio, fit as many as you can"; whole sets, not broken ones.
+- 2026-11-20 [tested][bug]: a part through the floor was reported as "touching a wall".
+- 2026-11-20 [tested][bug]: further out of bounds the hatching turned into scattered triangles and a purple box: keep the hatched overdraw, drop the box.
+- 2026-11-20 [ui]: a button to nudge touching parts inside, all or one at a time.
+- 2026-11-20 [tested][bug]: Snap to Build Volume changes how the bucket's outline looks (z-fighting).
+- 2026-11-20 [ui]: rename Arrange to Manual Packing and Pack to Autopacking.
+- 2026-11-20 [feature]: Snap to Build Volume after Tilt Off Axis on instanced parts, without applying the rotation (#52).
+- 2026-11-20 [feature]: Align to Plane: click a face to lay it on XY (#50).
+- 2026-11-20 [ui]: selecting a part in the viewport should light its rows in the Problems list.
+- 2026-11-20 [ui]: Aim belongs in Bucket Packer, not Bucket Monitor.
+- 2026-11-20 [ui]: the density graph as a scatterplot, with outlying layers marked and more statistics.
+- 2026-11-20 [tested][bug]: Export stayed gray after installing the 3MF add-on until Blender restarted.
+- 2026-11-20 [tested][ui]: the export dialog lacked the 3MF add-on's options.
+- 2026-11-20 [ui]: Monitor Build Volume above Collision Detection.
+- 2026-11-20 [feature]: highlight print-quality issues (capillary XY faces, flat faces close or by walls) as problems; rethink how the density report feeds the Problems list (#51).
+- 2026-11-20 [tested][bug]: the bucket silently switched to meters when tiny parts were imported before the monitor was switched on.
+- 2026-11-20 [direction]: the use cases rewritten: Full Production, Service Bureau, Quick Job, Kits and Cages, Sprues and Racks, Part Injection.
 - 2026-11-19 [domain][bug]: correction: parts at z = 0 never cause trouble (Netfabb does it all the time); only the X / Y walls (and the top) must be strict.
 - 2026-11-19 [ui][features]: a part partly out of bounds always lights the wall, whatever the fraction; a part wholly out tints the whole bucket and the badge says so, no lit wall.
 - 2026-11-19 [direction]: no fallback writer in the add-on: Export only through the 3MF add-on, with an install button.

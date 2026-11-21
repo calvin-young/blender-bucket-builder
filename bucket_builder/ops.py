@@ -10,7 +10,7 @@ import time
 import bpy
 from bpy_extras.io_utils import ExportHelper
 import numpy as np
-from bpy.props import BoolProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy.types import Menu, Operator
 
 from . import monitor, props
@@ -546,6 +546,17 @@ class BUCKETBUILDER_OT_export_3mf(Operator, ExportHelper):
     bl_label = "Export Print File"
     filename_ext = ".3mf"
     filter_glob: StringProperty(default="*.3mf", options={'HIDDEN'})
+    # the 3MF add-on's options that matter for a print file (passed to its export)
+    use_mesh_modifiers: BoolProperty(name="Apply Modifiers", default=True,
+                                     description="Write each part as it looks, with its modifiers applied")
+    coordinate_precision: IntProperty(name="Precision", default=9, min=1, max=12,
+                                      description="Decimal places of each coordinate")
+    thumbnail_mode: EnumProperty(name="Thumbnail", default='AUTO',
+                                 items=(('AUTO', "Render", "A picture of the build"), ('NONE', "None", "No picture")),
+                                 description="The preview picture inside the file")
+    strip_identifying_data: BoolProperty(name="Leave Out Names and Metadata", default=False,
+                                         description="Write generic part names and no identifying metadata "
+                                                     "(the build facts in bb: are kept)")
 
     def invoke(self, context, event):
         if not self.filepath:
@@ -555,9 +566,14 @@ class BUCKETBUILDER_OT_export_3mf(Operator, ExportHelper):
 
     def draw(self, context):
         from . import export
-        col = self.layout.column(align=True)
+        layout = self.layout
+        col = layout.column(align=True)
         for line in export.problems(context):
             col.label(text=line, icon='ERROR')
+        layout.use_property_split = True
+        for name in ('use_mesh_modifiers', 'coordinate_precision', 'thumbnail_mode',
+                     'strip_identifying_data'):
+            layout.prop(self, name)
 
     def execute(self, context):
         from . import export
@@ -567,7 +583,9 @@ class BUCKETBUILDER_OT_export_3mf(Operator, ExportHelper):
         for line in export.problems(context):
             self.report({'WARNING'}, line)               # (a warning, not a refusal: the file is still written)
         try:
-            n = export.write(context, self.filepath)
+            n = export.write(context, self.filepath, use_mesh_modifiers=self.use_mesh_modifiers,
+                             coordinate_precision=self.coordinate_precision,
+                             thumbnail_mode=self.thumbnail_mode, strip_identifying_data=self.strip_identifying_data)
         except Exception as e:                           # noqa: BLE001
             self.report({'ERROR'}, "Could not write the file: %s" % e)
             return {'CANCELLED'}
@@ -972,10 +990,20 @@ class BUCKETBUILDER_MT_printers(Menu):
 
 
 class BUCKETBUILDER_OT_move_inside(Operator):
-    """Move every part that touches a wall of the build volume just inside it (0.002 mm)"""
+    """Nudge parts that touch a wall of the build volume just inside it: 0.002 mm from every side
+    wall and the top they are too close to (the rule asks for 0.001 mm)"""
     bl_idname = "bucketbuilder.move_inside"
     bl_label = "Move Inside"
     bl_options = {'REGISTER', 'UNDO'}
+
+    selected_only: BoolProperty(name="Selected Only", default=False,
+                                description="Only the selected parts that touch a wall")
+
+    @classmethod
+    def description(cls, context, properties):
+        if properties.selected_only:
+            return "Nudge the selected parts that touch a wall just inside it (0.002 mm from the wall)"
+        return "Nudge every part that touches a wall just inside it (0.002 mm from the wall)"
 
     def execute(self, context):
         from mathutils import Matrix
@@ -984,20 +1012,28 @@ class BUCKETBUILDER_OT_move_inside(Operator):
         if mon is None:
             return {'CANCELLED'}
         w = mon.world
+        if w.volume is None:
+            return {'CANCELLED'}
+        vlo, vhi = w.volume
         want = 2.0 * INSIDE_MARGIN / mon.mm_per_unit          # (twice the margin: room for rounding)
         by_uid = {monitor._uid(o): o for o in context.view_layer.objects if o is not None}
         n = 0
         for slot, r in list(w.oob.items()):
-            touch = getattr(r, 'touch', None)
             obj = by_uid.get(w.uid(slot))
-            if touch is None or obj is None:
+            if getattr(r, 'touch', None) is None or obj is None or (self.selected_only and not obj.select_get()):
                 continue
-            axis, gap = touch[0] % 3, touch[1]
+            # every side wall and the top it is too close to, not only the nearest (a part in a corner)
             d = [0.0, 0.0, 0.0]
-            d[axis] = (want - gap) * (1.0 if touch[0] < 3 else -1.0)
-            obj.matrix_world = Matrix.Translation(d) @ obj.matrix_world
-            n += 1
-        self.report({'INFO'}, f"{n} part(s) moved inside")
+            for axis in range(3):
+                low, high = r.lo[axis] - vlo[axis], vhi[axis] - r.hi[axis]
+                if axis < 2 and low < want:
+                    d[axis] += want - low
+                if high < want:
+                    d[axis] -= want - high
+            if any(d):
+                obj.matrix_world = Matrix.Translation(d) @ obj.matrix_world
+                n += 1
+        self.report({'INFO'}, f"{n} part{'s' if n != 1 else ''} moved inside")
         return {'FINISHED'}
 
 

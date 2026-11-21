@@ -112,8 +112,7 @@ def mm_per_unit(scene, objects):
         return 1.0
     if st.unit_mode == 'SCENE' or (us.system != 'NONE' and abs(scale - 1.0) > 1e-9):
         return scale * 1000.0
-    ext = [max(o.dimensions) for o in objects] or [10.0]
-    return 1.0 if float(np.median(ext)) > 1.5 else 1000.0
+    return 1.0                                   # (as the monitor: never guessed from the parts)
 
 
 def volume_mm(scene, k):

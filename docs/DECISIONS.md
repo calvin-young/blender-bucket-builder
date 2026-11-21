@@ -186,6 +186,29 @@ still open. The details are in `AGENTS.md` (Implementation notes).
   was packed) is not written yet: the time of export is.
 * **Leave Room for More Parts** approved as designed (the owner,
   2026-11-19): an option, off by default.
+* **Units are never guessed from the parts** (2026-11-20, after the owner
+  found the bucket shrunk to meters with no notice). Auto read a default
+  scene (unit scale 1) as meters when the median of the first parts it saw
+  was under 1.5 units, and kept that until the monitor was rebuilt; so a
+  3MF imported in meters before switching the monitor on scaled the bucket
+  with it, and imported after, it didn't. Now Auto is 1 unit = 1 mm unless
+  the unit scale says otherwise, as the 3MF fork reads a unitless scene
+  since 2.7.7-fork.16; parts under 0.5 mm across are named in the verdict
+  ("imported in meters?"). Export asks the 3MF add-on how many millimeters
+  it writes per unit (`common.units.blender_unit_to_metre_scale`) instead
+  of assuming meters.
+* **Out-of-volume drawing** (2026-11-20, the owner): the hatched overdraw
+  on whatever part of a part is outside, at any distance; no bounding box
+  (kept only for a hidden part, which has no surface drawn). Up to 1.6.2 a
+  part with more than 60 000 triangles outside fell back to a thinned band
+  of single triangles and its box. Now up to 1.5 M triangles per part, and
+  beyond that whole tree nodes, the wall's own cut first.
+* **Export Print File keeps its own dialog** (2026-11-20). The 3MF add-on's
+  dialog fills itself from its preferences when it opens, over values
+  passed to it (the scale included), so it can't be opened preset for a
+  build. Bucket Builder's dialog carries the options that matter for a
+  print file (Apply Modifiers, Precision, Thumbnail, Leave Out Names and
+  Metadata) and passes them to the add-on's API.
 
 ## Tried and abandoned
 

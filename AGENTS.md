@@ -14,7 +14,7 @@ Cursor and Gemini CLI read it directly.
   height), Arrange tools (drop to floor, minimize box or height, tilt off axis,
   snap to the volume), and an automatic packer, still marked experimental
   (`docs/AUTOPACK.md`; print-quality rules in `docs/PRINT_QUALITY.md`).
-* **Status:** version 1.6.2, in production use by its first user. Declared for
+* **Status:** version 1.6.3, in production use by its first user. Declared for
   Blender 4.2 and newer; tested on Blender 5.2 (Linux, software OpenGL).
   Not yet tried: Blender 4.2 - 5.1, macOS, Vulkan / Metal, a real GPU.
 * **Runs in:** Blender's bundled Python (3.11 in 4.2) with NumPy, nothing else.
@@ -161,7 +161,7 @@ the code. Tagged so far: v1.0.0 (731961d), v1.1.0 (c32cec6), v1.2.0 (ae5a8bf),
 v1.3.0 (bf63370), v1.5.1 (same code as main's 1.5.0, cut for the status page's download button). Not tagged: 1.3.90-1.4.x, the `autopack` branch's previews,
 where "1.4.0" was used on both lines and 1.4.3 never reached the manifest; and
 1.5.0, whose code kept changing after the version was set (e8fdc24 to
-0614ea1). Tagged since: v1.5.2, v1.5.3, v1.5.4, v1.5.5, v1.5.6, v1.5.7, v1.6.0, v1.6.1, v1.6.2. The next build is 1.6.3. Builds also get a GitHub pre-release with the zip
+0614ea1). Tagged since: v1.5.2, v1.5.3, v1.5.4, v1.5.5, v1.5.6, v1.5.7, v1.6.0, v1.6.1, v1.6.2, v1.6.3. The next build is 1.6.4. Builds also get a GitHub pre-release with the zip
 attached, and a new download link on the Workbench row (ai-context, topics/workstation.md).
 
 ## Implementation notes
@@ -546,6 +546,20 @@ packer uses the checker's clearances (`packing.pack_gaps`); parts staged
 outside the volume are a quiet note (`monitor._staged`). Next: progress
 before the first part, caching, honest estimates, the nesting plans
 (PACKER_PLAN), the Netfabb report, one module for print-quality rules.
+
+**2026-11-20 (1.6.3).** From the owner's list: a part through the floor
+is outside, not "touching"; out-of-volume hatching at any distance, no
+bounding box (up to 1.5 M triangles per part, `OOB_TRI_CAP`); the volume's
+outline is pulled toward the viewer while Snap to Build Volume is on (no
+z-fighting with the wireframe); Move All Inside / Move Selected (every wall a
+part is too close to); panels renamed Manual Packing and Autopacking, Aim
+moved to the packer, Build Volume above Collision Detection; a selected
+part's problem rows are lit and marked; the layer density as a scatter
+with dense and sparse layers marked and more statistics; Export finds the
+3MF add-on without a restart and passes its print-file options; units are
+never guessed from the parts (tiny parts named instead; DECISIONS). On
+hold for the owner's pick: #50 Align to Plane, #51 print-quality problems
+in the list, #52 snap with unapplied rotation.
 
 **Next (2026-11-11, the owner's notes):** issues #28 - #40: overlay
 drawing order, inside-out and non-manifold checks, hidden parts by

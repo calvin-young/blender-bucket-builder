@@ -286,6 +286,14 @@ def rows(rep):
         out.append(('Peak Layer', '%.1f %%' % (rep.peak_layer * 100.0), ''))
         if rep.spread_cv is not None:
             out.append(('Layer Spread', '%.2f' % rep.spread_cv, ''))
+        st = plot.layer_stats(rep)
+        if st is not None:
+            out.append(('Layer Mean', '%.1f %% \u00b1 %.1f' % (st['mean'] * 100.0, st['std'] * 100.0), ''))
+            out.append(('Layer Range', '%.1f - %.1f %%' % (st['min'] * 100.0, st['max'] * 100.0), ''))
+            if st['n_dense']:
+                out.append(('Dense Layers', '%d over %.1f %%' % (st['n_dense'], st['dense'] * 100.0), 'warn'))
+            if st['n_sparse']:
+                out.append(('Sparse Layers', '%d under %.1f %%' % (st['n_sparse'], max(st['sparse'], 0.0) * 100.0), ''))
     flat = getattr(rep, 'flat', None)
     if flat is not None and (flat[0] or flat[2]):
         if flat[0]:

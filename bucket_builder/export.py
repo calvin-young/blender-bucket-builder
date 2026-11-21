@@ -72,9 +72,37 @@ def problems(context):
 
 
 def threemf_api():
-    """The 3MF add-on's programming interface, or None."""
+    """The 3MF add-on's programming interface, or None. The add-on puts it in the driver namespace
+    when it registers; after an install or update in a running Blender that can be missing until a
+    restart, so an enabled add-on's own `api` module is looked up too (as its threemf_discovery does)."""
     api = bpy.app.driver_namespace.get('io_mesh_3mf')
-    return api if api is not None and hasattr(api, 'export_3mf') else None
+    if api is not None and hasattr(api, 'export_3mf'):
+        return api
+    import sys
+    for name in bpy.context.preferences.addons.keys():
+        if name.endswith('ThreeMF_io') or name == 'io_mesh_3mf':
+            api = sys.modules.get(name + '.api')
+            if api is None:
+                try:
+                    import importlib
+                    api = importlib.import_module(name + '.api')
+                except Exception:                        # noqa: BLE001
+                    continue
+            if hasattr(api, 'export_3mf') and not getattr(api, '_explicitly_disabled', False):
+                return api
+    return None
+
+
+def addon_mm_per_unit(context, api):
+    """How many millimeters the 3MF add-on writes for one scene unit. Asked of the add-on when it
+    can say (fork 2.7.7-fork.16 and later read a unitless scene as millimeters); otherwise the
+    upstream rule: a unit is a meter times the unit scale."""
+    try:
+        import importlib
+        units = importlib.import_module(api.__name__.rsplit('.', 1)[0] + '.common.units')
+        return 1000.0 * float(units.blender_unit_to_metre_scale(context))
+    except Exception:                                    # noqa: BLE001
+        return 1000.0 * (context.scene.unit_settings.scale_length or 1.0)
 
 
 def threemf_operator():
@@ -99,8 +127,9 @@ class NoAddon(RuntimeError):
     pass
 
 
-def write(context, path):
-    """Write the build to `path` through the 3MF add-on. Returns the number of parts."""
+def write(context, path, **options):
+    """Write the build to `path` through the 3MF add-on (`options` go to its export_3mf). Returns
+    the number of parts."""
     objs = build_objects(context)
     api = threemf_api()
     if api is None:
@@ -109,9 +138,9 @@ def write(context, path):
     # (the add-on scales by the scene's unit, metres for a default scene; Bucket Builder knows how many
     # millimeters a unit is, which for a scene modeled in mm is not what the unit setting says)
     from .packing import mm_per_unit
-    us = context.scene.unit_settings
-    add_on_mm = 1000.0 * (us.scale_length or 1.0)
-    res = api.export_3mf(path, objects=objs, export_location='KEEP', global_scale=mm_per_unit(context.scene, objs) / add_on_mm)
+    add_on_mm = addon_mm_per_unit(context, api)
+    res = api.export_3mf(path, objects=objs, export_location='KEEP', global_scale=mm_per_unit(context.scene, objs) / add_on_mm,
+                         **options)
     if getattr(res, 'status', 'FINISHED') != 'FINISHED':
         raise RuntimeError('the 3MF add-on could not write the file')
     return getattr(res, 'num_written', len(objs))

@@ -1662,13 +1662,14 @@ def oob_solve(w, slots, vlo, vhi, tri_cap):
         oo = e_out[m]
         total = int((np.minimum((ii + 1) << hh, nt) - np.minimum(ii << hh, nt)).sum())
         if total > tri_cap:
-            keep = (hh == 0) & ~oo
-            ii = ii[keep]
-            hh = hh[keep]
+            # Too much to draw: whole nodes up to the cap, the straddling ones (the wall's own cut)
+            # first, so what is shown is solid patches and not a sprinkle of single triangles.
+            size = np.minimum((ii + 1) << hh, nt) - np.minimum(ii << hh, nt)
+            order = np.lexsort((size, oo))
+            take = order[np.cumsum(size[order]) <= tri_cap]
+            ii = ii[take]
+            hh = hh[take]
             band[r] = True
-            if ii.shape[0] > tri_cap:
-                ii = ii[::(ii.shape[0] // tri_cap + 1)]
-                hh = hh[:ii.shape[0]]
         parts = []
         shift = t[r].astype(np.float32)
         slot = int(slots[r])

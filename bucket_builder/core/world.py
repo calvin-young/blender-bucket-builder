@@ -76,7 +76,7 @@ def bounds_state(lo, hi, vlo, vhi, margin):
     return inside, outside
 
 MAX_BATCH = 96
-OOB_TRI_CAP = 60000
+OOB_TRI_CAP = 1500000   # triangles drawn per part outside the volume or in the margin
 LIVE_TARGET = 0.012       # seconds a live solve should take
 LIVE_FULL = 0.024         # ... and may take when that gives every pair its full detail
 LIVE_FULL_PAIRS = 8       # ... which is only promised for this many pairs
@@ -1834,9 +1834,13 @@ class World:
             r.serial = self._serial
             r.state = OUTSIDE if outside[i] else PARTIAL
             gaps = np.concatenate([lo[i] - vlo, vhi - hi[i]])
-            gaps[2] = np.inf                 # (the floor: contact is allowed)
+            # Touching: nothing reaches past any wall, the floor included (a part through the floor
+            # is outside, not touching), but a side wall or the top is closer than the margin.
+            # The floor itself is never the wall touched: resting on it is allowed.
+            through = gaps.min() < -self.eps_len
+            gaps[2] = np.inf
             r.touch = (int(gaps.argmin()), max(0.0, float(gaps.min()))) \
-                if r.state == PARTIAL and gaps.min() >= -self.eps_len else None
+                if r.state == PARTIAL and not through else None
             if r.state == PARTIAL:
                 todo[slot] = None
             self.oob[slot] = r

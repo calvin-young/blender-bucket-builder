@@ -552,6 +552,21 @@ def main():
     sc.unit_settings.scale_length = 1.0
     st.unit_mode = 'AUTO'
     mon = settle()
+    # a part imported in meters (0.02 units across) never turns the bucket into meters: it is named
+    # instead (2026-11-20: which way the guess went depended on whether the parts came first)
+    import bmesh
+    me = bpy.data.meshes.new('tiny')
+    bm = bmesh.new(); bmesh.ops.create_cube(bm, size=0.02); bm.to_mesh(me); bm.free()
+    tiny = bpy.data.objects.new('tiny', me); sc.collection.objects.link(tiny)
+    tiny.location = (100.0, 100.0, 100.0)
+    update()
+    mon = settle()
+    check(mon.mm_per_unit == 1.0 and mon.status().get('tiny') == 1, 'a tiny part is named, the units stay',
+          (mon.mm_per_unit, mon.status().get('tiny')))
+    check(any('imported in meters' in t for t, _ in bc.overlay.summary(mon.status())[1]), 'and the verdict says so')
+    bpy.data.objects.remove(tiny); bpy.data.meshes.remove(me)
+    update()
+    mon = settle()
 
     # ---------------------------------------------------- thresholds / ignore
     b.location.x = 143.0              # 3 mm gap again
@@ -1116,6 +1131,27 @@ def main():
     mon = settle()
     check(mon.status()['touching'] == 0 and oob(mon, fl) is None and abs(fl.location.x - 359.998) < 1e-4,
           'Move Inside moves it 0.002 mm in', (mon.status(), fl.location.x))
+    # through the floor is outside, not touching (2026-11-20)
+    fl.location = (300.0, 200.0, 10.0)
+    update()
+    mon = settle()
+    s = mon.status()
+    check(s['touching'] == 0 and s['partly_out'] == 1, 'a part through the floor is partly outside, not touching', s)
+    # in a corner, touching two walls: one Move Inside clears both; Selected Only leaves others alone
+    fl.location = (360.0, 264.0, 20.0)
+    other = add_cube('Floorer2', (20.0, 100.0, 20.0))    # (at the left wall)
+    update()
+    mon = settle()
+    check(mon.status()['touching'] == 2, 'two parts touching walls', mon.status())
+    bpy.ops.object.select_all(action='DESELECT')
+    fl.select_set(True)
+    bpy.ops.bucketbuilder.move_inside(selected_only=True)
+    update()
+    mon = settle()
+    check(mon.status()['touching'] == 1 and abs(fl.location.x - 359.998) < 1e-4 and abs(fl.location.y - 263.998) < 1e-4
+          and other.location.x == 20.0, 'Selected Only moves the selected part off both walls, not the other',
+          (mon.status(), tuple(fl.location), tuple(other.location)))
+    bpy.data.objects.remove(other)
     bpy.data.objects.remove(fl)
     update()
     mon = settle()
