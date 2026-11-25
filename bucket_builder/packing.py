@@ -232,6 +232,11 @@ class BUCKETBUILDER_OT_pack(Operator):
 
             self._thread = threading.Thread(target=work, name='bucket_builder_pack', daemon=True)
             self._thread.start()
+        if self._mode == 'pack' and not self.improve:
+            # Pack From Scratch: every part to pack first goes beside the volume, so the bucket is
+            # seen empty and then filling, one part at a time (the owner, 2026-11-24)
+            self._stage_beside([o for objs in self._objects for o in objs])
+            context.view_layer.update()
         self._applied = 0
         self._shown = (0, 0.0)                   # (version of the layout shown, when)
         self._stop_t = None
@@ -347,8 +352,14 @@ class BUCKETBUILDER_OT_pack(Operator):
         elif JOB['phase'] in ('jiggling', 'compacting') and self._mode != 'pack':
             text = "Jiggling: nudging parts until every rule is kept, %s%s   (Esc to stop)" % (_duration(el), left)
         else:
-            text = "Improving the layout: %.1f mm high, %s%s   (Esc to stop, the best layout stays)" % (
-                JOB['height'], _duration(el), left)
+            placed = len(self._result.placements) if getattr(self, '_result', None) is not None else done
+            JOB['placed'] = placed
+            if placed >= total:
+                text = ("All %d parts are in, %.1f mm high. Still looking for a better layout%s. "
+                        "Esc keeps the layout you see now." % (total, JOB['height'], left))
+            else:
+                text = ("%d of %d parts are in. Still trying to fit the rest%s. "
+                        "Esc keeps the layout you see now." % (placed, total, left))
         try:
             context.workspace.status_text_set(text)
         except Exception:
@@ -459,6 +470,19 @@ class BUCKETBUILDER_OT_pack(Operator):
             o.matrix_world = _matrix(M)
         self._applied = len(res.placements)
 
+    def _stage_beside(self, objs):
+        """Put objects in a row beside the volume (+X side), out of the way."""
+        k = self._k
+        x = self._vhi[0] + 20.0
+        for o in objs:
+            mw = np.array(o.matrix_world, dtype=np.float64)
+            pts = np.array([mw @ np.array([*c, 1.0]) for c in o.bound_box])[:, :3] * k
+            lo, hi = pts.min(axis=0), pts.max(axis=0)
+            shift = np.array([x - lo[0], self._vlo[1] - lo[1], self._vlo[2] - lo[2]])
+            mw[:3, 3] += shift / k
+            o.matrix_world = _matrix(mw)
+            x += (hi[0] - lo[0]) + 10.0
+
     def _apply(self, context):
         res = self._result
         k = self._k
@@ -470,20 +494,9 @@ class BUCKETBUILDER_OT_pack(Operator):
             o.matrix_world = _matrix(M)
             placed.add(o.as_pointer())
         # parts that did not fit go in a row beside the volume, out of the way
-        x = self._vhi[0] + 20.0
-        missing = 0
-        for i, objs in enumerate(self._objects):
-            for o in objs:
-                if o.as_pointer() in placed:
-                    continue
-                missing += 1
-                mw = np.array(o.matrix_world, dtype=np.float64)
-                lo = np.min(np.array([mw @ np.array([*c, 1.0]) for c in o.bound_box])[:, :3], axis=0) * k
-                hi = np.max(np.array([mw @ np.array([*c, 1.0]) for c in o.bound_box])[:, :3], axis=0) * k
-                shift = np.array([x - lo[0], self._vlo[1] - lo[1], self._vlo[2] - lo[2]])
-                mw[:3, 3] += shift / k
-                o.matrix_world = _matrix(mw)
-                x += (hi[0] - lo[0]) + 10.0
+        rest = [o for objs in self._objects for o in objs if o.as_pointer() not in placed]
+        missing = len(rest)
+        self._stage_beside(rest)
         context.view_layer.update()
         rep = metrics.measure(res.items(self._parts) + [('locked', m, M) for m, M in self._lock],
                               self._vlo, self._vhi)              # (the whole build: locked parts too)
@@ -499,6 +512,7 @@ class BUCKETBUILDER_OT_pack(Operator):
             msg += "; %d left beside the volume (%s)" % (missing, ", ".join(why))
         self.report({'WARNING'} if missing else {'INFO'}, msg)
         props.settings(context.scene).pack_last = msg
+        props.settings(context.scene).last_message = msg[:200]
         monitor.tag_redraw_all()
 
     def cancel(self, context):

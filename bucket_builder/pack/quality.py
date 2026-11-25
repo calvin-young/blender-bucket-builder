@@ -25,22 +25,25 @@ with the part's translation.
 The rule IDs (PQ-05, PQ-06, PQ-07) are those of docs/PRINT_QUALITY.md.
 """
 
-import math
-
 import numpy as np
 
-MIN_AREA = 2500.0           # mm^2: a flat face this large counts (50 x 50 mm)
-NEAR = 10.0                 # mm: facing faces closer than this count
-WALL_COS = math.cos(math.radians(10.0))
-FACING_COS = -math.cos(math.radians(5.0))
-TOP_COS = math.cos(math.radians(1.0))       # (the owner: a face 1 degree off flat shows no meniscus)
+from . import pq_rules
+
+# (the thresholds live in pq_rules: one place for every print-quality number)
+MIN_AREA = pq_rules.MIN_AREA_MM2       # a flat face this large counts (50 x 50 mm)
+NEAR = pq_rules.FACE_NEAR_MM           # facing faces closer than this count
+WALL_COS = pq_rules.WALL_COS
+FACING_COS = pq_rules.FACING_COS
+TOP_COS = pq_rules.CAPILLARY_COS       # (the owner: a face 1 degree off flat shows no meniscus)
+STAIR_COS = pq_rules.STAIR_COS         # ... and up to 10 degrees off it shows the layer steps
 
 
 class Faces:
     """Large flat faces of a part in one orientation, in the posed part's
     frame: n (k, 3) unit normals, d (k,) plane offsets (n . x = d), area
     (k,), u, v (k, 3) in-plane axes, box (k, 4) as (u0, u1, v0, v1)."""
-    __slots__ = ('n', 'd', 'area', 'u', 'v', 'box')
+    __slots__ = ('n', 'd', 'area', 'u', 'v', 'box', 'tri', 'pts')   # tri: each face's triangle indices;
+                                                                    # pts: its posed triangles (float32)
 
     def __len__(self):
         return len(self.area)
@@ -65,7 +68,9 @@ def flat_faces(verts, tris, A, min_area=MIN_AREA):
         f.n = f.u = f.v = np.zeros((0, 3))
         f.d = f.area = np.zeros(0)
         f.box = np.zeros((0, 4))
+        f.tri, f.pts = [], []
         return f
+    idx = np.nonzero(ok)[0]
     T, cr, ar = T[ok], cr[ok], ar[ok]
     nrm = cr / (2.0 * ar[:, None])
     qn = np.rint(nrm * 20.0).astype(np.int64)                    # (about 3 degrees)
@@ -76,9 +81,11 @@ def flat_faces(verts, tris, A, min_area=MIN_AREA):
     inv = inv.ravel()
     tot = np.bincount(inv, weights=ar, minlength=len(uniq))
     big = np.nonzero(tot >= min_area)[0]
-    ns, ds, areas, us, vs, boxes = [], [], [], [], [], []
+    ns, ds, areas, us, vs, boxes, tri, pts = [], [], [], [], [], [], [], []
     for g in big:
         m = inv == g
+        tri.append(idx[m])
+        pts.append(T[m].astype(np.float32))
         n = (nrm[m] * ar[m, None]).sum(0)
         n /= np.linalg.norm(n)
         P = T[m].reshape(-1, 3)
@@ -96,7 +103,25 @@ def flat_faces(verts, tris, A, min_area=MIN_AREA):
     f.u = np.array(us).reshape(-1, 3)
     f.v = np.array(vs).reshape(-1, 3)
     f.box = np.array(boxes).reshape(-1, 4)
+    f.tri, f.pts = tri, pts
     return f
+
+
+def classify(f):
+    """For each face of f: 'up' (capillary, PQ-07), 'shallow' (stair-stepping, PQ-09), 'wall'
+    (PQ-06) or '' (fine), by its normal alone."""
+    out = []
+    for n in f.n:
+        z = abs(n[2])
+        if n[2] > TOP_COS:
+            out.append('up')                 # (facing down and flat is fine: PQ-08)
+        elif STAIR_COS < z <= TOP_COS:
+            out.append('shallow')            # (up or down: the steps show on both)
+        elif abs(n[0]) > WALL_COS or abs(n[1]) > WALL_COS:
+            out.append('wall')
+        else:
+            out.append('')
+    return out
 
 
 def turned(f, R):
@@ -104,22 +129,24 @@ def turned(f, R):
     g = Faces()
     g.n, g.u, g.v = f.n @ R.T, f.u @ R.T, f.v @ R.T
     g.d, g.area, g.box = f.d.copy(), f.area.copy(), f.box.copy()
+    g.tri = getattr(f, 'tri', [])
+    g.pts = [(P.astype(float) @ R.T).astype(np.float32) for P in getattr(f, 'pts', [])]
     return g
 
 
-def assess(placed, near=NEAR, pairs_out=None):
+def assess(placed, near=NEAR, pairs_out=None, faces_out=None):
     """placed: [(part id (an integer), Faces, translation (3,))].  Returns
     (facing pairs, facing area, wall faces, wall area); facing area is the
     overlap weighted by closeness (1 at contact, 0 at `near`).  With a list
     as `pairs_out`, each facing pair is appended to it as (part id of the
     first face, part id of the second, the first face's normal, how far
-    apart, overlap)."""
+    apart, overlap); with a list as `faces_out`, (part id, face index, part id, face index)."""
     rows = []
     for pid, f, t in placed:
         t = np.asarray(t, float)
         for j in range(len(f)):
             rows.append((pid, f.n[j], f.d[j] + f.n[j] @ t, f.area[j], f.u[j], f.v[j],
-                         f.box[j] + np.array([f.u[j] @ t, f.u[j] @ t, f.v[j] @ t, f.v[j] @ t])))
+                         f.box[j] + np.array([f.u[j] @ t, f.u[j] @ t, f.v[j] @ t, f.v[j] @ t]), j))
     if not rows:
         return 0, 0.0, 0, 0.0
     pid = np.array([r[0] for r in rows])
@@ -152,6 +179,8 @@ def assess(placed, near=NEAR, pairs_out=None):
                 a_pair += ou * ov * (1.0 - max(0.0, s[b]) / near)
                 if pairs_out is not None:
                     pairs_out.append((int(pid[a]), int(pid[b]), n[a].copy(), float(s[b]), float(ou * ov)))
+                if faces_out is not None:
+                    faces_out.append((int(pid[a]), rows[a][7], int(pid[b]), rows[b][7]))
     return pairs, a_pair, n_wall, a_wall
 
 

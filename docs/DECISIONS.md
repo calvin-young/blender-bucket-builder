@@ -210,6 +210,30 @@ still open. The details are in `AGENTS.md` (Implementation notes).
   print file (Apply Modifiers, Precision, Thumbnail, Leave Out Names and
   Metadata) and passes them to the add-on's API.
 
+**Several buckets in one file (proposal, 2026-11-24; not decided, not built)**
+
+The owner asked for buckets you can switch between, as in Netfabb where clicking a part in any bucket
+switches to that bucket. Three ways to hold them in Blender:
+
+| | Scenes (one per bucket) | View layers (one per bucket) | Collections (one per bucket, side by side) |
+| --- | --- | --- | --- |
+| Switching | Scene menu or our list; only one bucket on screen | View layer menu or our list; only one on screen | Click any part: its bucket becomes the active one; all buckets on screen |
+| Bucket Builder settings | Already per scene (printer, checks, monitor): works today | Shared by all layers: printer and checks would have to move | Must move onto the collection (a small per-bucket settings group) |
+| Units | Per scene: a new scene must copy the units, or a bucket silently reads another scale | Shared | Shared |
+| A part in two buckets | Possible by linking (a trap) | Easy (a collection included in two layers) | Not possible unless linked on purpose |
+| Speed | Only the shown scene is checked | Only the shown layer is checked | Every part is in one scene; the monitor must check only the active bucket, or each against its own volume |
+| Export | Natural per scene | Needs care: the exporter sees the layer | Per collection; the bucket's offset must be taken off the coordinates |
+| Undo, Outliner | Undo spans scenes; Outliner shows one scene at a time | One Outliner | One Outliner, one tree per bucket |
+
+Recommendation: **collections**, one per bucket, the buckets laid out side by side with a gap so they
+never overlap. The active bucket is the collection of the active object (Netfabb's click-to-switch
+comes free), plus a list with New Bucket. Each bucket keeps its printer and offset on the collection;
+the monitor checks the active bucket, and the others keep their last verdict. Units stay shared, so
+the scale mistake that scenes invite cannot happen. Scenes are the fallback if one file must hold so
+many parts that one scene is too slow. The engine changes are small (a volume per bucket, one active
+at a time); the work is in the panel and in export (bucket-local coordinates). How the list is shown
+belongs to the PPP template.
+
 ## Tried and abandoned
 
 **Hiding the snap wireframe**
@@ -244,4 +268,5 @@ still open. The details are in `AGENTS.md` (Implementation notes).
 | Sorting speed on a machine with 6 - 8 worker threads (estimated 2 - 4 s for 30 M triangles) | Estimate; not measured |
 | Disk cache of sorted meshes, fast / accurate switch, per-collection ignore | Offered; no decision |
 | The packer's weights, gaps and density limit | First guesses; to be corrected in case studies on real buckets |
+| Several buckets in one file: collections side by side (recommended), scenes or view layers | Proposed 2026-11-24; the owner picks |
 | What was asked and what was assumed, item by item | `docs/TALLY.md` |

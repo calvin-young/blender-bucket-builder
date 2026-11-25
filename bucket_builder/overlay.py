@@ -337,7 +337,7 @@ def _build_group(mon, pairs, oobs, walls, vol, shaders, hidden, staged=()):
     left alone."""
     w = mon.world
     g = _Group()
-    tri_parts = {'collide': [], 'clear': [], 'outside': [], 'wall': []}
+    tri_parts = {'collide': [], 'clear': [], 'wall': [], 'outside': []}   # (the margin under the outside)
     clip_parts = {'collide': [], 'clear': []}
     # lines: 'collide' the curves along which parts cut through each other,
     # 'clear' the closest points of parts that are too close, 'inside' the
@@ -368,6 +368,9 @@ def _build_group(mon, pairs, oobs, walls, vol, shaders, hidden, staged=()):
         shown = slot not in hidden
         if r.tris is not None and len(r.tris) and vol is not None and shown:
             tri_parts['outside'].append((r.tris, zero))
+        margin = getattr(r, 'margin', None)
+        if margin is not None and inner is not None and shown:
+            tri_parts['wall'].append((margin, zero))
         if not shown:
             # (a hidden part has no surface drawn: its box says where the problem is)
             line_parts['outside'].append((_box_edges(r.lo, r.hi), zero))
@@ -403,6 +406,26 @@ def _build_group(mon, pairs, oobs, walls, vol, shaders, hidden, staged=()):
         g.line[kind] = batch_for_shader(shaders['line'], 'LINES', {"pos": pos})
         g.empty = False
     return g
+
+
+def _pq_batch(mon, shaders):
+    """One batch of every print-quality face of the last density evaluation (scene units), cached
+    by the report's serial; None when there are none or they are hidden."""
+    issues = mon.pq_issues()
+    if not issues:
+        return None
+    key = (mon.scene_uid, mon.report.serial, mon.mm_per_unit)
+    hit = _state.get('pq')
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    parts = [q['tris'] for q in issues if q['tris'] is not None and len(q['tris'])]
+    batch = None
+    if parts:
+        pos = np.ascontiguousarray((np.concatenate(parts) / mon.mm_per_unit).reshape(-1, 3), dtype=np.float32)
+        hatch = shaders['hatch']
+        batch = batch_for_shader(hatch if hatch is not None else shaders['flat'], 'TRIS', {"pos": pos})
+    _state['pq'] = (key, batch)
+    return batch
 
 
 def _shown(a, b, only):
@@ -737,12 +760,14 @@ def _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only=No
     if v['inner'] is not None:
         # the limit parts should stay inside of
         _draw_lines(shaders, v['inner'], (col_v[0], col_v[1], col_v[2], 0.16), 1.0 * ui, viewport, xray=True)
-        _draw_lines(shaders, v['inner'], (col_v[0], col_v[1], col_v[2], 0.5), 1.0 * ui, viewport, xray=False)
+        _draw_lines(shaders, v['inner'], (col_v[0], col_v[1], col_v[2], 0.5), 1.0 * ui, viewport, xray=False,
+                    bias=bias)
         for i, k in enumerate((0, 1, 3, 4)):          # the four side walls
             if near[i]:
                 edge = v['inner_walls'][k][0]
                 _draw_lines(shaders, edge, (col_w[0], col_w[1], col_w[2], 0.35), 1.4 * ui, viewport, xray=True)
-                _draw_lines(shaders, edge, (col_w[0], col_w[1], col_w[2], 1.0), 2.2 * ui, viewport, xray=False)
+                _draw_lines(shaders, edge, (col_w[0], col_w[1], col_w[2], 1.0), 2.2 * ui, viewport, xray=False,
+                            bias=bias)
 
 
 def _snap_helper_on(st):
@@ -803,6 +828,11 @@ def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport,
             if st.show_tint:
                 drawn[0] = _draw_tint(mon, p, shaders, persp_matrix, tint_bias, srgb, viewport, ui,
                                       col_c, only, view)
+            pq = _pq_batch(mon, shaders)
+            if pq is not None:
+                # print-quality faces (#51): under the problems, a quieter hatch of their own color
+                col_q = tuple(getattr(p, 'color_quality', (0.2, 0.8, 0.75, 1.0))) if p else (0.2, 0.8, 0.75, 1.0)
+                _draw_tris(shaders, pq, col_q, STYLE_DIAG, spacing, 0.08, persp_matrix, bias, xray, srgb)
             groups = _groups(mon, shaders, only, view)
             for g in groups:
                 if g.empty:
@@ -1190,9 +1220,11 @@ def summary(status, local=None):
             rows.append((_count(n_in, "hidden part") + " in the volume, not checked", 'warn'))
         if k > n_in:
             rows.append((_count(k - n_in, "hidden part") + " not checked", 'note'))
-    k = status.get('tiny', 0)
-    if k:
-        rows.append((_count(k, "part") + " under 0.5 mm: imported in meters?", 'warn'))
+    off = status.get('scale_off')
+    if off:
+        # (the PPP template's wording)
+        rows.append((_count(len(off[1]), "part") + (" under 0.5 mm: imported in meters?" if off[0] > 1
+                                                    else " over 1 m: imported in micrometers?"), 'warn'))
     if not working and measuring:
         # collisions are settled; some gaps are still being measured exactly
         rows.append(("measuring clearances...", 'dim'))
@@ -1330,7 +1362,9 @@ def _palette(p):
     mag = tuple(p.color_outside) if p else (0.95, 0.1, 0.85, 1.0)
     blue = tuple(p.color_volume) if p else (0.35, 0.75, 1.0, 1.0)
     staged = tuple(0.5 * (a + b) for a, b in zip(blue, mag))     # (between the bucket's blue and the error purple)
+    teal = tuple(getattr(p, 'color_quality', (0.2, 0.8, 0.75, 1.0))) if p else (0.2, 0.8, 0.75, 1.0)
     return {'fail': red, 'out': mag, 'warn': amber, 'wall': amber, 'note': amber, 'staged': staged,
+            'quality': teal,
             'ok': (0.25, 0.85, 0.35, 1.0), 'dim': (0.75, 0.75, 0.75, 1.0),
             '': (0.92, 0.92, 0.92, 1.0), 'view': (0.92, 0.92, 0.92, 1.0),
             'printer': (blue[0], blue[1], blue[2], 1.0)}
@@ -1398,7 +1432,7 @@ def _draw_badge(layout, p, shaders, ui, right, bottom, srgb=1.0):
 _MARK_COLLISION = ('COLLIDE', 'PARTIAL', 'OUTSIDE')
 _MARK_CLEARANCE = ('CLEAR', 'WALL')
 # kinds of problems in the order their markers are drawn (the worst on top)
-_MARK_ORDER = ('WALL', 'CLEAR', 'COLLIDE', 'OUTSIDE', 'PARTIAL')
+_MARK_ORDER = ('PQ', 'WALL', 'CLEAR', 'COLLIDE', 'OUTSIDE', 'PARTIAL')
 _MARK_INDEX = {kind: i for i, kind in enumerate(_MARK_ORDER)}
 
 
@@ -1465,7 +1499,7 @@ def _draw_markers(mon, st, p, shaders, ui, persp_matrix, width, height, only=Non
     py = (ndc[:, 1] * 0.5 + 0.5) * height
     tones = _palette(p)
     colors = {'COLLIDE': tones['fail'], 'CLEAR': tones['warn'], 'WALL': tones['wall'],
-              'PARTIAL': tones['out'], 'OUTSIDE': tones['out']}
+              'PARTIAL': tones['out'], 'OUTSIDE': tones['out'], 'PQ': tones['quality']}
     gray = (0.62, 0.62, 0.62, 0.9)
     ring = np.isin(kinds[shown], [_MARK_INDEX[k] for k in rings_on])
     # all rings in one batch, the worst kind last so that it lies on top

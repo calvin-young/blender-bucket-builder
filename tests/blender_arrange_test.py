@@ -10,6 +10,7 @@ import sys
 import time
 
 import bpy
+import mathutils
 import numpy as np
 from mathutils import Euler, Matrix
 
@@ -141,6 +142,45 @@ def main():
     only(a)
     bpy.ops.object.select_all(action='SELECT')
     check(not helper.select_get(), 'Select All does not pick it')
+    # a turned part snapped by its turned box stops short of the wall: settled onto it (#52)
+    st.volume_align = 'CORNER'
+    lo, hi = arrange.snap_planes(bpy.context.scene)
+    bpy.ops.mesh.primitive_cylinder_add(radius=20.0, depth=10.0, location=(150.0, 100.0, 50.0),
+                                        rotation=(0.0, 0.0, 0.5))      # (a box's turned corners are its own: a cylinder's stick out)
+    t = bpy.context.active_object
+    bpy.context.view_layer.update()
+    corners = np.array([t.matrix_world @ mathutils.Vector(c) for c in t.bound_box])
+    t.location.x += lo[0] - corners[:, 0].min()                  # (as Blender's snap leaves it)
+    bpy.context.view_layer.update()
+    moved = arrange.settle_snapped(bpy.context, [t])
+    bpy.context.view_layer.update()
+    check(moved == 1 and abs(world(t).min(axis=0)[0] - lo[0]) < 1e-4, 'a turned part snapped by its box is settled onto the wall',
+          (moved, world(t).min(axis=0)[0], lo[0]))
+    check(arrange.settle_snapped(bpy.context, [t]) == 0, 'and left alone after that')
+    # with a wall gap, the wireframe is the wall gap's box (the owner, 2026-11-23)
+    st.use_wall_clearance = True
+    st.wall_clearance_mm = 5.0
+    lo2, hi2 = arrange.snap_planes(bpy.context.scene)
+    check(np.allclose(lo2[:2], lo[:2] + 5.0) and np.allclose(hi2[:2], hi[:2] - 5.0) and abs(lo2[2] - lo[2]) < 1e-9,
+          'with a wall gap, parts snap to it', (lo2, hi2))
+    st.use_wall_clearance = False
+    bpy.data.objects.remove(t)
+    # Align to Plane (#50): the face clicked ends facing down, on the floor
+    p = box('plate', (60.0, 40.0, 8.0), (120.0, 120.0, 80.0), rot=(0.4, 0.3, 0.2))
+    bpy.context.view_layer.update()
+    side = p.matrix_world.to_3x3() @ mathutils.Vector((1.0, 0.0, 0.0))    # (the +X face's normal)
+    point = p.matrix_world @ mathutils.Vector((30.0, 0.0, 0.0))
+    bpy.ops.bucketbuilder.align_to_plane(part=p.name, normal=side, point=point)
+    bpy.context.view_layer.update()
+    down = (p.matrix_world.to_3x3() @ mathutils.Vector((1.0, 0.0, 0.0))).normalized()
+    check(down.z < -0.9999 and abs(world(p).min(axis=0)[2] - lo[2]) < 1e-3,
+          'Align to Plane: that face faces down, the part on the floor', (tuple(down), world(p).min(axis=0)[2]))
+    bpy.data.objects.remove(p)
+
+    st.monitor_volume = False
+    check(arrange.find_helper(bpy.context.scene) is None, 'the build volume monitor off: no wireframe (2026-11-24)')
+    st.monitor_volume = True
+    check(arrange.find_helper(bpy.context.scene) is not None, 'and back with it')
     st.snap_to_volume = False
     check(arrange.find_helper(bpy.context.scene) is None and not any(
         m.name.startswith(arrange.HELPER_NAME) for m in bpy.data.meshes), 'switched off: gone, mesh and all')

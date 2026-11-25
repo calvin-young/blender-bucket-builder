@@ -215,6 +215,7 @@ def test_cancel_and_locked():
     v = referee.check(res.items(parts) + [('locked', big, L)], s.vlo, s.vhi, s.gap, 0.0)
     check(v.ok and len(res.placements) == 12, '12 cubes around a locked slab, referee clean')
     jb = J.Job(parts, s, threads=1)
+    jb.BOX_FROM = 0                 # (the box pass would place all 12 at once: this is about the search)
     jb.step(0.0)                    # (one part)
     jb.cancel = True
     jb.step(0.0)

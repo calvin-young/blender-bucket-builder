@@ -45,6 +45,7 @@ import hashlib
 import os as _os
 import threading
 import time
+import zlib
 from collections import deque
 
 import bpy
@@ -82,11 +83,12 @@ SCAN_INSTANCES = 20000  # instances looked at per search
 NON_MESH = {'CURVE', 'SURFACE', 'FONT', 'META'}   # objects with faces that are not read
 # the order of the list of problems: the most serious kind first
 WALL_NAMES = ('the left wall (X)', 'the front wall (Y)', 'the floor', 'the right wall (X)', 'the back wall (Y)', 'the top')
-PROBLEM_RANK = {'PARTIAL': 0, 'OUTSIDE': 1, 'COLLIDE': 2, 'CLEAR': 3, 'WALL': 4}
+PROBLEM_RANK = {'PARTIAL': 0, 'OUTSIDE': 1, 'COLLIDE': 2, 'CLEAR': 3, 'WALL': 4, 'PQ': 5}
 BIG_SKIPS = ('too many triangles', 'not enough memory', 'error')
 
 
 TINY_MM = 0.5            # parts smaller than this across are named: likely imported in meters
+HUGE_MM = 1000.0         # ... and larger than this: likely 1000 times too big (the PPP template's numbers)
 
 class ObjState:
     __slots__ = ('uid', 'name', 'in_world', 'skipped', 'data_uid', 'shareable', 'ntri', 'sig',
@@ -207,7 +209,23 @@ def _signature(obj):
     bb = obj.bound_box
     return (_uid(me), len(me.vertices), len(me.polygons), len(obj.modifiers),
             round(bb[0][0], 5), round(bb[0][1], 5), round(bb[0][2], 5),
-            round(bb[6][0], 5), round(bb[6][1], 5), round(bb[6][2], 5))
+            round(bb[6][0], 5), round(bb[6][1], 5), round(bb[6][2], 5), _vertex_sum(me))
+
+
+def _vertex_sum(me):
+    """A checksum of up to 4096 of the mesh's vertex positions, evenly spread: a mesh edited in
+    place with the same counts and bounds changes it (a suspect for #19, where the world held
+    other geometry than the scene). Only computed when signatures are compared (resume, undo)."""
+    n = len(me.vertices)
+    if n == 0:
+        return 0
+    co = np.empty(n * 3, dtype=np.float32)
+    try:
+        me.vertices.foreach_get('co', co)
+    except Exception:                                    # noqa: BLE001
+        return 0
+    step = max(1, n // 4096)
+    return int(zlib.crc32(co.reshape(-1, 3)[::step].tobytes()))
 
 
 def read_mesh(obj_eval):
@@ -337,14 +355,18 @@ class Monitor:
         self._problems = (None, [])
         self._active = (None, '', -1)
         self._follow = (None, '', None)  # (selected part, problem key then, its first row)
+        self._scale_cache = (None, None)
+        self.show_pq = False             # (the scene's report_density and show_pq; set by tick)
+        self._auto_mm = None
 
     # ------------------------------------------------------------ parameters
     def _resolve_units(self, scene, st):
-        """(millimeters per scene unit, a note for the Units panel). Never guessed from the parts
-        (the owner, 2026-11-20: up to 1.6.2 a default scene was read as meters when the first parts
-        the monitor saw were small, so the bucket shrank 1000 times without a word, and which way it
-        went depended on whether the parts came before the monitor). Parts too small to print are
-        named in the verdict instead (`tiny`)."""
+        """(millimeters per scene unit, a note for the Units panel). By default never guessed from
+        the parts: up to 1.6.2 a default scene was read as meters when the first parts the monitor
+        saw were small, so the bucket shrank 1000 times without a word, and which way it went
+        depended on whether the parts came before the monitor. The owner (2026-11-23) kept the
+        guess as an option, off by default: Dynamic Bucket Sizing. Parts that look 1000 times off
+        are named in the verdict instead, with a button to scale them (`scale_problem`)."""
         us = scene.unit_settings
         # scale_length is single precision: 0.001 arrives as 0.0010000000475
         scale = float(f"{us.scale_length:.7g}") if us.system != 'NONE' else 1.0
@@ -354,17 +376,44 @@ class Monitor:
             return scale * 1000.0, "scene units"
         if us.system != 'NONE' and abs(scale - 1.0) > 1e-9:
             return scale * 1000.0, "scene units"
-        return 1.0, "1 unit = 1 mm"
-
-    def tiny_parts(self):
-        """How many parts are under TINY_MM across: in a scene read as millimeters that usually means
-        a file imported in meters (objects scaled 0.001)."""
+        if not getattr(st, 'dynamic_bucket_size', False):
+            self._auto_mm = None
+            return 1.0, "1 unit = 1 mm"
+        # Dynamic Bucket Sizing: decide once from the size of the first parts read (printable
+        # parts measured in meters are well below 1 unit; millimeter numbers well above)
         w = self.world
         slots = list(w._slot_of.values())
-        if not slots or self.mm_per_unit != 1.0:
-            return 0
-        ext = (w.O_HI[slots] - w.O_LO[slots]).max(axis=1)
-        return int((ext < TINY_MM).sum())
+        if slots and self._auto_mm is None:
+            ext = (w.O_HI[slots] - w.O_LO[slots]).max(axis=1)
+            self._auto_mm = 1.0 if float(np.median(ext)) > 1.5 else 1000.0
+        if self._auto_mm == 1000.0:
+            return 1000.0, "meters (Dynamic Bucket Sizing)"
+        return 1.0, "1 unit = 1 mm" + (" (Dynamic Bucket Sizing)" if self._auto_mm else "")
+
+    def scale_problem(self):
+        """Parts that look imported in the wrong unit, as (factor, [names]) or None: under
+        TINY_MM across (likely read as meters: scale x1000) or over HUGE_MM (/1000). The same
+        thresholds and wording as the PPP template's check after an import; small parts win when
+        there are both. Cached per result version."""
+        w = self.world
+        key = (w.version, self.mm_per_unit, len(w._slot_of))
+        if self._scale_cache[0] == key:
+            return self._scale_cache[1]
+        out = None
+        slots = list(w._slot_of.values())
+        if slots:
+            ext = (w.O_HI[slots] - w.O_LO[slots]).max(axis=1) * self.mm_per_unit
+            for factor, mask in ((1000.0, (ext > 0) & (ext < TINY_MM)), (0.001, ext > HUGE_MM)):
+                if mask.any():
+                    names = []
+                    for slot, m in zip(slots, mask):
+                        os = self.objs.get(w.uid(slot)) if m else None
+                        if os is not None:
+                            names.append(os.name)
+                    out = (factor, names)
+                    break
+        self._scale_cache = (key, out)
+        return out
 
     def volume_box(self, st):
         """Build volume as (lo, hi) in scene units."""
@@ -1227,9 +1276,15 @@ class Monitor:
         if self.hot:
             for slot in [s for s, t in self.hot.items() if t < cutoff]:
                 del self.hot[slot]
+        show_pq = bool(st.report_density and getattr(st, 'show_pq', True))
+        if show_pq != self.show_pq:
+            self.show_pq = show_pq
+            sync_rows(self)
+            changed = True
         if st.report_density and not live and self.report.step(self, st):
             from . import icons
             icons.set_profile(self.report.pixels)
+            sync_rows(self)                       # (print-quality rows come and go with the result)
             changed = True
         if self.world.version != self.seen_version:
             self.seen_version = self.world.version
@@ -1320,7 +1375,10 @@ class Monitor:
             'ignored_parts': self.ignored_parts,
             'hidden_skipped': self.hidden_skipped,
             'hidden_inside': self.hidden_inside,
-            'tiny': self.tiny_parts(),
+            'scale_off': self.scale_problem(),
+            'tiny': len(self.scale_problem()[1]) if self.scale_problem() and self.scale_problem()[0] > 1 else 0,
+            'huge': len(self.scale_problem()[1]) if self.scale_problem() and self.scale_problem()[0] < 1 else 0,
+            'pq': len(self.pq_issues()),
             # the verdict is final once every part is read and every pair has a
             # result; exact-distance refinement and the periodic resync that
             # may still be queued do not make it provisional
@@ -1337,7 +1395,8 @@ class Monitor:
         first: out of the build volume, collisions, clearance, wall gap.
         Problems the user ignores are in the list too (``ignored`` is 1, or 2
         if for good): they stay where they are and are shown grayed."""
-        ver = (self.world.version, self.move_serial, self.ignore_serial, self.pairs_on)
+        ver = (self.world.version, self.move_serial, self.ignore_serial, self.pairs_on, self.report.serial,
+               self.show_pq)
         if self._problems[0] == ver:
             return self._problems[1]
         w = self.world
@@ -1400,6 +1459,23 @@ class Monitor:
                 'slots': (slot,),
                 'ignored': muted.get(('W', slot), 0),
             })
+        # print-quality issues from the density evaluation (#51): notes, after every real problem;
+        # they never fail the build
+        for i, q in enumerate(self.pq_issues()):
+            out.append({
+                'kind': 'PQ',
+                'a': q['a'], 'b': q['b'],
+                'dist_mm': -q.get('area', 0.0),               # (the largest face first)
+                'center': np.asarray(q['center'], float) / k,
+                'radius': float(q['radius']) / k,
+                'approx': False,
+                'inside': 0,
+                'pq': q['text'], 'rule': q['rule'],
+                'key': ('Q', q['rule'], q['a'], q['b'], i),
+                'names': (q['a'], q['b']),
+                'slots': (),
+                'ignored': 0,
+            })
         out.sort(key=lambda d: (PROBLEM_RANK[d['kind']], d['dist_mm'], d['a'], d['b']))
         for d in out:
             d['id'] = problem_id(d['key'][0], *d['names'])
@@ -1424,6 +1500,17 @@ class Monitor:
                 index = next((i for i, d in enumerate(problems) if d['id'] == key), -1)
         self._active = (problems, key, index)
         return index
+
+    def pq_issues(self):
+        """The print-quality issues of the last density evaluation, or [] while it is off, stale
+        or the issues are hidden."""
+        if not self.show_pq:
+            return []
+        rep = getattr(self, 'report', None)
+        res = rep.result if rep is not None else None
+        if res is None or rep.result_sig != rep.guard_sig:
+            return []
+        return getattr(res, 'pq', None) or []
 
     def list_index(self, st, active=None):
         """The row the list lights: the problem the user last went to, or, when a part has been
@@ -1487,7 +1574,7 @@ def sync_rows(mon):
     """Have the list of problems as many rows as it may need (see
     props.ensure_rows; called where results come in, never while drawing)."""
     w = mon.world
-    n = len(w.viol) + len(w.oob) + len(w.wall)
+    n = len(w.viol) + len(w.oob) + len(w.wall) + len(mon.pq_issues())
     if n > mon.rows:
         mon.rows = n
         props.ensure_rows(n)

@@ -181,6 +181,32 @@ def main():
     update()
     compare('with a modifier', [a, b, c], mon, st)
 
+    # print-quality notes (#51): a large plate lying flat faces up (capillary); one tilted 5 degrees is
+    # shallow (stair-stepping); both become rows of the Problems list, never fail the build
+    flat = add_cube('Plate-flat', (100, 150, 6))
+    flat.scale = (2.0, 2.0, 0.2)                    # (80 x 80 x 8 mm)
+    tilt = add_cube('Plate-tilt', (230, 150, 30))
+    tilt.scale = (2.0, 2.0, 0.2)
+    tilt.rotation_euler = (0.0, 0.0873, 0.0)
+    update()
+    wait(mon, st)
+    rows = [q for q in mon.problems() if q['kind'] == 'PQ']
+    texts = {(q['a'], q['pq']) for q in rows}
+    check(('Plate-flat', 'flat face up') in texts and ('Plate-tilt', 'shallow face') in texts,
+          'flat and shallow faces are listed as print-quality notes', sorted(texts))
+    check(mon.status()['pq'] == len(rows) and mon.status()['collisions'] == 0, 'counted as notes', mon.status()['pq'])
+    q = next(q for q in rows if q['a'] == 'Plate-flat')
+    check(len(mon.pq_issues()[q['key'][4]]['tris']) > 0, 'with the faces to shade')
+    st.show_pq = False
+    update()
+    mon.tick(scene(), bpy.context.view_layer.depsgraph, bpy.context.view_layer, live=False, relaxed=True, pace=0.0)
+    check(not any(q['kind'] == 'PQ' for q in mon.problems()), 'hidden with the switch')
+    st.show_pq = True
+    bpy.data.objects.remove(flat)
+    bpy.data.objects.remove(tilt)
+    update()
+    wait(mon, st)
+
     # switching it off keeps the monitor but stops the work
     st.report_density = False
     update()

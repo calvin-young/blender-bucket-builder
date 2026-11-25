@@ -159,9 +159,12 @@ class PairResult:
 
 class OobResult:
     """Build-volume status of one object (geometry in world space)."""
-    __slots__ = ('state', 'tris', 'lo', 'hi', 'band_only', 'serial', 'touch')
+    __slots__ = ('state', 'tris', 'lo', 'hi', 'band_only', 'serial', 'touch', 'margin')
     # touch: (wall, gap) when nothing reaches past a wall but the part is closer to
     # one than the inside margin; wall is 0 - 5 for x, y, z low, then x, y, z high
+    # margin: for a part partly outside while a wall gap is set, its triangles inside the volume
+    # but in the margin, drawn as a wall-gap warning beside the out-of-volume hatching (the owner,
+    # 2026-11-23); not counted: the part is already an error
 
 
 class WallResult:
@@ -1830,6 +1833,7 @@ class World:
             r.lo = lo[i]
             r.hi = hi[i]
             r.tris = None
+            r.margin = None
             r.band_only = False
             r.serial = self._serial
             r.state = OUTSIDE if outside[i] else PARTIAL
@@ -1889,6 +1893,17 @@ class World:
                     r.tris = t
                     r.band_only = b
                     r.serial = self._serial
+                    r.margin = None
+                if inner is not None:
+                    tris, _band = narrow.oob_solve(self, np.array(partial, dtype=np.int64),
+                                                   inner[0], inner[1], OOB_TRI_CAP)
+                    lo32, hi32 = vlo.astype(np.float32), vhi.astype(np.float32)
+                    for slot, t in zip(partial, tris):
+                        if len(t):
+                            # leave out the triangles wholly past a wall: those are the outside
+                            out = ((t < lo32 - self.eps_len).all(axis=1) | (t > hi32 + self.eps_len).all(axis=1)).any(axis=1)
+                            t = t[~out]
+                        self.oob[slot].margin = t if len(t) else None
             if close:
                 # the triangles that reach into the margin: everything that is
                 # not completely inside the inner box

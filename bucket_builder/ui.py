@@ -28,9 +28,9 @@ _TONE_ICON = {'fail': ('cross', 'CANCEL'), 'out': ('box', 'SHADING_BBOX'), 'warn
 # colored icon on every row was too loud.  The color of a kind is a slim
 # tab at the left end of its row (see props._tab).
 _KIND_ICON = {'PARTIAL': 'SHADING_BBOX', 'OUTSIDE': 'SHADING_BBOX', 'COLLIDE': 'CANCEL',
-              'CLEAR': 'ERROR', 'WALL': 'OBJECT_HIDDEN'}
+              'CLEAR': 'ERROR', 'WALL': 'OBJECT_HIDDEN', 'PQ': 'INFO'}
 _KIND_TAB = {'PARTIAL': 'tab_outside', 'OUTSIDE': 'tab_outside', 'COLLIDE': 'tab_collision',
-             'CLEAR': 'tab_clearance', 'WALL': 'tab_wall'}
+             'CLEAR': 'tab_clearance', 'WALL': 'tab_wall', 'PQ': 'tab_quality'}
 ISOLATE_ICON = 'VIEWZOOM'
 
 
@@ -102,12 +102,22 @@ class BUCKETBUILDER_PT_main(_Base, Panel):
         # a mistake: so all of them are plain.)
         for text, tone in rows:
             col.label(text=text, **_icon(tone))
+        off = status.get('scale_off') if status else None
+        if off:
+            # parts that look imported in the wrong unit: the fix, one click (the owner, 2026-11-23)
+            op = box.operator("bucketbuilder.fix_scale", icon='FULLSCREEN_ENTER',
+                              text="Scale \u00d71000" if off[0] > 1 else "Scale \u00f71000")
+            op.factor, op.names = off[0], "\n".join(off[1])
         if status and status.get('touching'):
             row = box.row(align=True)
-            row.operator("bucketbuilder.move_inside", text="Move All Inside", icon='ARROW_LEFTRIGHT').selected_only = False
-            row.operator("bucketbuilder.move_inside", text="Move Selected", icon='RESTRICT_SELECT_OFF').selected_only = True
+            row.operator("bucketbuilder.move_inside", text="Nudge All Inside", icon='ARROW_LEFTRIGHT').selected_only = False
+            row.operator("bucketbuilder.move_inside", text="Nudge Selected", icon='RESTRICT_SELECT_OFF').selected_only = True
         if status and status.get('printer'):
             col.label(text=status['printer'], icon='INFO')
+        last = props.settings(scene).last_message
+        if last:
+            # the last result line, where it isn't missed (the owner, 2026-11-24)
+            _wrapped(box.column(align=True), last, 'TIME')
         if mon is not None and mon.error:
             col.label(text=mon.error[:60], icon='INFO')
 
@@ -132,6 +142,8 @@ def problem_text(pr):
         return f"{pr['a']}  x  {pr['b']}"
     if pr['kind'] == 'WALL':
         return f"{_mm(pr)}  {pr['a']}  |  wall"
+    if pr['kind'] == 'PQ':
+        return f"{pr['a']}  |  {pr['b']}  {pr['pq']}" if pr['b'] else f"{pr['a']}   {pr['pq']}"
     if pr['kind'] == 'PARTIAL':
         if pr.get('touch'):
             return f"{pr['a']}   touching {pr['touch']}"
@@ -218,6 +230,8 @@ class BUCKETBUILDER_UL_problems(UIList):
         local = getattr(context.space_data, 'local_view', None) is not None
         alone = st.isolate and local and index == mon.active_index(st)
         names = pr['names']
+        if pr['kind'] == 'PQ':
+            return                                  # (a note: nothing to ignore)
         for idname, icon_name, down, lock in (
                 ("bucketbuilder.isolate_problem", ISOLATE_ICON, alone, None),
                 ("bucketbuilder.ignore_problem", 'HIDE_ON' if ignored else 'HIDE_OFF',
@@ -397,7 +411,7 @@ class BUCKETBUILDER_PT_volume(_Base, Panel):
         row = layout.row(align=True)
         row.menu("BUCKETBUILDER_MT_printers", text=props.current_printer_name(st))
         row.operator("bucketbuilder.profile_add", text="", icon='ADD')
-        row.operator("bucketbuilder.profile_update", text="", icon='FILE_TICK')
+        row.operator("bucketbuilder.profile_update", text="", icon='GREASEPENCIL')
         row.operator("bucketbuilder.profile_remove", text="", icon='REMOVE')
         layout.operator("bucketbuilder.frame_volume", icon='VIEWZOOM')
 
@@ -407,18 +421,11 @@ class BUCKETBUILDER_PT_volume(_Base, Panel):
         col = body.column(align=True)
         col.prop(st, "show_volume")
         col.prop(st, "use_volume")
+        col.prop(st, "snap_to_volume")          # (also in Manual Packing: the owner, 2026-11-23)
         col = body.column()
         col.active = st.use_volume
         _limit(col, st, "use_wall_clearance", "wall_clearance_mm")
-
-        header, body = layout.panel("bucketbuilder_volume_advanced", default_closed=True)
-        header.label(text="Advanced")
-        if body is not None:
-            col = _split(body)
-            col.prop(st, "volume_size", text="Size (mm)")
-            col = _split(body)
-            col.prop(st, "volume_align")
-            col.prop(st, "volume_offset", text="Offset (mm)")
+        # (the size and placement of the volume are edited in the printer's own dialog: + and the pencil)
 
 
 # ---------------------------------------------------------------------------
@@ -444,7 +451,9 @@ class BUCKETBUILDER_PT_report(_Base, Panel):
     def draw(self, context):
         layout = self.layout
         st = props.settings(context.scene)
-        _big(layout, st, "report_density", "Density Report")
+        _big(layout, st, "report_density", "Evaluate Density")
+        if st.report_density:
+            layout.prop(st, "show_pq")
         if not st.report_density:
             return
         mon = monitor.get(context.scene)
@@ -481,13 +490,27 @@ class BUCKETBUILDER_PT_report(_Base, Panel):
         value = icons.get('profile')
         if rep.pixels is not None and value:
             box = layout.box()
-            box.label(text="Layer density, floor at the bottom")
-            row = box.row()
-            row.alignment = 'CENTER'
-            row.template_icon(icon_value=value, scale=9.0)
-            box.label(text="0 to %.1f %% across, %.0f mm up" % (
-                max(res.peak_layer, 0.05) * 108.0, res.height))
-            box.label(text="Orange: dense layers. Gray: sparse. Line: the mean")
+            row = box.row(align=True)
+            row.label(text="Layer Density", icon='GRAPH')
+            row.operator("bucketbuilder.density_view", text="", icon='FULLSCREEN_ENTER', emboss=False)
+            draw_density_figure(box, res, value, 9.0)
+
+
+def draw_density_figure(layout, res, value, scale):
+    """The scatter, the build plate under it, its scale and legend, one line each (they must read in
+    a narrow sidebar; the owner, 2026-11-23)."""
+    row = layout.row()
+    row.alignment = 'CENTER'
+    row.template_icon(icon_value=value, scale=scale)
+    row = layout.row()
+    row.alignment = 'CENTER'
+    row.label(text="Build Plate")
+    col = layout.column(align=True)
+    col.label(text="Across: 0 to %.1f %% of the layer" % (max(res.peak_layer, 0.05) * 108.0))
+    col.label(text="Up: %.0f mm" % res.height)
+    col.label(text="Orange: dense layers")
+    col.label(text="Gray: sparse layers")
+    col.label(text="Line: the mean")
 
 
 # ---------------------------------------------------------------------------
@@ -516,10 +539,14 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
             else:
                 b = job.get('budget') or 0.0
                 frac = 1.0 - (job['time_left'] or 0.0) / b if b > 0 else 0.0
+                placed = job.get('placed', done)
                 text = ("Jiggling%s" % left) if job.get('phase') == 'jiggling' else \
                     "Spreading the parts out" if job.get('phase') == 'spreading' else \
-                    ("Improving: %.1f mm%s" % (job['height'], left))
+                    ("All in, improving: %.1f mm%s" % (job['height'], left) if placed >= total
+                     else "%d of %d in, still trying%s" % (placed, total, left))
                 row.progress(factor=frac, type='BAR', text=text)
+                if job.get('phase') not in ('jiggling', 'spreading'):
+                    _wrapped(layout.column(align=True), "Esc or Stop keeps the layout you see now.", 'INFO')
             row = layout.row()
             row.operator("bucketbuilder.pack_stop", icon='CANCEL')
         else:
@@ -532,7 +559,12 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
             op.improve = False
             op.fix = 'NONE'
             row = layout.row()
-            op = row.operator("bucketbuilder.pack", icon='FILE_REFRESH', text="Keep Trying")
+            # "Keep Trying" when parts wait beside the bucket, "Improve Packing" when every part is in (the
+            # owner, 2026-11-24: the same action, named for what the user wants from it)
+            mon_ = monitor.get(context.scene)
+            waiting = (mon_.status().get('staged', 0) if mon_ is not None else 0)
+            op = row.operator("bucketbuilder.pack", icon='FILE_REFRESH',
+                              text="Keep Trying (%d waiting)" % waiting if waiting else "Improve Packing")
             op.selected_only = bool(sel)
             op.improve = True
             op.fix = 'NONE'
@@ -606,34 +638,38 @@ class BUCKETBUILDER_PT_pack(_Base, Panel):
             _wrapped(col, st.pack_last, 'INFO')
         col = layout.column(align=True)
         col.active = False
-        _wrapped(col, "From Scratch packs every part again; Keep Trying starts from the layout as it is "
-                      "and keeps the best it finds; Fix Issues only makes small moves. All run in the "
+        _wrapped(col, "From Scratch packs every part again, first moving them beside the bucket; Improve "
+                      "Packing (Keep Trying while parts wait) starts from the layout as it is and keeps the "
+                      "best it finds; Fix Issues only makes small moves. All run in the "
                       "background: Esc or Stop keeps the best so far, Ctrl+Z puts the parts back.", 'INFO')
 
 
 class BUCKETBUILDER_PT_options(_Base, Panel):
-    bl_label = "Options"
+    bl_label = "Settings"
     bl_idname = "BUCKETBUILDER_PT_options"
 
     def draw(self, context):
-        layout = self.layout
-        space = context.space_data
-        shading = getattr(space, "shading", None)
-        if shading is None:
-            return
-        # Random colors tell the parts apart; one plain color lets the
-        # problems stand out.  Both are worth a click away.
-        col = layout.column(align=True)
-        col.label(text="Part Colors")
-        row = col.row(align=True)
-        row.active = shading.type == 'SOLID'
-        row.prop_enum(shading, "color_type", 'SINGLE', text="Custom")
-        row.prop_enum(shading, "color_type", 'RANDOM', text="Random")
-        if shading.type != 'SOLID':
-            # (the colors above are those of solid shading)
-            col.prop_enum(shading, "type", 'SOLID', text="Use Solid Shading")
-        elif shading.color_type == 'SINGLE':
-            col.prop(shading, "single_color", text="")
+        pass
+
+
+def _part_colors(context, layout):
+    space = context.space_data
+    shading = getattr(space, "shading", None)
+    if shading is None:
+        return
+    # Random colors tell the parts apart; one plain color lets the
+    # problems stand out.  Both are worth a click away.
+    col = layout.column(align=True)
+    col.label(text="Part Colors")
+    row = col.row(align=True)
+    row.active = shading.type == 'SOLID'
+    row.prop_enum(shading, "color_type", 'SINGLE', text="Custom")
+    row.prop_enum(shading, "color_type", 'RANDOM', text="Random")
+    if shading.type != 'SOLID':
+        # (the colors above are those of solid shading)
+        col.prop_enum(shading, "type", 'SOLID', text="Use Solid Shading")
+    elif shading.color_type == 'SINGLE':
+        col.prop(shading, "single_color", text="")
 
 
 class BUCKETBUILDER_PT_display(_Base, Panel):
@@ -670,6 +706,7 @@ class BUCKETBUILDER_PT_display(_Base, Panel):
             row.prop(p, "xray", text="")
         col.prop(p, "volume_fill")
         col.prop(p, "badge_scale")
+        _part_colors(context, layout)
         header, body = layout.panel("bucketbuilder_display_colors", default_closed=True)
         header.label(text="Colors")
         if body is not None:
@@ -725,6 +762,9 @@ class BUCKETBUILDER_PT_units(_Base, Panel):
         mon = monitor.get(scene)
         col = _split(layout)
         col.prop(st, "unit_mode")
+        sub = col.row()
+        sub.active = st.unit_mode == 'AUTO'
+        sub.prop(st, "dynamic_bucket_size")
         if mon is not None and mon.unit_note:
             row = col.row()
             row.alignment = 'RIGHT'
@@ -750,6 +790,7 @@ class BUCKETBUILDER_PT_arrange(_Base, Panel):
         col.operator("bucketbuilder.minimize_box", icon='SHADING_BBOX')
         col.operator("bucketbuilder.minimize_height", icon='SORT_DESC')
         col.operator("bucketbuilder.tilt_off_axis", icon='DRIVER_ROTATIONAL_DIFFERENCE')
+        col.operator("bucketbuilder.align_to_plane", icon='EYEDROPPER')
         layout.prop(st, "snap_to_volume", icon='SNAP_ON' if st.snap_to_volume else 'SNAP_OFF')
 
 
@@ -784,8 +825,8 @@ CLASSES = (
     BUCKETBUILDER_PT_pack,
     BUCKETBUILDER_PT_options,
     BUCKETBUILDER_PT_display,
-    BUCKETBUILDER_PT_performance,
     BUCKETBUILDER_PT_units,
+    BUCKETBUILDER_PT_performance,
     BUCKETBUILDER_PT_export,
 )
 

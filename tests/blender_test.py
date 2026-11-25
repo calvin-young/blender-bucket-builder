@@ -561,9 +561,20 @@ def main():
     tiny.location = (100.0, 100.0, 100.0)
     update()
     mon = settle()
-    check(mon.mm_per_unit == 1.0 and mon.status().get('tiny') == 1, 'a tiny part is named, the units stay',
-          (mon.mm_per_unit, mon.status().get('tiny')))
+    off = mon.status().get('scale_off')
+    check(mon.mm_per_unit == 1.0 and off == (1000.0, ['tiny']), 'a tiny part is named, the units stay',
+          (mon.mm_per_unit, off))
     check(any('imported in meters' in t for t, _ in bc.overlay.summary(mon.status())[1]), 'and the verdict says so')
+    st.dynamic_bucket_size = True                       # the old guess, now an option: the median part decides
+    mon = settle()
+    check(mon.mm_per_unit == 1.0, 'Dynamic Bucket Sizing still reads mm when most parts are mm-sized', mon.mm_per_unit)
+    st.dynamic_bucket_size = False
+    bpy.ops.bucketbuilder.fix_scale(factor=1000.0, names='tiny')
+    update()
+    mon = settle()
+    check(abs(tiny.scale[0] - 1000.0) < 1e-6 and abs(tiny.location[0] - 100000.0) < 1e-3
+          and mon.status().get('scale_off') is None,
+          'Fix the Scale scales about the origin', (tuple(tiny.scale), tuple(tiny.location), mon.status().get('scale_off')))
     bpy.data.objects.remove(tiny); bpy.data.meshes.remove(me)
     update()
     mon = settle()

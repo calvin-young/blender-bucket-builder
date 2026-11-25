@@ -326,6 +326,21 @@ once.
 * How nested parts that are too dense in one layer should be handled
   (re-nested farther apart?).
 
+## Thresholds in the code
+
+Every print-quality number the add-on uses lives in one module, `bucket_builder/pack/pq_rules.py`; this table is made from it (`pq_rules.markdown_table()`), and `tests/test_pq_rules.py` fails when the two differ. Change a number there, then paste the new table here.
+
+<!-- pq-table -->
+| Rule | Shown as | Threshold | Value | Meaning | Source |
+| --- | --- | --- | --- | --- | --- |
+| PQ-05 | Flat Faces Close | `FACE_NEAR_MM` | 10 mm | large flat faces of two parts, facing each other, closer than this | practitioner, assumed |
+| PQ-05 | Flat Faces Close | `FACING_DEG` | 5 degrees | faces count as facing each other within this of opposite | assumed |
+| PQ-06 | Flat Face by a Wall | `WALL_DEG` | 10 degrees | a large flat face within this of parallel to a side wall | practitioner, assumed |
+| PQ-07 | Flat Face Up | `CAPILLARY_DEG` | 1 degrees | a large flat face facing up within this of flat: the capillary (meniscus) defect | practitioner |
+| PQ-09 | Shallow Face | `STAIR_DEG` | 10 degrees | a large flat face tilted more than the capillary limit but less than this: stair-stepping, worse than the capillary defect; 10 degrees and more is fine | the owner, 2026-11-19 |
+| PQ-05 | (all face rules) | `MIN_AREA_MM2` | 2500 mm^2 | a flat face counts from this area (50 x 50 mm) | assumed |
+<!-- /pq-table -->
+
 ## Where the rules are used
 
 * `bucket_builder/pack/quality.py`: PQ-05, PQ-06, PQ-07 as soft goals of

@@ -10,7 +10,7 @@ import time
 import bpy
 from bpy_extras.io_utils import ExportHelper
 import numpy as np
-from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, StringProperty
 from bpy.types import Menu, Operator
 
 from . import monitor, props
@@ -168,6 +168,9 @@ def describe(pr):
         return f"{pr['a']} / {pr['b']}: {approx}{pr['dist_mm']:.2f} mm apart"
     if pr['kind'] == 'WALL':
         return f"{pr['a']} is {pr['dist_mm']:.2f} mm from a side wall"
+    if pr['kind'] == 'PQ':
+        who = f"{pr['a']} and {pr['b']}" if pr['b'] else pr['a']
+        return f"{who}: {pr['pq']} ({pr['rule']}, a print-quality note)"
     if pr['kind'] == 'PARTIAL':
         if pr.get('touch'):
             return f"{pr['a']} touching {pr['touch']}: {pr['dist_mm']:.3f} mm, needs at least 0.001 mm"
@@ -833,18 +836,38 @@ class BUCKETBUILDER_OT_profile_apply(Operator):
         return {'FINISHED'}
 
 
+_SIZE = dict(name="Size (mm)", size=3, subtype='XYZ', min=1.0, soft_max=1000.0, precision=1, step=100)
+
+
+def _draw_printer(op, context, layout):
+    """The fields of the New and Edit Printer dialogs: name, size, and where the volume sits (the
+    owner, 2026-11-23: in place of an Advanced section in the panel)."""
+    st = props.settings(context.scene)
+    layout.use_property_split = True
+    layout.prop(op, "name")
+    layout.prop(op, "size")
+    layout.prop(st, "volume_align")
+    layout.prop(st, "volume_offset", text="Offset (mm)")
+
+
 class BUCKETBUILDER_OT_profile_add(Operator):
-    """Save the current build volume as a new printer profile"""
+    """Add a printer: its name and build volume"""
     bl_idname = "bucketbuilder.profile_add"
-    bl_label = "Save as New Printer"
+    bl_label = "New Printer"
 
     name: StringProperty(name="Name", default="Custom Printer")
+    size: FloatVectorProperty(default=(380.0, 284.0, 380.0), **_SIZE)
 
     def invoke(self, context, event):
-        name = props.current_printer_name(props.settings(context.scene))
+        st = props.settings(context.scene)
+        name = props.current_printer_name(st)
         if name != "Custom":
             self.name = name + " (copy)"
-        return context.window_manager.invoke_props_dialog(self)
+        self.size = st.volume_size
+        return context.window_manager.invoke_props_dialog(self, confirm_text="Add Printer")
+
+    def draw(self, context):
+        _draw_printer(self, context, self.layout)
 
     def execute(self, context):
         p = _library(context)
@@ -852,6 +875,8 @@ class BUCKETBUILDER_OT_profile_add(Operator):
             self.report({'ERROR'}, "Add-on preferences are not available")
             return {'CANCELLED'}
         st = props.settings(context.scene)
+        if self.properties.is_property_set('size'):
+            st.volume_size = self.size
         name = self.name.strip() or "Custom Printer"
         existing = {prof.name for prof in p.profiles}
         base, n = name, 2
@@ -868,15 +893,29 @@ class BUCKETBUILDER_OT_profile_add(Operator):
 
 
 class BUCKETBUILDER_OT_profile_update(Operator):
-    """Store the current build volume in the selected printer profile"""
+    """Edit the selected printer: its name and build volume"""
     bl_idname = "bucketbuilder.profile_update"
-    bl_label = "Update Printer Profile"
+    bl_label = "Edit Printer"
+
+    name: StringProperty(name="Name", default="")
+    size: FloatVectorProperty(default=(380.0, 284.0, 380.0), **_SIZE)
+
+    def invoke(self, context, event):
+        st = props.settings(context.scene)
+        self.name = props.current_printer_name(st)
+        self.size = st.volume_size
+        return context.window_manager.invoke_props_dialog(self, confirm_text="Save Printer")
+
+    def draw(self, context):
+        _draw_printer(self, context, self.layout)
 
     def execute(self, context):
         p = _library(context)
         st = props.settings(context.scene)
         if p is None:
             return {'CANCELLED'}
+        if self.properties.is_property_set('size'):
+            st.volume_size = self.size
         prof = _current_profile(p, st)
         if prof is None and st.printer == "Custom" and st.printer_last:
             # (typing a size turns the printer into "Custom": the size goes
@@ -885,6 +924,9 @@ class BUCKETBUILDER_OT_profile_update(Operator):
         if prof is None:
             self.report({'WARNING'}, "Pick a printer first, or save the volume as a new printer")
             return {'CANCELLED'}
+        new_name = self.name.strip()
+        if new_name and new_name != prof.name and new_name not in {x.name for x in p.profiles}:
+            prof.name = new_name
         prof.size = st.volume_size
         apply_volume(st, prof.name, tuple(st.volume_size))
         _mark_prefs_dirty(context)
@@ -991,19 +1033,22 @@ class BUCKETBUILDER_MT_printers(Menu):
 
 class BUCKETBUILDER_OT_move_inside(Operator):
     """Nudge parts that touch a wall of the build volume just inside it: 0.002 mm from every side
-    wall and the top they are too close to (the rule asks for 0.001 mm)"""
+    wall and the top they are too close to. The rule asks for 0.001 mm; twice that, so that the
+    rounding of single-precision coordinates can't put a part back on the line"""
     bl_idname = "bucketbuilder.move_inside"
-    bl_label = "Move Inside"
-    bl_options = {'REGISTER', 'UNDO'}
+    bl_label = "Nudge Inside"
+    # (no redo panel: changing the option there re-ran the nudge on the monitor's view of the scene
+    # before the undo had reached it, and parts jumped; the owner, 2026-11-23)
+    bl_options = {'UNDO'}
 
-    selected_only: BoolProperty(name="Selected Only", default=False,
+    selected_only: BoolProperty(name="Selected Only", default=False, options={'SKIP_SAVE', 'HIDDEN'},
                                 description="Only the selected parts that touch a wall")
 
     @classmethod
     def description(cls, context, properties):
-        if properties.selected_only:
-            return "Nudge the selected parts that touch a wall just inside it (0.002 mm from the wall)"
-        return "Nudge every part that touches a wall just inside it (0.002 mm from the wall)"
+        who = "the selected parts" if properties.selected_only else "every part"
+        return (f"Nudge {who} that touch a wall just inside it: 0.002 mm from the wall, twice the "
+                "0.001 mm the rule asks, so that rounding can't put a part back on the line")
 
     def execute(self, context):
         from mathutils import Matrix
@@ -1033,11 +1078,110 @@ class BUCKETBUILDER_OT_move_inside(Operator):
             if any(d):
                 obj.matrix_world = Matrix.Translation(d) @ obj.matrix_world
                 n += 1
-        self.report({'INFO'}, f"{n} part{'s' if n != 1 else ''} moved inside")
+        self.report({'INFO'}, f"{n} part{'s' if n != 1 else ''} nudged 0.002 mm off the wall")
+        return {'FINISHED'}
+
+
+def set_message(context, text):
+    """The last result line (a pack, a fix): shown in the panel under the verdict, where it isn't
+    missed as Blender's own reports are (the owner, 2026-11-24), and read by the PPP template."""
+    st = props.settings(context.scene)
+    if st is not None:
+        st.last_message = text[:200]
+
+
+class BUCKETBUILDER_OT_fix_scale(Operator):
+    """Scale parts 1000 times about the world origin (location and size), which exactly undoes a file
+    read in the wrong unit and keeps the parts' arrangement. The PPP template calls this one too, so
+    its button and the monitor's are the same thing"""
+    bl_idname = "bucketbuilder.fix_scale"
+    bl_label = "Fix the Scale"
+    bl_options = {'UNDO'}
+
+    factor: FloatProperty(default=1000.0, options={'HIDDEN'})
+    names: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def _objects(self):
+        names = [n for n in self.names.split("\n") if n]
+        if not names:
+            # (empty: every part flagged now, as the PPP template agreed)
+            mon = monitor.get(bpy.context.scene)
+            off = mon.scale_problem() if mon is not None else None
+            names = off[1] if off and (off[0] > 1) == (self.factor > 1) else []
+        return [o for o in (bpy.data.objects.get(n) for n in names) if o is not None]
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(
+            self, width=420, title="Check the Scale",
+            confirm_text="Scale \u00d71000" if self.factor > 1 else "Scale \u00f71000")
+
+    def draw(self, context):
+        n = len(self._objects())
+        col = self.layout.column(align=True)
+        what = "under 0.5 mm: imported in meters?" if self.factor > 1 else "over 1 m: imported in micrometers?"
+        col.label(text=f"{n} part{'s' if n != 1 else ''} {what}", icon='ERROR')
+        col.label(text="Bucket Builder reads 1 unit as 1 mm. Scale them to fit?")
+        col.label(text="Afterwards, check that they look right; Ctrl+Z undoes it.")
+
+    def execute(self, context):
+        objs = self._objects()
+        if not objs:
+            return {'CANCELLED'}
+        if context.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        for o in objs:
+            o.location = o.location * self.factor
+            o.scale = o.scale * self.factor
+        # show them, so the user can see whether they look right
+        try:
+            bpy.ops.object.select_all(action='DESELECT')
+            for o in objs:
+                if o.visible_get():
+                    o.select_set(True)
+            if context.area is not None and context.area.type == 'VIEW_3D':
+                bpy.ops.view3d.view_selected()
+        except Exception:                                # noqa: BLE001  (no viewport: a script)
+            pass
+        sign = "\u00d7" if self.factor > 1 else "\u00f7"
+        set_message(context, f"Scaled {len(objs)} part{'s' if len(objs) != 1 else ''} {sign}1000. "
+                             "Does this look right? Ctrl+Z undoes it.")
+        self.report({'INFO'}, props.settings(context.scene).last_message)
+        return {'FINISHED'}
+
+
+class BUCKETBUILDER_OT_density_view(Operator):
+    """Show the layer density larger, with its statistics"""
+    bl_idname = "bucketbuilder.density_view"
+    bl_label = "Layer Density"
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_popup(self, width=520)
+
+    def draw(self, context):
+        from . import icons, report, ui
+        layout = self.layout
+        mon = monitor.get(context.scene)
+        res = mon.report.result if mon is not None else None
+        value = icons.get('profile')
+        if res is None or not value:
+            layout.label(text="No density evaluated yet", icon='INFO')
+            return
+        layout.label(text="Layer Density", icon='GRAPH')
+        split = layout.split(factor=0.62)
+        ui.draw_density_figure(split.column(), res, value, 15.0)
+        col = split.column(align=True)
+        for key, val, tone in report.rows(res):
+            row = col.row()
+            row.label(text=key)
+            row.label(text=val, **({'icon': 'ERROR'} if tone == 'warn' else {}))
+
+    def execute(self, context):
         return {'FINISHED'}
 
 
 CLASSES = (
+    BUCKETBUILDER_OT_density_view,
+    BUCKETBUILDER_OT_fix_scale,
     BUCKETBUILDER_OT_move_inside,
     BUCKETBUILDER_OT_focus_problem,
     BUCKETBUILDER_OT_step_problem,

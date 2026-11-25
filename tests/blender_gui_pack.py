@@ -13,6 +13,9 @@ import traceback
 
 import bpy
 
+# the box pass would place these copies in seconds; the test needs a run long enough to stop midway
+os.environ['BB_BOXES'] = '0'
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gui_common  # noqa: E402
 

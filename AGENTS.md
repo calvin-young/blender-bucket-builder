@@ -561,6 +561,17 @@ never guessed from the parts (tiny parts named instead; DECISIONS). On
 hold for the owner's pick: #50 Align to Plane, #51 print-quality problems
 in the list, #52 snap with unapplied rotation.
 
+**2026-11-25 (1.6.4 in progress, not released).** The owner's 11-23 / 11-24 lists are in the tree
+(Settings panel, printer dialog, snap to the wall gap and #52, Nudge, both shadings, Dynamic Bucket
+Sizing + `bucketbuilder.fix_scale` agreed with PPP, density figure, #50, #51, the box pass with
+the socket regression, staging beside the volume, Improve Packing wording, last-result line,
+#53 / #54 filed, multi-bucket proposal in DECISIONS). The box pass now keeps the density limit
+(`boxpack.stretch`) and faces flat area down when the quality dial counts it; `BB_BOXES=0` turns it off.
+Headless suite and `blender_gui_pack` pass. Still failing: `blender_gui_test` (sidebar 818 px empty:
+check whether the test needs more panels open or the threshold changed) and `blender_gui_undo`
+(timer never saw the stale graph). Run window tests with `env -u WAYLAND_DISPLAY`, or Blender
+opens on the real desktop. Then: tag v1.6.4, pre-release, Workbench row, TALLY / PROMPT_STATS.
+
 **Next (2026-11-11, the owner's notes):** issues #28 - #40: overlay
 drawing order, inside-out and non-manifold checks, hidden parts by
 default, fully-outside parts quiet until export, Jiggle feedback, one

@@ -259,9 +259,57 @@ def _final(parts, vlo, vhi, workers, cache, faces):
         f = faces.get(_face_key(m, M))
         if f is not None:
             placed.append((n, f, np.asarray(M, float)[:3, 3]))
-    res.flat = quality.assess(placed) if placed else (0, 0.0, 0, 0.0)
+    pairs = []
+    res.flat = quality.assess(placed, faces_out=pairs) if placed else (0, 0.0, 0, 0.0)
     res.top = quality.top_faces(placed) if placed else (0, 0.0)
+    res.pq = _issues(parts, placed, pairs)
     return res
+
+
+PQ_TRIS = 600000        # triangles of print-quality faces kept for drawing, the whole build
+
+
+def _face_tris(m, M, f, j):
+    """The world triangles (mm, float32) of face j of a part's faces f."""
+    pts = getattr(f, 'pts', ())
+    if j >= len(pts):
+        return np.zeros((0, 3, 3), np.float32)
+    return pts[j] + M[:3, 3].astype(np.float32)          # (posed when the faces were found; plus the place)
+
+
+def _issues(parts, placed, pairs):
+    """The print-quality issues of the build for the Problems list and the viewport (#51): faces
+    flat facing up (PQ-07), shallow faces (PQ-09), faces by a wall (PQ-06), facing pairs (PQ-05).
+    Each a dict: rule, kind, a, b (part names), center (mm), radius (mm), tris (mm, float32)."""
+    out, budget = [], PQ_TRIS
+    by_id = {n: (f, parts[n]) for n, f, _t in placed}
+    shown = {'up': ('PQ-07', "flat face up"), 'shallow': ('PQ-09', "shallow face"),
+             'wall': ('PQ-06', "flat face by a wall")}
+    for n, f, _t in placed:
+        name, m, M = parts[n]
+        M = np.asarray(M, float)
+        for j, kind in enumerate(quality.classify(f)):
+            if not kind:
+                continue
+            T = _face_tris(m, M, f, j) if budget > 0 else np.zeros((0, 3, 3), np.float32)
+            budget -= len(T)
+            P = T.reshape(-1, 3)
+            c = P.mean(axis=0) if len(P) else M[:3, 3]
+            r = 0.5 * float(np.linalg.norm(P.max(0) - P.min(0))) if len(P) else 10.0
+            out.append({'rule': shown[kind][0], 'kind': kind, 'text': shown[kind][1], 'a': name, 'b': '',
+                        'center': c, 'radius': max(r, 1.0), 'tris': T, 'area': float(f.area[j])})
+    for pa, ja, pb, jb in pairs:
+        (fa, (na, ma, Ma)), (fb, (nb, mb, Mb)) = by_id[pa], by_id[pb]
+        Ta = _face_tris(ma, np.asarray(Ma, float), fa, ja) if budget > 0 else np.zeros((0, 3, 3), np.float32)
+        Tb = _face_tris(mb, np.asarray(Mb, float), fb, jb) if budget > 0 else np.zeros((0, 3, 3), np.float32)
+        budget -= len(Ta) + len(Tb)
+        T = np.concatenate([Ta, Tb]) if len(Ta) + len(Tb) else np.zeros((0, 3, 3), np.float32)
+        P = T.reshape(-1, 3)
+        c = P.mean(axis=0) if len(P) else 0.5 * (np.asarray(Ma)[:3, 3] + np.asarray(Mb)[:3, 3])
+        r = 0.5 * float(np.linalg.norm(P.max(0) - P.min(0))) if len(P) else 10.0
+        out.append({'rule': 'PQ-05', 'kind': 'close', 'text': "flat faces close", 'a': na, 'b': nb,
+                    'center': c, 'radius': max(r, 1.0), 'tris': T, 'area': 0.0})
+    return out
 
 
 def rows(rep):

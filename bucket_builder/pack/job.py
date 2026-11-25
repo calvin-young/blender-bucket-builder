@@ -273,6 +273,10 @@ class Job:
             self.log.append('%6.1f s  stacks     %s, %.1f mm, but %.1f %% dense, over the limit'
                             % (self.elapsed, got['what'], got['height'], 100 * density))
             return
+        old = getattr(self, '_stacks', None)
+        if old is not None and len(old['M']) >= len(group) and old['height'] <= got['height']:
+            self.log.append('%6.1f s  stacks     %s, %.1f mm: the box pass is lower' % (self.elapsed, got['what'], got['height']))
+            return
         self._stacks = {'M': {q: got['matrices'][n] for n, (q, _) in enumerate(group)}, 'height': got['height'],
                         'volume': vol, 'density': density}
         self.version += 1
@@ -286,9 +290,53 @@ class Job:
         m = self.parts[i].mesh
         return len(quality.flat_faces(m.verts, m.tris, np.eye(3))) > 0
 
+    BOX_FROM = 200            # copies above which the box pass is skipped (its check is quadratic)
+    BOX_MORE = 0.5            # of the time set: what the search gets once every part is in by its box
+
+    def _try_boxes(self):
+        """The box pass (pack/boxpack.py): every part turned to its smallest box, the boxes packed
+        exactly. An easy build is solved in seconds, every time; the search then only improves it."""
+        from . import boxpack, quality
+        if self.start or self.locked or len(self.copies) > self.BOX_FROM or os.environ.get('BB_BOXES') == '0':
+            return
+        t0 = self.elapsed
+        face_cost = None
+        if self.s.flat_rules and self.s.flat_top_weight:
+            # with faces facing up counted, a box may only take the turns that face the least area up
+            def face_cost(i, A):
+                m = self.parts[i].mesh
+                return quality.top_area(quality.flat_faces(m.verts, m.tris, A))[1]
+        got = boxpack.pack(self.parts, self.copies, self.s.pack_lo, self.s.pack_hi, self.s.gap, self.s.wall_gap,
+                           face_cost=face_cost)
+        if got is None:
+            self.log.append('%6.1f s  boxes      not every part fits by its box (%.1f s)' % (self.elapsed, self.elapsed - t0))
+            return
+        vol = sum(abs(float(metrics.mesh_stats(self.parts[q[0]].mesh)[0])) * abs(float(np.linalg.det(M[:3, :3])))
+                  for q, M in got['M'].items())
+        area = float(np.prod((self.s.vhi - self.s.vlo)[:2]))
+        if self.s.max_density:
+            # the density limit, as the search meets it: the layers lifted apart, or no box layout
+            if not boxpack.stretch(got, vol / (area * self.s.max_density)):
+                self.log.append('%6.1f s  boxes      %s, %.1f mm, over the density limit' % (self.elapsed, got['what'], got['height']))
+                return
+        fill = got['height'] - min(a[2] for a, _ in got['boxes'].values())
+        self._stacks = {'M': got['M'], 'height': got['height'], 'volume': vol,
+                        'density': vol / (area * fill) if fill > 0 else None}
+        self.version += 1
+        self.log.append('%6.1f s  boxes      %s: all %d parts, %.1f mm (%.1f s)'
+                        % (self.elapsed, got['what'], len(got['M']), got['height'], self.elapsed - t0))
+        if self.budget is not None:
+            self.budget = min(self.budget, self.elapsed + self.BOX_MORE * self.budget)
+
     def _with_stacks(self, work):
-        """Nesting stacks are tried first, the usual search after them; the
-        lower layout is the result."""
+        """The box pass and nesting stacks are tried first, the usual search after them; the
+        layout with more parts, then the lower one, is the result."""
+        try:
+            self._try_boxes()
+        except Exception as ex:     # (the search below doesn't depend on this)
+            self.log.append('%6.1f s  boxes      failed: %s' % (self.elapsed, type(ex).__name__))
+            if os.environ.get('PACK_DEBUG'):
+                raise
         try:
             self._try_stacks()
         except Exception as ex:     # (the search below doesn't depend on this)

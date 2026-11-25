@@ -229,8 +229,12 @@ def main():
     for name in ('detect_collisions', 'monitor_volume', 'ignore_hidden', 'detect_enclosed', 'unit_mode',
                  'show_labels_clearance', 'show_markers_clearance', 'local_view_mode'):
         assert ('prop', name) in LOG, f'{name} is missing from the sidebar'
-    for idname in ('bucketbuilder_volume_advanced', 'bucketbuilder_display_colors'):
+    for idname in ('bucketbuilder_display_colors',):
         assert ('panel', idname) in LOG, idname
+    # (the volume's size and placement moved into the New / Edit Printer dialogs: 2026-11-23)
+    assert ('panel', 'bucketbuilder_volume_advanced') not in LOG
+    for name in ('snap_to_volume',):
+        assert ('prop', name) in LOG, f'{name} is missing from the sidebar'
     for name in ('collision_mm', 'show_labels', 'enabled'):
         assert ('prop', name) not in LOG, name
     for idname in ('bucketbuilder.status', 'bucketbuilder.export_3mf', 'bucketbuilder.frame_volume'):
@@ -242,7 +246,7 @@ def main():
     assert 'Collision' in labels and 'Clearance' in labels, 'the display switches have no headings'
     # the panels are separate ones now, each with its own header
     tops = [c.bl_label for c in ui.CLASSES if issubclass(c, bpy.types.Panel) and not getattr(c, 'bl_parent_id', '')]
-    assert tops == ['Bucket Builder', 'Build Volume', 'Collision Detection', 'Manual Packing', 'Build Report', 'Autopacking', 'Options',
+    assert tops == ['Bucket Builder', 'Build Volume', 'Collision Detection', 'Manual Packing', 'Build Report', 'Autopacking', 'Settings',
                     'Export'], tops
     try:                                                # (without the 3MF add-on Export writes nothing)
         r = bpy.ops.bucketbuilder.export_3mf()

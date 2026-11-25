@@ -21,15 +21,14 @@ import math
 
 import bpy
 import numpy as np
-from bpy.props import FloatProperty
+from bpy.props import FloatProperty, FloatVectorProperty, StringProperty
 from bpy.types import Operator
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 
 from . import props
 
 HELPER_KEY = "bucket_builder_helper"     # custom property that marks the snap wireframe
 HELPER_NAME = "Build Volume (snap)"
-MAX_NORMALS = 400        # hull face directions tried for the smallest box
 
 
 # ---------------------------------------------------------------------------
@@ -58,159 +57,8 @@ def _world_mesh(obj, depsgraph, triangles=False):
     return co @ M[:3, :3].T + M[:3, 3], tris
 
 
-def _extremes(points, n=600):
-    """The points that are furthest out along ``n`` directions spread over
-    the sphere: a few hundred points whose hull is close to the hull of all
-    of them."""
-    k = np.arange(n) + 0.5
-    phi = np.arccos(1.0 - 2.0 * k / n)
-    th = math.pi * (1.0 + 5.0 ** 0.5) * k
-    d = np.stack([np.cos(th) * np.sin(phi), np.sin(th) * np.sin(phi), np.cos(phi)], axis=1)
-    pts = points
-    if len(pts) > 200000:
-        pts = pts[np.random.default_rng(0).choice(len(pts), 200000, replace=False)]
-    pr = pts @ d.T
-    idx = np.unique(np.concatenate([pr.argmax(axis=0), pr.argmin(axis=0)]))
-    return pts[idx]
-
-
-def _hull(points):
-    """Convex hull of a part: (vertices (k, 3), outward face normals (f, 3),
-    face areas (f,)).  Made from the part's extreme points (see
-    ``_extremes``), incrementally: what it is for is choosing an
-    orientation, and the final box is measured on all points."""
-    pts = _extremes(np.asarray(points, dtype=np.float64))
-    span = float(np.ptp(pts, axis=0).max()) if len(pts) else 0.0
-    eps = 1e-9 * max(span, 1e-30)
-    if len(pts) < 4 or span <= 0.0:
-        raise ValueError("the part is flat or empty")
-    # a first tetrahedron of points far apart
-    i0 = int(np.argmin(pts[:, 0]))
-    i1 = int(np.argmax(np.linalg.norm(pts - pts[i0], axis=1)))
-    line = pts[i1] - pts[i0]
-    i2 = int(np.argmax(np.linalg.norm(np.cross(pts - pts[i0], line), axis=1)))
-    nrm0 = np.cross(line, pts[i2] - pts[i0])
-    i3 = int(np.argmax(np.abs((pts - pts[i0]) @ nrm0)))
-    if abs(float((pts[i3] - pts[i0]) @ nrm0)) <= eps * float(np.linalg.norm(nrm0)):
-        raise ValueError("the part is flat")
-    inside = pts[[i0, i1, i2, i3]].mean(axis=0)
-    faces = []
-
-    def add(a, b, c):
-        n = np.cross(pts[b] - pts[a], pts[c] - pts[a])
-        if np.dot(n, pts[a] - inside) < 0.0:
-            b, c = c, b
-            n = -n
-        ln = float(np.linalg.norm(n))
-        faces.append((a, b, c, n / ln if ln > 0 else n, float(np.dot(n / ln if ln > 0 else n, pts[a]))))
-
-    for f in ((i0, i1, i2), (i0, i1, i3), (i0, i2, i3), (i1, i2, i3)):
-        add(*f)
-    for p in range(len(pts)):
-        if p in (i0, i1, i2, i3):
-            continue
-        q = pts[p]
-        seen = [f for f in faces if float(np.dot(f[3], q)) - f[4] > eps]
-        if not seen:
-            continue
-        edges = {}
-        for a, b, c, _, _ in seen:
-            for e in ((a, b), (b, c), (c, a)):
-                if (e[1], e[0]) in edges:
-                    del edges[(e[1], e[0])]
-                else:
-                    edges[e] = True
-        ids = {id(f) for f in seen}
-        faces[:] = [f for f in faces if id(f) not in ids]
-        for a, b in edges:
-            add(a, b, p)
-    nrm = np.array([f[3] for f in faces])
-    tri = np.array([[f[0], f[1], f[2]] for f in faces])
-    area = 0.5 * np.linalg.norm(np.cross(pts[tri[:, 1]] - pts[tri[:, 0]], pts[tri[:, 2]] - pts[tri[:, 0]]), axis=1)
-    used = np.unique(tri)
-    return pts[used], nrm, area
-
-
-def _directions(nrm, area, limit):
-    """Distinct directions among face normals (to about a degree), the ones
-    with the most area first."""
-    key = np.round(nrm * 60.0).astype(np.int64)
-    _, inv = np.unique(key, axis=0, return_inverse=True)
-    inv = inv.ravel()
-    tot = np.bincount(inv, weights=area)
-    vec = np.stack([np.bincount(inv, weights=area * nrm[:, c]) for c in range(3)], axis=1)
-    vec /= np.maximum(np.linalg.norm(vec, axis=1, keepdims=True), 1e-30)
-    order = np.argsort(-tot)[:limit]
-    return vec[order], tot[order]
-
-
-def _basis(n):
-    """Two unit vectors that make (u, v, n) a right-handed frame."""
-    a = np.array([1.0, 0.0, 0.0]) if abs(n[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
-    u = np.cross(a, n)
-    u /= np.linalg.norm(u)
-    return u, np.cross(n, u)
-
-
-def _min_rect(p2):
-    """The angle at which a 2-D point set has the smallest bounding rectangle,
-    and that area.  (The best angle is that of an edge of the convex hull;
-    a fine search over a quarter turn finds it closely enough.)"""
-    def areas(angles):
-        c, s = np.cos(angles), np.sin(angles)
-        x = p2[:, :1] * c + p2[:, 1:] * s
-        y = -p2[:, :1] * s + p2[:, 1:] * c
-        return (x.max(axis=0) - x.min(axis=0)) * (y.max(axis=0) - y.min(axis=0))
-    a = np.linspace(0.0, 0.5 * math.pi, 91)
-    best = a[np.argmin(areas(a))]
-    a = best + np.linspace(-math.radians(1.0), math.radians(1.0), 81)
-    ar = areas(a)
-    k = int(np.argmin(ar))
-    return float(a[k]), float(ar[k])
-
-
-def _frame(n, hv):
-    """Rows (u, v, n): n, and in its plane the directions of the smallest
-    rectangle around the points ``hv``."""
-    u, v = _basis(n)
-    ang, _ = _min_rect(np.stack([hv @ u, hv @ v], axis=1))
-    c, s = math.cos(ang), math.sin(ang)
-    return np.array([c * u + s * v, -s * u + c * v, n])
-
-
-def rotation_min_height(points):
-    """A rotation (3, 3) that makes the part as low as possible: a face of its
-    hull on the floor, and its footprint turned to the smallest rectangle."""
-    hv, nrm, area = _hull(points)
-    dirs, _ = _directions(nrm, area, 100000)
-    proj = hv @ dirs.T
-    width = proj.max(axis=0) - proj.min(axis=0)
-    n = dirs[int(np.argmin(width))]
-    F = _frame(n, hv)
-    F[2] = -n                     # (that face down: its outward normal points to the floor)
-    F[1] = np.cross(F[2], F[0])   # keep it a rotation
-    return F
-
-
-def rotation_min_volume(points):
-    """A rotation that makes the part's bounding box smallest; of its three
-    sides the shortest is put upright (lowest too)."""
-    hv, nrm, area = _hull(points)
-    dirs, _ = _directions(nrm, area, MAX_NORMALS)
-    best = None
-    for n in dirs:
-        F = _frame(n, hv)
-        p = hv @ F.T
-        ext = p.max(axis=0) - p.min(axis=0)
-        vol = float(ext.prod())
-        if best is None or vol < best[0] - 1e-12 * vol:
-            best = (vol, F, ext)
-    _, F, ext = best
-    order = np.argsort(-ext)      # longest along X, shortest along Z
-    F = F[order]
-    if np.linalg.det(F) < 0.0:
-        F[1] = -F[1]
-    return F
+from .pack.minbox import (_extremes, _hull, _directions, _basis, _min_rect, _frame,  # noqa: F401
+                          rotation_min_height, rotation_min_volume)
 
 
 def flat_faces(points, tris, share=0.04, most=6):
@@ -438,6 +286,163 @@ _EDGES = ((0, 1), (1, 3), (3, 2), (2, 0), (4, 5), (5, 7), (7, 6), (6, 4),
           (0, 4), (1, 5), (2, 6), (3, 7))
 
 
+def align_face_down(obj, normal, point, depsgraph, floor):
+    """Turn obj so the face with world normal `normal` faces straight down, about the point clicked,
+    then drop it to the floor. The rotation is the shortest one, so the part turns no more than it
+    must; an instanced part only changes its own transform (#50)."""
+    n = Vector(normal).normalized()
+    R = n.rotation_difference(Vector((0.0, 0.0, -1.0))).to_matrix().to_4x4()
+    P = Matrix.Translation(Vector(point))
+    obj.matrix_world = P @ R @ P.inverted() @ obj.matrix_world
+    depsgraph.update()
+    pts, _ = _world_mesh(obj, depsgraph)
+    if len(pts):
+        obj.matrix_world = Matrix.Translation((0.0, 0.0, floor - float(pts[:, 2].min()))) @ obj.matrix_world
+
+
+class BUCKETBUILDER_OT_align_to_plane(Operator):
+    """Click a face of a part: the part turns so that face lies flat on the build plate (facing down),
+    then drops to the floor. Esc or right-click to stop"""
+    bl_idname = "bucketbuilder.align_to_plane"
+    bl_label = "Align to Plane"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    # (for scripts and tests: a part, a world normal and a point on the face, with no clicking)
+    part: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    normal: FloatVectorProperty(size=3, options={'HIDDEN', 'SKIP_SAVE'})
+    point: FloatVectorProperty(size=3, options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT'
+
+    def _floor(self, context):
+        from .pack.problem import FLOOR_INSET
+        return float(volume_box(context)[0][2]) + FLOOR_INSET / _mm_per_unit(context)
+
+    def execute(self, context):
+        obj = bpy.data.objects.get(self.part)
+        if obj is None or Vector(self.normal).length < 1e-9:
+            return {'CANCELLED'}
+        align_face_down(obj, self.normal, self.point, context.evaluated_depsgraph_get(), self._floor(context))
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        if context.area is None or context.area.type != 'VIEW_3D':
+            self.report({'WARNING'}, "Align to Plane works in the 3D Viewport")
+            return {'CANCELLED'}
+        context.window.cursor_modal_set('EYEDROPPER')
+        context.workspace.status_text_set("Align to Plane: click a face to lay it on the build plate   "
+                                          "Esc / right-click: stop")
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _end(self, context):
+        context.window.cursor_modal_restore()
+        context.workspace.status_text_set(None)
+
+    def modal(self, context, event):
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            self._end(context)
+            return {'CANCELLED'}
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            from bpy_extras import view3d_utils
+            region, rv3d = context.region, context.region_data
+            if region is None or rv3d is None or region.type != 'WINDOW':
+                return {'PASS_THROUGH'}
+            co = (event.mouse_region_x, event.mouse_region_y)
+            origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, co)
+            ray = view3d_utils.region_2d_to_vector_3d(region, rv3d, co)
+            dg = context.evaluated_depsgraph_get()
+            hit, loc, nrm, _i, obj, _M = context.scene.ray_cast(dg, origin, ray)
+            if not hit or obj is None or obj.type != 'MESH' or is_helper(obj):
+                self.report({'INFO'}, "Click a face of a part")
+                return {'RUNNING_MODAL'}
+            obj = obj.original
+            align_face_down(obj, nrm, loc, dg, self._floor(context))
+            self.part, self.normal, self.point = obj.name, tuple(nrm), tuple(loc)
+            self._end(context)
+            self.report({'INFO'}, f"{obj.name}: the face is on the build plate")
+            return {'FINISHED'}
+        return {'PASS_THROUGH'}
+
+
+# ---------------------------------------------------------------------------
+# snapping a turned part (#52)
+# ---------------------------------------------------------------------------
+# Blender snaps a part by the corners of its own bounding box, which turns with it: after Tilt Off
+# Axis (rotation not applied, which instanced parts can't do) the box's corner lands on the wall and
+# the part stops short of it. After a move that snapped, a part whose box corner sits on a plane of
+# the snap wireframe is moved on until its real surface sits there instead.
+
+_last_op = [None]
+
+
+def snap_planes(scene, context=None):
+    """The six planes of the snap wireframe as (lo, hi) in scene units, or None."""
+    obj = find_helper(scene)
+    if obj is None or len(obj.data.vertices) != 8:
+        return None
+    co = np.array([v.co[:] for v in obj.data.vertices])
+    return co.min(axis=0), co.max(axis=0)
+
+
+def settle_snapped(context, objs):
+    """Move each turned part whose rotated box touches a snap plane so its true extent does.
+    Returns how many were moved."""
+    planes = snap_planes(context.scene, context)
+    if planes is None:
+        return 0
+    lo, hi = planes
+    size = float(np.max(hi - lo)) or 1.0
+    tol = 1e-5 * size
+    dg = context.evaluated_depsgraph_get()
+    n = 0
+    for obj in objs:
+        M = np.array(obj.matrix_world)
+        R = M[:3, :3] / np.maximum(np.linalg.norm(M[:3, :3], axis=0), 1e-12)
+        if np.allclose(np.abs(R), np.round(np.abs(R)), atol=1e-6):
+            continue                                     # (axis-aligned: Blender's snap is exact)
+        box = np.array([obj.matrix_world @ Vector(c) for c in obj.bound_box])
+        blo, bhi = box.min(axis=0), box.max(axis=0)
+        pts, _ = _world_mesh(obj, dg)
+        if not len(pts):
+            continue
+        tlo, thi = pts.min(axis=0), pts.max(axis=0)
+        d = np.zeros(3)
+        for a in range(3):
+            if abs(blo[a] - lo[a]) < tol:
+                d[a] = lo[a] - tlo[a]
+            elif abs(bhi[a] - hi[a]) < tol:
+                d[a] = hi[a] - thi[a]
+        if np.any(np.abs(d) > tol):
+            obj.matrix_world = Matrix.Translation(d.tolist()) @ obj.matrix_world
+            n += 1
+    return n
+
+
+def _watch_snaps():
+    """Timer: after a move that snapped, settle the turned parts it moved."""
+    try:
+        ctx = bpy.context
+        scene = ctx.scene
+        st = props.settings(scene) if scene is not None else None
+        wm = ctx.window_manager
+        ops = wm.operators if wm is not None else ()
+        last = ops[-1] if len(ops) else None
+        key = last.as_pointer() if last is not None else None
+        if key != _last_op[0]:
+            _last_op[0] = key
+            if (st is not None and st.snap_to_volume and last is not None
+                    and last.bl_idname == 'TRANSFORM_OT_translate' and last.properties.snap):
+                objs = [o for o in ctx.selected_objects if o.type == 'MESH' and not is_helper(o)]
+                if 0 < len(objs) <= 16:
+                    settle_snapped(ctx, objs)
+    except Exception:                                    # noqa: BLE001  (never break the UI for this)
+        pass
+    return 0.25
+
+
 def find_helper(scene):
     for obj in scene.objects:
         if is_helper(obj):
@@ -464,7 +469,8 @@ def _sync_snap(scene, context):
     if st is None:
         return
     obj = find_helper(scene)
-    if not st.snap_to_volume:
+    if not (st.snap_to_volume and st.monitor_volume):
+        # (with the build volume's monitor off, no wireframe: the owner, 2026-11-24)
         if obj is not None:
             me = obj.data
             bpy.data.objects.remove(obj)
@@ -477,6 +483,10 @@ def _sync_snap(scene, context):
     from .pack.problem import FLOOR_INSET
     lo, hi = lo + np.array([m, m, FLOOR_INSET / _mm_per_unit(context or bpy.context)]), hi - m   # side walls and the top;
                                                                                                    # 0.001 mm above the floor)
+    if st.use_volume and st.use_wall_clearance and st.wall_clearance_mm > 0.0:
+        # with a wall gap, parts snap to it, not to the walls (the owner, 2026-11-23)
+        g = st.wall_clearance_mm / _mm_per_unit(context or bpy.context)
+        lo, hi = lo + np.array([g, g, 0.0]), hi - np.array([g, g, 0.0])
     pts = [(x, y, z) for z in (lo[2], hi[2]) for y in (lo[1], hi[1]) for x in (lo[0], hi[0])]
     if obj is None:
         me = bpy.data.meshes.new(HELPER_NAME)
@@ -499,7 +509,7 @@ def _sync_snap(scene, context):
 
 
 CLASSES = (BUCKETBUILDER_OT_drop_to_floor, BUCKETBUILDER_OT_minimize_box,
-           BUCKETBUILDER_OT_minimize_height, BUCKETBUILDER_OT_tilt_off_axis)
+           BUCKETBUILDER_OT_minimize_height, BUCKETBUILDER_OT_tilt_off_axis, BUCKETBUILDER_OT_align_to_plane)
 
 _keymaps = []
 
@@ -507,6 +517,8 @@ _keymaps = []
 def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
+    if not bpy.app.timers.is_registered(_watch_snaps):
+        bpy.app.timers.register(_watch_snaps, first_interval=1.0, persistent=True)
     kc = bpy.context.window_manager.keyconfigs.addon
     if kc is not None:
         km = kc.keymaps.new(name="Object Mode", space_type='EMPTY')
@@ -516,6 +528,8 @@ def register():
 
 
 def unregister():
+    if bpy.app.timers.is_registered(_watch_snaps):
+        bpy.app.timers.unregister(_watch_snaps)
     for km, kmi in _keymaps:
         try:
             km.keymap_items.remove(kmi)

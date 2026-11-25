@@ -169,6 +169,7 @@ def _has_helper(scene):
 def _poke_enabled(self, context):
     from . import monitor
     monitor.on_enabled_changed(context.scene if context else None)
+    _sync_snap(context)                   # (the snap wireframe goes with the build volume's monitor)
 
 
 def _poke_report(self, context):
@@ -251,9 +252,9 @@ class BucketBuilderSettings(PropertyGroup):
         default=False, update=_poke_enabled)
 
     report_density: BoolProperty(
-        name="Density Report",
+        name="Evaluate Density",
         description="Work out the build's density, packed height and the density of every "
-                    "layer, against the printer's build area. Needs one of the two checks "
+                    "layer, against the printer's build area, and its print-quality issues. Needs one of the two checks "
                     "above, which read the parts",
         default=False, update=_poke_report)
 
@@ -396,6 +397,22 @@ class BucketBuilderSettings(PropertyGroup):
                 "unit settings say"),
                ('SCENE', "Scene Units", "Use the scene's unit scale as it is")),
         default='AUTO', update=_poke)
+
+    last_message: StringProperty(
+        name="Last Result", description="What the last pack or fix did", default="",
+        options={'SKIP_SAVE'})
+    show_pq: BoolProperty(
+        name="Print-Quality Notes",
+        description="With Evaluate Density on, list the print-quality issues it finds (flat faces up, shallow "
+                    "faces, faces by a wall, flat faces close) in the Problems list and shade them in the "
+                    "viewport. They are notes: they never fail the build",
+        default=True, update=_poke)
+    dynamic_bucket_size: BoolProperty(
+        name="Dynamic Bucket Sizing",
+        description="In a scene whose units leave it open (unit scale 1), decide from the first parts read "
+                    "whether a unit is a millimeter or a meter, and size the bucket to match. Off: 1 unit = 1 mm, "
+                    "and parts that look 1000 times off are named with a button to scale them",
+        default=False, update=_poke)
 
     use_volume: BoolProperty(
         name="Check Build Volume", description="Warn when parts reach outside the build volume",
@@ -578,6 +595,9 @@ class BucketBuilderPreferences(AddonPreferences):
     color_outside: FloatVectorProperty(
         name="Outside Volume", subtype='COLOR_GAMMA', size=4, min=0.0, max=1.0,
         default=(0.95, 0.1, 0.85, 1.0), update=_poke_redraw)
+    color_quality: FloatVectorProperty(
+        name="Print Quality", subtype='COLOR_GAMMA', size=4, min=0.0, max=1.0,
+        default=(0.2, 0.8, 0.75, 1.0), update=_poke_redraw)
     color_volume: FloatVectorProperty(
         name="Build Volume", subtype='COLOR_GAMMA', size=4, min=0.0, max=1.0,
         default=(0.35, 0.75, 1.0, 1.0), update=_poke_redraw)
@@ -589,6 +609,8 @@ class BucketBuilderPreferences(AddonPreferences):
                         "The parts are closer to each other than the clearance")
     tab_wall: _tab("color_clearance", "Within Wall Gap",
                    "The part is closer to a wall of the build volume than the wall gap")
+    tab_quality: _tab("color_quality", "Print Quality",
+                      "A print-quality note from the density evaluation: it does not fail the build")
     tab_ignored: _tab(None, "Ignored", "This problem is ignored: it does not count and is not drawn")
     hatch_pixels: IntProperty(
         name="Hatch Spacing", description="Distance between hatch lines in pixels (whole "
