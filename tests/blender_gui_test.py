@@ -678,6 +678,7 @@ def step_hide():
     ring = bpy.data.objects['Ring']
     with override():
         bpy.ops.object.select_all(action='DESELECT')
+    win().scene.bucket_builder.ignore_hidden = False   # (on by default since 1.5.7: here hidden parts count)
     ring.hide_set(True)
     look((112, 110, 64), (0.35, -0.8, 0.5), 200)
     return 1.0
@@ -728,9 +729,15 @@ def step_final():
     assert s['objects'] == 6 and s['hidden'] == 0 and s['collisions'] == 1, s
     assert not mon.error, mon.error
     shot('gui_11_final')
-    # the button that is there for what comes next: it says so, and does nothing else
+    # without the 3MF add-on, Export says what is missing and does nothing else (an error report
+    # comes back from bpy.ops as a RuntimeError)
     with override():
-        assert bpy.ops.bucketbuilder.export_3mf() == {'CANCELLED'}
+        try:
+            r = bpy.ops.bucketbuilder.export_3mf()
+        except RuntimeError as ex:
+            assert '3MF add-on' in str(ex), ex
+        else:
+            assert r == {'CANCELLED'}, r
     return 0.8
 
 

@@ -256,3 +256,20 @@ Later:
 * **Assumed:** turns of 1, 2, 4 degrees up to the limit, at most two parts; the packer's two-clearance order (aim, then squeezed-in or everything at the least, whichever places more, then Jiggle); sampling 0.5 mm in the slow check.
 * **Not asked:** whether the packer's two-clearance run may take longer than its time setting (it overran 20 s by about 14 s on a small case).
 * **Later:** the panel's clearance fields; #24, #26; the slow check is slow on large builds (5 min on the challenge build).
+
+## 2026-11-23 to 26 (1.6.4: the owner's lists of 11-23 and 11-24)
+
+* **Asked:** everything in the two lists (Nudge, units, density figure, printer dialog, Settings, snap,
+  shadings, #50 - #52, #19 if possible, the snap wireframe bug, the socket regression with a quick box
+  pass, parts out of the bucket first, the improve wording, multi-bucket pros and cons, copies and
+  labels as issues, a last-result line); the shared `bucketbuilder.fix_scale` with the PPP template.
+* **Assumed:** Settings stays open by default; print-quality notes shown with Evaluate Density, on by
+  default, never failing the build; the box pass keeps the density limit by lifting layers apart and,
+  when faces facing up count, only takes turns with the least flat area up; it may leave flat faces
+  facing each other at the full clearance; it runs only for up to 200 copies and cuts the remaining
+  search to half the time once every part is in; parts are staged on the +X side; #19 only made less
+  likely (a vertex checksum in the signature), not proven fixed.
+* **Not asked:** whether the box pass should run when quality is at its highest; which bucket model
+  (scenes, view layers, collections) to build.
+* **Later:** #53 dense-layer sections (needs Crosscut), #54 copies dialog, editable labels (#39),
+  multiple buckets once picked, Netfabb's 5 sets against our 4.

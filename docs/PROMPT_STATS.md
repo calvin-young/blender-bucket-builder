@@ -41,6 +41,7 @@ line counts once, in the session it came up in.
 
 | Date | Tool and model | Prompts | Steering lines |
 |---|---|---|---|
+| 2026-11-23 to 26 | Claude Code (workstation), Opus 5.5, two sessions, sent by an orchestrating session | 2 | 20 |
 | 2026-11-14 to 18 | Claude Code (workstation), Opus 5.5, sent by an orchestrating session | 1 | 18 |
 | 2026-11-11 | Claude Code (workstation), Opus 5.5 | 1 | 5 |
 | 2026-11-11 to 13 | Claude Code (workstation), Fable 5.2 and Opus 5.5, sent by an orchestrating session | 1 | 3 |
@@ -125,6 +126,26 @@ the detail.
 - 2026-11-10 [direction]: a day of autonomous packer work: find weaknesses, fix them, benchmark against every packer available, Netfabb's trial included.
 - 2026-11-10 [direction]: a report for his management that places the packer against the industry and research, names packers we could still get, and quantifies headroom, hardware limits and what compiled code would buy.
 - 2026-11-10 [direction]: asked whether a speed-against-density control makes sense, preferring not to add a second slider.
+- 2026-11-23 [ui]: "Move All Inside" becomes "Nudge All Inside" / "Nudge Selected", and the distance it says it needs must match what it moves.
+- 2026-11-23 [bugs]: with nothing selected, toggling "selected only" in the redo panel of Nudge sent parts back toward the origin.
+- 2026-11-23 [direction]: guessing units from the parts must not be the default; keep it as an advanced "Dynamic Bucket Sizing" toggle, and offer a scale fix for parts 1000 times off.
+- 2026-11-23 [ui]: the density figure: an expanded view, a legend one line each, a proper figure header, "Build Plate" under the plot.
+- 2026-11-23 [feature]: highlight the dense layers and step through them with section views (#53, with Crosscut).
+- 2026-11-23 [ui]: a printer dialog with the dimensions replaces the Advanced section of Build Volume.
+- 2026-11-23 [ui]: Options renamed Settings, Part Colors moved into Display, Units above Performance.
+- 2026-11-23 [ui]: Snap to Build Volume also under Check Build Volume in the monitor.
+- 2026-11-23 [feature]: with a wall gap, parts snap to the gap, not the wall.
+- 2026-11-23 [bugs]: with snap on, a placed part still clashed with the wall (turned parts, #52).
+- 2026-11-23 [ui]: keep the wall-gap shading when the out-of-volume hatching appears.
+- 2026-11-23 [direction]: go ahead with Align to Plane, print-quality notes in the list and snapping turned parts (#50 - #52).
+- 2026-11-24 [bugs]: the snap wireframe stayed after the build-volume monitor was turned off.
+- 2026-11-24 [tested][bugs]: four linked copies of one socket took 4 minutes on the laptop and left one out; it should take seconds.
+- 2026-11-24 [feature]: a quick first pass: each part turned to its smallest box, then the boxes packed, before the full search.
+- 2026-11-24 [ui]: Pack From Scratch first moves every part out of the bucket, then places them one by one.
+- 2026-11-24 [ui]: say plainly that packing goes on improving and that Esc keeps what is on screen; "Improve Packing" when everything already fits.
+- 2026-11-24 [direction]: several buckets in one file: weigh scenes, view layers and collections and recommend one.
+- 2026-11-24 [feature]: an easy copies dialog ("5 of this part") and series labels that stay editable (#54, #39).
+- 2026-11-24 [ui]: a fixed place in the panel for the last result line, not only Blender's easily missed report.
 - 2026-11-05 [direction]: the packer's goal for chips: what you'd get by pulling half a tube out, laying it down, and putting the other half next to it.
 - 2026-11-05 [direction]: chips sized and counted so that they fit two side-by-side horizontal stacks.
 - 2026-11-05 [feature]: the reel opens on the can's label, lid off, a pack by hand; then dump, a bad packer, back to the pile, ours.

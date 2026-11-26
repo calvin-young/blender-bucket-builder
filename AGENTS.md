@@ -14,7 +14,7 @@ Cursor and Gemini CLI read it directly.
   height), Arrange tools (drop to floor, minimize box or height, tilt off axis,
   snap to the volume), and an automatic packer, still marked experimental
   (`docs/AUTOPACK.md`; print-quality rules in `docs/PRINT_QUALITY.md`).
-* **Status:** version 1.6.3, in production use by its first user. Declared for
+* **Status:** version 1.6.4, in production use by its first user. Declared for
   Blender 4.2 and newer; tested on Blender 5.2 (Linux, software OpenGL).
   Not yet tried: Blender 4.2 - 5.1, macOS, Vulkan / Metal, a real GPU.
 * **Runs in:** Blender's bundled Python (3.11 in 4.2) with NumPy, nothing else.
@@ -161,7 +161,7 @@ the code. Tagged so far: v1.0.0 (731961d), v1.1.0 (c32cec6), v1.2.0 (ae5a8bf),
 v1.3.0 (bf63370), v1.5.1 (same code as main's 1.5.0, cut for the status page's download button). Not tagged: 1.3.90-1.4.x, the `autopack` branch's previews,
 where "1.4.0" was used on both lines and 1.4.3 never reached the manifest; and
 1.5.0, whose code kept changing after the version was set (e8fdc24 to
-0614ea1). Tagged since: v1.5.2, v1.5.3, v1.5.4, v1.5.5, v1.5.6, v1.5.7, v1.6.0, v1.6.1, v1.6.2, v1.6.3. The next build is 1.6.4. Builds also get a GitHub pre-release with the zip
+0614ea1). Tagged since: v1.5.2, v1.5.3, v1.5.4, v1.5.5, v1.5.6, v1.5.7, v1.6.0, v1.6.1, v1.6.2, v1.6.3, v1.6.4. The next build is 1.6.5. Builds also get a GitHub pre-release with the zip
 attached, and a new download link on the Workbench row (ai-context, topics/workstation.md).
 
 ## Implementation notes
@@ -561,16 +561,15 @@ never guessed from the parts (tiny parts named instead; DECISIONS). On
 hold for the owner's pick: #50 Align to Plane, #51 print-quality problems
 in the list, #52 snap with unapplied rotation.
 
-**2026-11-25 (1.6.4 in progress, not released).** The owner's 11-23 / 11-24 lists are in the tree
-(Settings panel, printer dialog, snap to the wall gap and #52, Nudge, both shadings, Dynamic Bucket
-Sizing + `bucketbuilder.fix_scale` agreed with PPP, density figure, #50, #51, the box pass with
-the socket regression, staging beside the volume, Improve Packing wording, last-result line,
-#53 / #54 filed, multi-bucket proposal in DECISIONS). The box pass now keeps the density limit
-(`boxpack.stretch`) and faces flat area down when the quality dial counts it; `BB_BOXES=0` turns it off.
-Headless suite and `blender_gui_pack` pass. Still failing: `blender_gui_test` (sidebar 818 px empty:
-check whether the test needs more panels open or the threshold changed) and `blender_gui_undo`
-(timer never saw the stale graph). Run window tests with `env -u WAYLAND_DISPLAY`, or Blender
-opens on the real desktop. Then: tag v1.6.4, pre-release, Workbench row, TALLY / PROMPT_STATS.
+**2026-11-26 (1.6.4).** The owner's lists of 11-23 and 11-24 (CHANGELOG.md). The box pass
+(`pack/boxpack.py`, `pack/minbox.py`, `Job._try_boxes`) runs before the search for up to 200
+copies, keeps the density limit (`boxpack.stretch`), takes only the turns with the least flat area up
+when the dial counts it, and is turned off by `BB_BOXES=0` (tests that need a slow first layout).
+Print-quality thresholds in one module, `pack/pq_rules.py`, with its table in PRINT_QUALITY.md kept in
+step by `tests/test_pq_rules.py`. Multi-bucket proposal in DECISIONS (collections side by side,
+not built). Window tests need Xvfb (installed 2026-11-26 with apt); `gui_on_xvfb.sh` points
+`WAYLAND_DISPLAY` at nothing, or Blender opens on the desktop. Next: the packer queue in the
+overnight plan (Netfabb's 5 sets against our 4, laptop speed), #53 with Crosscut, #54.
 
 **Next (2026-11-11, the owner's notes):** issues #28 - #40: overlay
 drawing order, inside-out and non-manifold checks, hidden parts by
