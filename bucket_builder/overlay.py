@@ -1692,6 +1692,34 @@ def draw_pixel():
         _draw_failed(mon, ex)
 
 
+# The draw order shared with other print add-ons (Crosscut's cut faces are layer 0; markers and
+# measurements like these are 100): a registry in sys.modules, add-on name -> (layer, a function that
+# removes and re-adds that add-on's POST_VIEW handler so it runs last). Whichever loads first, layers
+# above draw after layers below (#28; Crosscut's half is crosscut#17, its DECISIONS D-053).
+DRAW_ORDER = "_print_addons_draw_order"
+DRAW_LAYER = 100
+
+
+def _draw_order():
+    import sys
+    import types
+    reg = sys.modules.get(DRAW_ORDER)
+    if reg is None:
+        reg = types.ModuleType(DRAW_ORDER)
+        reg.layers = {}
+        sys.modules[DRAW_ORDER] = reg
+    return reg.layers
+
+
+def _readd_view_handler():
+    """Remove and re-add the POST_VIEW handler, so it runs after every handler added before."""
+    if not _handles:
+        return
+    sv = bpy.types.SpaceView3D
+    sv.draw_handler_remove(*_handles[0])
+    _handles[0] = (sv.draw_handler_add(draw_view, (), 'WINDOW', 'POST_VIEW'), 'WINDOW')
+
+
 def register():
     if _handles:
         return
@@ -1699,9 +1727,18 @@ def register():
     _handles.append((sv.draw_handler_add(draw_view, (), 'WINDOW', 'POST_VIEW'), 'WINDOW'))
     _handles.append((sv.draw_handler_add(draw_pixel, (), 'WINDOW', 'POST_PIXEL'), 'WINDOW'))
     _handles.append((sv.draw_handler_add(_measure_sidebar, (), 'UI', 'POST_PIXEL'), 'UI'))
+    layers = _draw_order()
+    layers["bucket_builder"] = (DRAW_LAYER, _readd_view_handler)
+    for name, (layer, readd) in sorted(layers.items(), key=lambda kv: kv[1][0]):
+        if layer > DRAW_LAYER:
+            try:
+                readd()
+            except Exception:                               # noqa: BLE001  (an add-on gone without saying)
+                layers.pop(name, None)
 
 
 def unregister():
+    _draw_order().pop("bucket_builder", None)
     sv = bpy.types.SpaceView3D
     for handle, region in _handles:
         try:

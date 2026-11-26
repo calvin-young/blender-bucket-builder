@@ -240,6 +240,13 @@ belongs to the PPP template.
 - Why it failed: Blender does not snap to hidden objects.
 - Worth retrying if: never; making it unselectable is the way.
 
+**Double lattices of a part with an unturned copy of itself (2026-11-26)**
+- Why it failed: on the challenge build's frame part (p0) the best lattice held 3 copies with or without
+  it, and building the patterns took 452 s instead of 336 s. The hand pack nests that part in staggered
+  pairs, but on the simplified mesh Netfabb and our runs use, that pair offset collides in every
+  orientation; True Shape instead stacks the frames flat and lays the thin plates inside them.
+- Worth retrying if: a part's own pairings show a nested pair the plain lattice cannot reach.
+
 **`bmesh.ops.convex_hull` for the Arrange tools**
 - Why it failed: it needs Blender to be built with Bullet, which not every build has.
 - Worth retrying if: never needed; the own hull is small.
