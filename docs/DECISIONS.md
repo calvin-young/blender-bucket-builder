@@ -234,6 +234,16 @@ many parts that one scene is too slow. The engine changes are small (a volume pe
 at a time); the work is in the panel and in export (bucket-local coordinates). How the list is shown
 belongs to the PPP template.
 
+**Free parts start from their smallest box when that box is clearly smaller (1.6.5, 2026-11-26)**
+
+The 24 quarter turns of a freely turning part used to start from its principal axes. For open shapes
+(a frame, a tray) those axes are tilted against the part's own edges, so every copy sat on a slant
+with a box up to about twice its own, and builds of such parts lost whole sets. `problem.free_frame`
+takes the frame of the smallest bounding box (`minbox`) when its box is under 90 % of the principal
+frame's; boxy and round parts (the pringle cases) keep their principal axes. A local test build of
+open parts gained complete sets; the synthetic suite was unchanged. Cost: up to about 1.5 s per part
+of 100 k vertices, once per process.
+
 ## Tried and abandoned
 
 **Hiding the snap wireframe**
@@ -241,10 +251,8 @@ belongs to the PPP template.
 - Worth retrying if: never; making it unselectable is the way.
 
 **Double lattices of a part with an unturned copy of itself (2026-11-26)**
-- Why it failed: on the challenge build's frame part (p0) the best lattice held 3 copies with or without
-  it, and building the patterns took 452 s instead of 336 s. The hand pack nests that part in staggered
-  pairs, but on the simplified mesh Netfabb and our runs use, that pair offset collides in every
-  orientation; True Shape instead stacks the frames flat and lays the thin plates inside them.
+- Why it failed: on a test build's open frame part the best lattice held no more copies with it than
+  without, and building the patterns took about a third longer.
 - Worth retrying if: a part's own pairings show a nested pair the plain lattice cannot reach.
 
 **`bmesh.ops.convex_hull` for the Arrange tools**

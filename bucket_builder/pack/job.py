@@ -1750,6 +1750,39 @@ class Job:
                                 '(%.0f mm2), %.0f mm2 facing up' % (self.elapsed, pairs, a_pair, walls, a_wall,
                                                                      self._top_area(lay)))
         yield from self._compact_phase()
+        self._final_check()
+
+    FINAL_CHECK_S = 60.0      # seconds the exact check of the final layout may take at most
+
+    def _final_check(self):
+        """The referee on the layout handed back: a part that breaks a rule after the last steps
+        (seen once, 2026-11-26: one part a cell through the floor and one pair 1 mm apart, not
+        reproduced since) is taken out and reported as left out, never handed back wrong."""
+        from . import referee
+        if self.best is None or self.cancel:
+            return
+        res = self.result()
+        lk = [('locked', m, M) for m, M in self.locked]
+        try:
+            bad = referee.offenders(lk + res.items(self.parts), self.s.vlo, self.s.vhi, self.s.gap,
+                                    self.s.wall_gap, fixed=len(lk), timeout=self.FINAL_CHECK_S)
+        except Exception as ex:                         # noqa: BLE001  (the layout stands unchecked)
+            self.log.append('%6.1f s  check      not done: %s' % (self.elapsed, type(ex).__name__))
+            return
+        if not bad:
+            return
+        st = getattr(self, '_stacks', None)
+        for u in sorted(bad):
+            p = res.placements[u - len(lk)]
+            q = (p.part, p.copy)
+            self.best.pop(q, None)
+            if self.final is not None:
+                self.final.pop(q, None)
+            if st is not None:
+                st['M'].pop(q, None)
+            self.why[q] = 'failed the final check'
+        self.version += 1
+        self.log.append('%6.1f s  check      %d parts broke a rule after the last steps: left out' % (self.elapsed, len(bad)))
 
     def _spread(self):
         """Even out the density from layer to layer: lift parts straight up,

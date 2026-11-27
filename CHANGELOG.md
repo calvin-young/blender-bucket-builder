@@ -3,6 +3,14 @@
 Versions are tagged `vX.Y.Z` on GitHub, each with a pre-release and its zip. Notes on versions
 before 1.6.4 are in `AGENTS.md` ("Working notes: state") and the GitHub releases.
 
+## 1.6.5 (2026-11-26)
+
+* **Packing:** a part that may turn freely now starts from its smallest bounding box when its principal
+  axes would leave it on a slant (open frames and trays), so such parts pack square and closer.
+* **Packing:** the finished layout is checked once more by the exact engine; a part that breaks a rule
+  is left beside the bucket with the reason "failed the final check", never handed back wrong.
+* **Overlay:** stays drawn over Crosscut's cut faces whichever add-on loads first (#28).
+
 ## 1.6.4 (2026-11-26)
 
 * **Packing:** a quick first pass turns each part to its smallest box and packs the boxes, so easy

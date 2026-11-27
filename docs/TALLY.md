@@ -273,3 +273,15 @@ Later:
   (scenes, view layers, collections) to build.
 * **Later:** #53 dense-layer sections (needs Crosscut), #54 copies dialog, editable labels (#39),
   multiple buckets once picked, Netfabb's 5 sets against our 4.
+
+## 2026-11-26 (1.6.5: square starting frames, a final check, the shared draw order)
+
+* **Asked (orchestrator, from the overnight plan):** close the packing gap on the owner's local test
+  build (numbers stay local); the draw-order registry shared with Crosscut (#28).
+* **Assumed:** the smallest-box frame wins only below 90 % of the principal frame's box; the final check
+  takes out offending parts rather than undoing the last steps, with up to 60 s for the check; Part
+  Quality 0 keeps doubling the time when parts are left out (its documented behavior), though the panel
+  does not say so.
+* **Not asked:** nothing new.
+* **Later:** the cause of the one unclean layout (not reproduced in four runs); the panel location
+  preference (#38) with Crosscut's names; the time setting's wording when extra time is added.

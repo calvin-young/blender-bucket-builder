@@ -296,6 +296,28 @@ def group_key(L, mode):
     return (mode, np.round(L, 9).tobytes())
 
 
+FRAME_GAIN = 0.9      # the smallest box's frame replaces the principal axes when its box is this much smaller
+
+
+def free_frame(verts):
+    """The frame the 24 quarter turns of a free part start from: its principal axes, or the frame of
+    its smallest bounding box when that box is clearly smaller. Principal axes are tilted against the
+    part's own edges for open shapes (a frame, a tray: a box up to about twice the part's own), and
+    every copy then sits on a slant; boxy and round parts keep their principal axes."""
+    from . import minbox
+    V = np.asarray(verts, float)
+    P = principal_frame(V)
+
+    def box(R):
+        W = V @ R.T
+        return float(np.prod(W.max(0) - W.min(0)))
+    try:
+        Q = minbox.rotation_min_volume(V)
+    except Exception:                                   # noqa: BLE001  (a degenerate mesh: no hull)
+        return P
+    return Q if box(Q) < FRAME_GAIN * box(P) else P
+
+
 def orientations(part, z_step=30.0):
     """The linear parts to try for a part, as 3 x 3 arrays."""
     base = np.asarray(part.base, float)
@@ -306,7 +328,7 @@ def orientations(part, z_step=30.0):
         return [rot_z(k * 360.0 / n) @ base for k in range(n)]
     if part.mode == 'free':
         V = np.asarray(part.mesh.verts, float) @ base.T
-        P = principal_frame(V)
+        P = free_frame(V)
         out = [G @ P @ base for G in cube_group()]
         # in an order that depends on the shape only, so that ties go the
         # same way everywhere: lowest first, then by extent and center, then

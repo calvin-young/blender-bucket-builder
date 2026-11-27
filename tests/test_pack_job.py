@@ -201,6 +201,28 @@ def test_start(parts, s, res):
     check(len(left) == 1, 'a part that overlaps another is placed again (%d)' % len(left))
 
 
+def test_final_check():
+    print('the final check takes out a part that breaks a rule')
+    parts = [Part('cube', S.box(20, 20, 20), 6, 'z')]
+    s = Settings(vlo=(0, 0, 0), vhi=(120, 120, 100), gap=2.0, wall_gap=0.0, max_density=None, time_budget=None)
+    jb, res = _job(parts, s, max_iterations=2)
+    check(len(res.placements) == 6 and jb._final_check() is None and len(jb.result().placements) == 6,
+          'a clean layout is left as it is')
+    # one copy pushed a cell through the floor, as seen once after the last steps
+    p = jb.result().placements[0]
+    q = (p.part, p.copy)
+    M = np.array(p.matrix, float)
+    M[2, 3] -= 1.0
+    jb.final = dict(jb.final or {})
+    jb.final[q] = M
+    jb._final_check()
+    r = jb.result()
+    check(len(r.placements) == 5 and any(u[:2] == q and u[2] == 'failed the final check' for u in r.unplaced),
+          'the part is left out with a reason (%d placed, %s)' % (len(r.placements), r.unplaced))
+    v = referee.check(r.items(parts), s.vlo, s.vhi, s.gap, s.wall_gap)
+    check(v.ok, 'what is handed back passes the referee')
+
+
 def test_cancel_and_locked():
     print('stop, and locked parts')
     parts = [Part('cube', S.box(20, 20, 20), 12, 'z')]
@@ -419,6 +441,7 @@ if __name__ == '__main__':
     kc = test_keycaps()
     test_start(*kc)
     test_cancel_and_locked()
+    test_final_check()
     test_compact()
     test_compact_unproven()
     test_start_off_grid()
