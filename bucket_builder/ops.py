@@ -2,6 +2,8 @@
 """Operators: problem navigation, printer profiles, housekeeping."""
 
 import math
+
+import mathutils
 import os
 import platform
 import sys
@@ -1160,6 +1162,50 @@ class BUCKETBUILDER_OT_fix_scale(Operator):
         return {'FINISHED'}
 
 
+def dense_bands(scene):
+    """The dense bands of the scene's density evaluation as (z0, z1) in scene units, or []."""
+    mon = monitor.get(scene)
+    return dense_bands_of(mon, props.settings(scene)) if mon is not None else []
+
+
+def dense_bands_of(mon, st):
+    from .pack import plot
+    res = mon.report.result
+    if res is None:
+        return []
+    lo, _hi = mon.volume_box(st)
+    k = mon.mm_per_unit
+    return [(lo[2] + z0 / k, lo[2] + z1 / k) for z0, z1 in plot.dense_bands(res)]
+
+
+class BUCKETBUILDER_OT_dense_band_step(Operator):
+    """Go to the previous or next band of dense layers and frame it from the side"""
+    bl_idname = "bucketbuilder.dense_band_step"
+    bl_label = "Dense Band"
+
+    direction: IntProperty(default=1)
+
+    def execute(self, context):
+        bands = dense_bands(context.scene)
+        if not bands:
+            self.report({'INFO'}, "No dense layers")
+            return {'CANCELLED'}
+        st = props.settings(context.scene)
+        st.show_dense = True
+        st.dense_band = (st.dense_band + self.direction) % len(bands)
+        z0, z1 = bands[st.dense_band]
+        mon = monitor.get(context.scene)
+        lo, hi = mon.volume_box(st)
+        center = ((lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5, (z0 + z1) * 0.5)
+        frame(context, center, 0.6 * float(np.hypot(hi[0] - lo[0], hi[1] - lo[1])))
+        space = _view3d_space(context)
+        if space is not None and space.region_3d is not None:
+            # from the side, a little from above: the band reads as a slice of the build
+            space.region_3d.view_rotation = mathutils.Euler((math.radians(80.0), 0.0, math.radians(30.0))).to_quaternion()
+        monitor.tag_redraw_all()
+        return {'FINISHED'}
+
+
 class BUCKETBUILDER_OT_density_view(Operator):
     """Show the layer density larger, with its statistics"""
     bl_idname = "bucketbuilder.density_view"
@@ -1192,6 +1238,7 @@ class BUCKETBUILDER_OT_density_view(Operator):
 
 CLASSES = (
     BUCKETBUILDER_OT_density_view,
+    BUCKETBUILDER_OT_dense_band_step,
     BUCKETBUILDER_OT_fix_scale,
     BUCKETBUILDER_OT_move_inside,
     BUCKETBUILDER_OT_focus_problem,

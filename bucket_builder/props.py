@@ -402,6 +402,12 @@ class BucketBuilderSettings(PropertyGroup):
     last_message: StringProperty(
         name="Last Result", description="What the last pack or fix did", default="",
         options={'SKIP_SAVE'})
+    show_dense: BoolProperty(
+        name="Show Dense Layers",
+        description="Mark the bands of dense layers (the orange dots of the layer density) in the viewport, "
+                    "and step through them",
+        default=False, update=_poke_redraw)
+    dense_band: IntProperty(name="Dense Band", default=0, min=0, options={'SKIP_SAVE'})
     check_mesh: BoolProperty(
         name="Check Part Meshes",
         description="Name the parts whose mesh is not a closed solid: open edges, edges shared by more than "

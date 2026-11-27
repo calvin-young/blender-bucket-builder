@@ -497,6 +497,14 @@ class BUCKETBUILDER_PT_report(_Base, Panel):
             row.label(text="Layer Density", icon='GRAPH')
             row.operator("bucketbuilder.density_view", text="", icon='FULLSCREEN_ENTER', emboss=False)
             draw_density_figure(box, res, value, 9.0)
+            bands = ops.dense_bands(context.scene)
+            if bands:
+                # the dense layers in the viewport, one band at a time (#53)
+                box.prop(st, "show_dense")
+                row = box.row(align=True)
+                row.operator("bucketbuilder.dense_band_step", text="\u25C0").direction = -1
+                row.label(text="Dense Band %d of %d" % (min(st.dense_band, len(bands) - 1) + 1, len(bands)))
+                row.operator("bucketbuilder.dense_band_step", text="\u25B6").direction = 1
 
 
 def draw_density_figure(layout, res, value, scale):

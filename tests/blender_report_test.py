@@ -207,6 +207,25 @@ def main():
     update()
     wait(mon, st)
 
+    # dense layers (#53): a floor of plates and one tall part above them make the bottom layers dense
+    plates = [add_cube('Dense-%d' % i, (30 + 45 * (i % 6), 30 + 45 * (i // 6), 2.5)) for i in range(24)]
+    for o in plates:
+        o.scale = (1.0, 1.0, 0.125)                 # (40 x 40 x 5 mm)
+    tall = add_cube('Tall', (330, 250, 100))
+    tall.scale = (0.25, 0.25, 5.0)                  # (10 x 10 x 200 mm)
+    update()
+    wait(mon, st)
+    bands = bc.ops.dense_bands(scene())
+    check(len(bands) >= 1 and bands[0][0] < 5.0, 'the floor of plates is a dense band', bands)
+    st.dense_band = 0
+    check(bpy.ops.bucketbuilder.dense_band_step(direction=1) == {'FINISHED'} and st.show_dense
+          and st.dense_band == (1 % len(bands)), 'stepping turns the highlight on and moves', (st.show_dense, st.dense_band))
+    for o in plates + [tall]:
+        bpy.data.objects.remove(o)
+    st.show_dense = False
+    update()
+    wait(mon, st)
+
     # switching it off keeps the monitor but stops the work
     st.report_density = False
     update()

@@ -3,6 +3,12 @@
 Versions are tagged `vX.Y.Z` on GitHub, each with a pre-release and its zip. Notes on versions
 before 1.6.4 are in `AGENTS.md` ("Working notes: state") and the GitHub releases.
 
+## 1.6.10 (2026-11-26)
+
+* **Build Report:** Show Dense Layers marks the bands of dense layers (the orange dots) as faint orange
+  slabs in the viewport, and "◀ Dense Band 1 of N ▶" steps through them, framing each from the side.
+  A horizontal section through the band waits for Crosscut's section interface (#53).
+
 ## 1.6.9 (2026-11-26)
 
 * **Mesh check:** shells within one part that touch (along an edge or at a corner) or overlap are named

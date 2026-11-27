@@ -769,6 +769,42 @@ def _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only=No
                             bias=bias)
 
 
+def _draw_dense(mon, st, shaders, viewport, ui):
+    """The bands of dense layers as faint orange slabs across the volume, the current one stronger (#53)."""
+    from gpu_extras.batch import batch_for_shader
+    bands = _dense_cache(mon, st)
+    if not bands:
+        return
+    lo, hi = mon.volume_box(st)
+    flat = shaders['flat']
+    cur = min(st.dense_band, len(bands) - 1)
+    gpu.state.depth_test_set('LESS_EQUAL')
+    for i, (z0, z1) in enumerate(bands):
+        x0, y0, x1, y1 = lo[0], lo[1], hi[0], hi[1]
+        v = [(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0), (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)]
+        faces = [(0, 1, 2), (0, 2, 3), (4, 5, 6), (4, 6, 7), (0, 1, 5), (0, 5, 4), (1, 2, 6), (1, 6, 5),
+                 (2, 3, 7), (2, 7, 6), (3, 0, 4), (3, 4, 7)]
+        edges = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4)]
+        a = 0.16 if i == cur else 0.06
+        flat.bind()
+        flat.uniform_float("color", (1.0, 0.55, 0.1, a))
+        batch_for_shader(flat, 'TRIS', {"pos": v}, indices=faces).draw(flat)
+        _draw_lines(shaders, batch_for_shader(shaders['line'], 'LINES', {"pos": v}, indices=edges),
+                    (1.0, 0.55, 0.1, 0.9 if i == cur else 0.4), (2.0 if i == cur else 1.0) * ui, viewport, xray=True)
+
+
+def _dense_cache(mon, st):
+    """ops.dense_bands for this monitor, worked out once per density result and volume."""
+    from . import ops
+    res = mon.report.result
+    key = (id(res), tuple(st.volume_size), tuple(st.volume_offset), st.volume_align, mon.mm_per_unit)
+    cache = _state.get('dense')
+    if cache is None or cache[0] != key:
+        cache = (key, ops.dense_bands_of(mon, st))
+        _state['dense'] = cache
+    return cache[1]
+
+
 def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport, ui,
                srgb_target=True, only=None, view=0):
     """Draw the 3-D overlay for one monitor with explicit view matrices.
@@ -819,6 +855,8 @@ def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport,
             # (always pulled a hair toward the viewer: over the snap wireframe, and over the floor grid and
             # axes it would z-fight with; #28)
             _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only, bias)
+            if getattr(st, 'show_dense', False):
+                _draw_dense(mon, st, shaders, viewport, ui)
 
         if st.show_overlay:
             if st.show_tint:

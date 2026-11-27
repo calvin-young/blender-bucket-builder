@@ -45,6 +45,25 @@ def layer_stats(rep):
             'n_sparse': int((d < sparse).sum()) if std > 0 else 0, 'layers': int(d.size), 'band': rep.band}
 
 
+def dense_bands(rep, merge_mm=2.0):
+    """[(z0, z1)] in mm above the floor: runs of dense layers (the orange dots, `layer_stats`), runs
+    closer than merge_mm joined. What the Build Report's Show Dense Layers highlights and steps through
+    (#53)."""
+    st = layer_stats(rep)
+    if st is None or st['std'] <= 0 or not st['n_dense']:
+        return []
+    used = max(1, int(np.ceil(rep.height / rep.band - 1e-9)))
+    d = np.maximum(rep.layer_density[:used], 0.0)
+    out = []
+    for i in np.nonzero(d > st['dense'])[0]:
+        z0, z1 = float(i * rep.band), float((i + 1) * rep.band)
+        if out and z0 - out[-1][1] < merge_mm - 1e-9:
+            out[-1] = (out[-1][0], z1)
+        else:
+            out.append((z0, z1))
+    return out
+
+
 def profile_pixels(rep, size=192):
     """(size, size, 4) float32, the first row at the bottom, or None if the
     report has no profile.  The x scale is the peak layer (at least 5 %)."""
