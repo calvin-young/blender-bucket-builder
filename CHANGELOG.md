@@ -5,6 +5,9 @@ before 1.6.4 are in `AGENTS.md` ("Working notes: state") and the GitHub releases
 
 ## Unreleased
 
+* **Panels:** Preferences > Panel Location puts the panels in the 3D Viewport's sidebar (default) or the
+  Scene tab of the Properties editor; Sidebar Tab and Packer Tab rename the two tabs (the same name puts
+  everything in one tab). The names match Crosscut's (#38).
 * **Packing:** the status line says when the packer takes extra time (parts still left out, or the build
   near the top), and the Time setting's tooltip explains it.
 

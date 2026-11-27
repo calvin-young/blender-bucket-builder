@@ -285,3 +285,12 @@ Later:
 * **Not asked:** nothing new.
 * **Later:** the cause of the one unclean layout (not reproduced in four runs); the panel location
   preference (#38) with Crosscut's names; the time setting's wording when extra time is added.
+
+## 2026-11-26 (#38 panel location)
+
+* **Asked:** #38, with Crosscut's names (portfolio decision D3).
+* **Assumed:** a second preference, Packer Tab, since Bucket Builder has two tabs; in Scene Properties the
+  panels stay top-level after Blender's own; Align to Plane still needs the button pressed in a 3D view
+  (it warns otherwise).
+* **Not asked:** whether the panels should sit under one parent panel in Scene Properties.
+* **Later:** Align to Plane started from the Properties editor.

@@ -576,8 +576,29 @@ def _row_set(self, value):
         traceback.print_exc()
 
 
+def _relocate(self, context):
+    from . import ui
+    ui.relocate()
+
+
 class BucketBuilderPreferences(AddonPreferences):
     bl_idname = ADDON_ID
+
+    # where the panels live (#38; the same names as Crosscut's, portfolio decision D3)
+    panel_location: EnumProperty(
+        name="Panel Location",
+        description="Where Bucket Builder's panels are: the 3D Viewport's sidebar, or the Scene tab of "
+                    "the Properties editor",
+        items=(('SIDEBAR', "Sidebar", "In the 3D Viewport's sidebar (N)"),
+               ('SCENE', "Scene Properties", "In the Properties editor, Scene tab")),
+        default='SIDEBAR', update=_relocate)
+    sidebar_tab: StringProperty(
+        name="Sidebar Tab", description="The sidebar tab of the checks, the build volume and the report "
+                                        "(the same name as Packer Tab puts everything in one tab)",
+        default="Bucket Monitor", update=_relocate)
+    packer_tab: StringProperty(
+        name="Packer Tab", description="The sidebar tab of Autopacking and Manual Packing",
+        default="Bucket Packer", update=_relocate)
 
     profiles: CollectionProperty(type=BucketBuilderProfile)
     profiles_seeded: BoolProperty(default=False)
@@ -659,6 +680,12 @@ class BucketBuilderPreferences(AddonPreferences):
     def draw(self, context):
         layout = self.layout
         layout.use_property_split = True
+        col = layout.column()
+        col.prop(self, "panel_location")
+        sub = col.column()
+        sub.active = self.panel_location == 'SIDEBAR'
+        sub.prop(self, "sidebar_tab")
+        sub.prop(self, "packer_tab")
         col = layout.column(heading="Colors")
         col.prop(self, "color_collision")
         col.prop(self, "color_clearance")

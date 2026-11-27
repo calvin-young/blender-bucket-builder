@@ -502,6 +502,20 @@ def main():
     assert bpy.ops.bucketbuilder.isolate() == {'FINISHED'} and st.isolate
     assert bpy.ops.bucketbuilder.step_problem(direction=1) == {'FINISHED'}
     assert bpy.ops.bucketbuilder.isolate() == {'FINISHED'} and not st.isolate
+
+    # where the panels live (#38): Scene Properties, renamed tabs, and back
+    p = props.prefs()
+    p.panel_location = 'SCENE'
+    panels = [c for c in ui.CLASSES if issubclass(c, bpy.types.Panel)]
+    assert all(c.is_registered and c.bl_space_type == 'PROPERTIES' and c.bl_context == 'scene' for c in panels)
+    draw_all(bpy.context, 'in Scene Properties')
+    p.panel_location = 'SIDEBAR'
+    p.sidebar_tab = p.packer_tab = "Print"
+    assert all(c.is_registered and c.bl_space_type == 'VIEW_3D' and c.bl_category == "Print" for c in panels)
+    p.sidebar_tab, p.packer_tab = "Bucket Monitor", "Bucket Packer"
+    assert ui.BUCKETBUILDER_PT_pack.bl_category == "Bucket Packer" and ui.BUCKETBUILDER_PT_main.bl_category == "Bucket Monitor"
+    draw_all(bpy.context, 'back in the sidebar')
+    print('  panel location: Scene Properties, one tab, two tabs')
     print('UI TEST OK')
 
 

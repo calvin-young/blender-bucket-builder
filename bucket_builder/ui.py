@@ -652,8 +652,17 @@ class BUCKETBUILDER_PT_options(_Base, Panel):
         pass
 
 
-def _part_colors(context, layout):
+def _view3d(context):
+    """This 3D view, or (drawn in the Properties editor) the largest one on the screen."""
     space = context.space_data
+    if space is not None and space.type == 'VIEW_3D':
+        return space
+    areas = [a for a in (context.screen.areas if context.screen else ()) if a.type == 'VIEW_3D']
+    return max(areas, key=lambda a: a.width * a.height).spaces.active if areas else None
+
+
+def _part_colors(context, layout):
+    space = _view3d(context)
     shading = getattr(space, "shading", None)
     if shading is None:
         return
@@ -861,7 +870,46 @@ _EXTRA = (('OBJECT_PT_visibility', draw_visibility),
           ('OUTLINER_MT_object', draw_object_menu))
 
 
+# ---------------------------------------------------------------------------
+# where the panels live (#38)
+# ---------------------------------------------------------------------------
+
+def _panels():
+    return [c for c in CLASSES if issubclass(c, Panel)]
+
+
+# which tab each panel was written for (read once, before any is moved)
+_TAB = {c: ('packer' if getattr(c, 'bl_category', '') == "Bucket Packer" else 'monitor') for c in CLASSES
+        if issubclass(c, Panel)}
+
+
+def _place():
+    """Set every panel's space, region and tab from the preferences."""
+    p = props.prefs()
+    loc = getattr(p, 'panel_location', 'SIDEBAR') if p is not None else 'SIDEBAR'
+    tabs = {'monitor': (getattr(p, 'sidebar_tab', '') or "Bucket Monitor") if p is not None else "Bucket Monitor",
+            'packer': (getattr(p, 'packer_tab', '') or "Bucket Packer") if p is not None else "Bucket Packer"}
+    for cls in _panels():
+        if loc == 'SCENE':
+            cls.bl_space_type, cls.bl_region_type, cls.bl_context = 'PROPERTIES', 'WINDOW', "scene"
+        else:
+            cls.bl_space_type, cls.bl_region_type, cls.bl_context = 'VIEW_3D', 'UI', ""
+            cls.bl_category = tabs[_TAB[cls]]
+
+
+def relocate():
+    """Move the panels after a preference changed: unregister them, place them, register again."""
+    panels = _panels()
+    for cls in reversed(panels):
+        if getattr(cls, 'is_registered', False):
+            bpy.utils.unregister_class(cls)
+    _place()
+    for cls in panels:
+        bpy.utils.register_class(cls)
+
+
 def register():
+    _place()
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     for name, fn in _EXTRA:
