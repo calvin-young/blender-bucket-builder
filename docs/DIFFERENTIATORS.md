@@ -24,8 +24,10 @@ named here. A side-by-side comparison may follow later.
 * **What it cannot check, it says.** Instances, non-mesh objects and
   hidden parts are reported rather than silently skipped.
 * **Meshes that are not solids are named.** Open edges, non-manifold
-  edges and parts inside out (a negative scale included) are listed with
-  the other problems and warned about at export.
+  edges, parts inside out (a negative scale included) and shells that
+  touch or overlap inside one part (clean by Blender's count, broken after
+  an STL export) are listed with the other problems and warned about at
+  export.
 * **In Blender.** The full modeling toolset next to the check: fix a part
   and see the build verdict change.
 

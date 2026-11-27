@@ -1080,11 +1080,27 @@ def main():
     bpy.ops.mesh.primitive_cube_add(size=20, location=(240, 60, 30))
     mirror = bpy.context.active_object
     mirror.scale.x = -1.0
+    # two shells in one part, touching along an edge with separate vertices (clean in Blender, open after
+    # an STL export), and two overlapping
+    shells = []
+    for name, t in (('touch', (20.0, 20.0, 0.0)), ('overlap', (8.0, 5.0, 3.0))):
+        me = bpy.data.meshes.new(name)
+        bm = bmesh.new()
+        bmesh.ops.create_cube(bm, size=20.0)
+        bmesh.ops.create_cube(bm, size=20.0, matrix=mathutils.Matrix.Translation(t))
+        bm.to_mesh(me)
+        bm.free()
+        ob = bpy.data.objects.new(name, me)
+        bpy.context.collection.objects.link(ob)
+        ob.location = (60 + 80 * len(shells), 180, 30)
+        shells.append(ob)
     update()
     mon = settle()
     texts = {p['a']: p['mesh'] for p in mon.problems() if p['kind'] == 'MESH'}
     check(good.name not in texts and 'open edge' in texts.get(hole.name, '') and texts.get(flip.name) == 'inside out'
           and texts.get(mirror.name) == 'inside out', 'open, inside-out and mirrored meshes are named (#29)', texts)
+    check(texts.get('touch') == 'shells touching' and texts.get('overlap') == 'shells overlapping',
+          'shells touching or overlapping within a part are named', texts)
     check(mon.status()['mesh'] >= 3 and any('With Mesh Errors' in t for t, _ in bc.overlay.summary(mon.status())[1]),
           'and the verdict says so', bc.overlay.summary(mon.status()))
     check(any('mesh errors' in line for line in bc.export.problems(bpy.context)), 'and so does Export',
@@ -1094,7 +1110,7 @@ def main():
     mon = settle()
     check(mon.status()['mesh'] == 0, 'Check Part Meshes off: not named', mon.status()['mesh'])
     st.check_mesh = True
-    for o in (good, hole, flip, mirror):
+    for o in (good, hole, flip, mirror, *shells):
         bpy.data.objects.remove(o)
     update()
     mon = settle()

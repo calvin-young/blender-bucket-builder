@@ -100,8 +100,88 @@ def mesh_health(co, tri):
     m = types.SimpleNamespace(verts=np.asarray(co, np.float64).reshape(-1, 3), tris=np.asarray(tri).reshape(-1, 3))
     vol, _open = metrics.mesh_stats(m, workers=1)
     t = metrics.topology(m)
+    touching, overlapping = shell_contacts(m.verts, m.tris)
     return {'volume': float(vol), 'open': t['boundary_edges'], 'nonmanifold': t['nonmanifold_edges'],
-            'flipped': t['flipped_edges']}
+            'flipped': t['flipped_edges'], 'touching': touching, 'overlapping': overlapping}
+
+
+MAX_SHELLS = 64          # parts with more shells are not checked for shells touching or overlapping
+
+
+def shell_labels(tri, nv):
+    """The shell (connected piece) of every vertex, as small integers, from the triangles' own vertex
+    indices: what Blender sees as separate pieces. Min-label propagation with pointer jumping."""
+    lab = np.arange(nv, dtype=np.int64)
+    a = np.concatenate([tri[:, 0], tri[:, 1], tri[:, 2]]).astype(np.int64)
+    b = np.concatenate([tri[:, 1], tri[:, 2], tri[:, 0]]).astype(np.int64)
+    while True:
+        m = np.minimum(lab[a], lab[b])
+        new = lab.copy()
+        np.minimum.at(new, a, m)
+        np.minimum.at(new, b, m)
+        while True:
+            jumped = new[new]
+            if np.array_equal(jumped, new):
+                break
+            new = jumped
+        if np.array_equal(new, lab):
+            break
+        lab = new
+    _, out = np.unique(lab, return_inverse=True)
+    return out
+
+
+def shell_contacts(co, tri):
+    """(pairs of shells touching, pairs overlapping) within one mesh (2026-11-26, from the 3MF fork's
+    non-manifold report): Blender's non-manifold count calls both clean, but an STL export welds
+    coincident vertices, so shells that touch along an edge or at a corner become open and non-manifold
+    edges in other programs, and some treat overlapping shells as errors. Touching: a position shared by
+    vertices of two shells. Overlapping: the exact collision test between the shells, a shell wholly
+    inside another (a hollow part's inner wall) not counted."""
+    co = np.asarray(co, np.float64)
+    tri = np.asarray(tri, np.int64)
+    if len(tri) == 0:
+        return 0, 0
+    used = np.unique(tri.ravel())
+    shell = shell_labels(tri, len(co))
+    shells = np.unique(shell[used])
+    if len(shells) < 2 or len(shells) > MAX_SHELLS:
+        return 0, 0
+    size = float(np.max(co[used].max(0) - co[used].min(0))) or 1.0
+    q = np.round(co[used] / (size * 1e-7)).astype(np.int64)
+    _, pos = np.unique(q, axis=0, return_inverse=True)
+    pairs = np.unique(np.stack([pos.ravel(), shell[used]], 1), axis=0)
+    touch = set()
+    if len(pairs) > len(np.unique(pairs[:, 0])):
+        p, s = pairs[:, 0], pairs[:, 1]
+        for k in np.nonzero(p[1:] == p[:-1])[0]:
+            j = k + 1
+            while j < len(p) and p[j] == p[k]:
+                touch.add((int(min(s[k], s[j])), int(max(s[k], s[j]))))
+                j += 1
+    over = set()
+    try:
+        w = World()
+        w.set_scale(size, 0.5)
+        w.set_thresholds(0.0, 0.0)
+        w.set_detect_enclosed(False)
+        lo, hi = co[used].min(0) - size, co[used].max(0) + size
+        w.set_volume(lo, hi, 0.0)
+        for sid in shells:
+            t = tri[shell[tri[:, 0]] == sid]
+            vs, tt = np.unique(t.ravel(), return_inverse=True)
+            w.add_geom(('s', int(sid)), co[vs], tt.reshape(-1, 3))
+            w.add_object(int(sid), ('s', int(sid)), np.eye(4))
+        t0 = time.perf_counter()
+        while w.step(budget=0.05) and time.perf_counter() - t0 < 30.0:
+            pass
+        for a_, b_ in w.viol:
+            ua, ub = w.uid(a_), w.uid(b_)
+            if ua is not None and ub is not None:
+                over.add((min(ua, ub), max(ua, ub)))
+    except Exception:                                   # noqa: BLE001  (the overlap test is a bonus)
+        pass
+    return len(touch), len(over - touch)
 
 
 def health_text(h, det):
@@ -117,6 +197,10 @@ def health_text(h, det):
     bad = h['nonmanifold'] + h['flipped']
     if bad:
         said.append('%d non-manifold edge%s' % (bad, 's' if bad != 1 else ''))
+    if h.get('touching'):
+        said.append('shells touching')
+    if h.get('overlapping'):
+        said.append('shells overlapping')
     return ', '.join(said)
 
 

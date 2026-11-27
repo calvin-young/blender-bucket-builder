@@ -3,6 +3,13 @@
 Versions are tagged `vX.Y.Z` on GitHub, each with a pre-release and its zip. Notes on versions
 before 1.6.4 are in `AGENTS.md` ("Working notes: state") and the GitHub releases.
 
+## 1.6.9 (2026-11-26)
+
+* **Mesh check:** shells within one part that touch (along an edge or at a corner) or overlap are named
+  too. Blender's non-manifold count calls them clean, but an STL export welds the touching vertices and
+  other programs then report open or non-manifold edges; a shell wholly inside another (a hollow part's
+  inner wall) is not counted.
+
 ## 1.6.8 (2026-11-26)
 
 * **Overlay:** the bucket's outline sits behind the parts (no faint line through them) and always wins
