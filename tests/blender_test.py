@@ -467,6 +467,16 @@ def main():
     check(bpy.ops.bucketbuilder.profile_rename('EXEC_DEFAULT', name='Our Printer') == {'FINISHED'}
           and st.printer == 'Our Printer' and any(x.name == 'Our Printer' for x in p.profiles),
           'profile renamed', st.printer)
+    taken = next(x.name for x in p.profiles if x.name != 'Our Printer')
+    try:
+        r = bpy.ops.bucketbuilder.profile_rename('EXEC_DEFAULT', name=taken)
+    except RuntimeError:                         # (a warning report can come back as an error from bpy.ops)
+        r = {'CANCELLED'}
+    check(r == {'CANCELLED'} and st.printer == 'Our Printer' and sum(x.name == taken for x in p.profiles) == 1,
+          'a name another printer has is refused (#15)', (r, st.printer))
+    check(all('UNDO' in getattr(bc.ops, c).bl_options for c in ('BUCKETBUILDER_OT_profile_add', 'BUCKETBUILDER_OT_profile_update',
+                                                               'BUCKETBUILDER_OT_profile_remove', 'BUCKETBUILDER_OT_profile_rename')),
+          'the printer operators are undo steps (#15)')
     check(bpy.ops.bucketbuilder.profile_remove('EXEC_DEFAULT') == {'FINISHED'}, 'profile removed')
     check(not any(x.name in ('My Printer', 'Our Printer') for x in p.profiles) and st.printer == 'Custom',
           'profile gone from the library', st.printer)

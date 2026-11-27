@@ -5,6 +5,8 @@ before 1.6.4 are in `AGENTS.md` ("Working notes: state") and the GitHub releases
 
 ## Unreleased
 
+* **Printers:** a name another printer already has is refused with a message; adding, editing, renaming
+  and deleting a printer are undo steps for the scene (the library itself lives in the preferences) (#15).
 * **Export:** a red box above Export Print File lists what is wrong with the build (parts outside the
   volume, staged ones too, collisions, gaps under the clearance) before you press it (#31).
 * **Fix Issues:** when the live check has caught up, the last-result line says what is still wrong

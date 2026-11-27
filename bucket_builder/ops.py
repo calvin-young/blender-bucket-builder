@@ -854,6 +854,7 @@ class BUCKETBUILDER_OT_profile_add(Operator):
     """Add a printer: its name and build volume"""
     bl_idname = "bucketbuilder.profile_add"
     bl_label = "New Printer"
+    bl_options = {'UNDO'}          # (the scene's printer; no redo panel, which would run it again)
 
     name: StringProperty(name="Name", default="Custom Printer")
     size: FloatVectorProperty(default=(380.0, 284.0, 380.0), **_SIZE)
@@ -896,6 +897,7 @@ class BUCKETBUILDER_OT_profile_update(Operator):
     """Edit the selected printer: its name and build volume"""
     bl_idname = "bucketbuilder.profile_update"
     bl_label = "Edit Printer"
+    bl_options = {'UNDO'}          # (the scene's printer; no redo panel, which would run it again)
 
     name: StringProperty(name="Name", default="")
     size: FloatVectorProperty(default=(380.0, 284.0, 380.0), **_SIZE)
@@ -925,7 +927,9 @@ class BUCKETBUILDER_OT_profile_update(Operator):
             self.report({'WARNING'}, "Pick a printer first, or save the volume as a new printer")
             return {'CANCELLED'}
         new_name = self.name.strip()
-        if new_name and new_name != prof.name and new_name not in {x.name for x in p.profiles}:
+        if new_name and new_name != prof.name and new_name in {x.name for x in p.profiles}:
+            self.report({'WARNING'}, f"There is already a printer called '{new_name}': the name was kept")
+        elif new_name and new_name != prof.name:
             prof.name = new_name
         prof.size = st.volume_size
         apply_volume(st, prof.name, tuple(st.volume_size))
@@ -938,6 +942,7 @@ class BUCKETBUILDER_OT_profile_remove(Operator):
     """Delete the selected printer profile from the library"""
     bl_idname = "bucketbuilder.profile_remove"
     bl_label = "Delete Printer Profile"
+    bl_options = {'UNDO'}          # (the scene's printer; no redo panel, which would run it again)
 
     def invoke(self, context, event):
         return context.window_manager.invoke_confirm(self, event)
@@ -964,6 +969,7 @@ class BUCKETBUILDER_OT_profile_rename(Operator):
     """Rename the selected printer profile"""
     bl_idname = "bucketbuilder.profile_rename"
     bl_label = "Rename Printer Profile"
+    bl_options = {'UNDO'}          # (the scene's printer; no redo panel, which would run it again)
 
     name: StringProperty(name="Name")
 
@@ -980,6 +986,9 @@ class BUCKETBUILDER_OT_profile_rename(Operator):
         prof = _current_profile(p, st)
         if prof is None:
             self.report({'WARNING'}, "The current volume is not a saved printer")
+            return {'CANCELLED'}
+        if name != prof.name and name in {x.name for x in p.profiles}:
+            self.report({'WARNING'}, f"There is already a printer called '{name}'")
             return {'CANCELLED'}
         prof.name = name
         st.lock_printer_name = True
