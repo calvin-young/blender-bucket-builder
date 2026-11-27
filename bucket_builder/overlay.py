@@ -741,7 +741,7 @@ def _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only=No
         v['faces'].draw(flat)
         flat.uniform_float("color", (col_v[0], col_v[1], col_v[2], 0.05 * fill))
         v['floor'].draw(flat)
-    _draw_lines(shaders, v['edges'], (col_v[0], col_v[1], col_v[2], 0.25), 1.0 * ui, viewport, xray=True)
+    # (no see-through pass: the bounds sit behind the parts, never seen through them; #28)
     _draw_lines(shaders, v['edges'], (col_v[0], col_v[1], col_v[2], 0.9), 1.6 * ui, viewport, xray=False,
                bias=bias)
     if any(out):
@@ -759,7 +759,6 @@ def _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only=No
                            bias=bias)
     if v['inner'] is not None:
         # the limit parts should stay inside of
-        _draw_lines(shaders, v['inner'], (col_v[0], col_v[1], col_v[2], 0.16), 1.0 * ui, viewport, xray=True)
         _draw_lines(shaders, v['inner'], (col_v[0], col_v[1], col_v[2], 0.5), 1.0 * ui, viewport, xray=False,
                     bias=bias)
         for i, k in enumerate((0, 1, 3, 4)):          # the four side walls
@@ -768,10 +767,6 @@ def _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only=No
                 _draw_lines(shaders, edge, (col_w[0], col_w[1], col_w[2], 0.35), 1.4 * ui, viewport, xray=True)
                 _draw_lines(shaders, edge, (col_w[0], col_w[1], col_w[2], 1.0), 2.2 * ui, viewport, xray=False,
                             bias=bias)
-
-
-def _snap_helper_on(st):
-    return bool(getattr(st, 'snap_to_volume', False))
 
 
 def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport, ui,
@@ -821,8 +816,9 @@ def draw_scene(mon, st, p, persp_matrix, window_matrix, view_distance, viewport,
             # subtle, but clearly not a good build (the owner, 2026-11-19)
             if mon.view().staged:
                 col_v = tuple(0.5 * (a + b) for a, b in zip(col_v, col_o))
-            _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only,
-                         bias if _snap_helper_on(st) else None)
+            # (always pulled a hair toward the viewer: over the snap wireframe, and over the floor grid and
+            # axes it would z-fight with; #28)
+            _draw_volume(mon, st, p, shaders, viewport, ui, col_v, col_o, col_w, only, bias)
 
         if st.show_overlay:
             if st.show_tint:
