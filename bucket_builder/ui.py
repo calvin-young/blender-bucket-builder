@@ -809,9 +809,18 @@ class BUCKETBUILDER_PT_export(_Base, Panel):
 
     def draw(self, context):
         layout = self.layout
+        from . import export
+        warn = export.problems(context)
+        if warn:
+            # what would go wrong with this file, where it cannot be missed (#31: parts staged outside are
+            # quiet while arranging, loud here)
+            box = layout.box()
+            box.alert = True
+            col = box.column(align=True)
+            for i, line in enumerate(warn):
+                col.label(text=line, icon='ERROR' if i == 0 else 'BLANK1')
         row = layout.row()
         row.scale_y = 1.3
-        from . import export
         ready = export.threemf_api() is not None
         row.enabled = ready
         row.operator("bucketbuilder.export_3mf", icon='EXPORT')

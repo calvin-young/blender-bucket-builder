@@ -1062,6 +1062,12 @@ def main():
     mon = settle()
     check(any('outside the build volume' in line for line in bc.ops.export_warnings(sc)),
           'the export button warns about a part outside the build volume', bc.ops.export_warnings(sc))
+    a.location.x = -2000.0                       # (staged far beside the bucket: a quiet note while arranging)
+    update()
+    mon = settle()
+    check(mon.status().get('staged', 0) == 1 and any('outside the build volume' in line for line in bc.ops.export_warnings(sc)),
+          'a part staged beside the bucket is quiet while arranging, not at export',
+          (mon.status().get('staged'), bc.ops.export_warnings(sc)))
     a.location.x = 100.0
     update()
     mon = settle()

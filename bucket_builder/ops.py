@@ -515,7 +515,7 @@ def export_warnings(scene):
         lines.append("The build volume is not being checked")
     else:
         s = mon.status()
-        n = s['partly_out'] + s['outside']
+        n = s['partly_out'] + s['outside'] + s.get('staged', 0)    # (staged beside it: quiet while arranging, not here)
         if n:
             lines.append(f"{n} part{'s are' if n != 1 else ' is'} outside the build volume")
         if s['busy'] or s['preparing']:

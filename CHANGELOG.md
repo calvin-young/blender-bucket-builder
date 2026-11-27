@@ -5,6 +5,8 @@ before 1.6.4 are in `AGENTS.md` ("Working notes: state") and the GitHub releases
 
 ## Unreleased
 
+* **Export:** a red box above Export Print File lists what is wrong with the build (parts outside the
+  volume, staged ones too, collisions, gaps under the clearance) before you press it (#31).
 * **Fix Issues:** when the live check has caught up, the last-result line says what is still wrong
   ("Still to fix, selected: A x B (collision)") and selects those parts, or says nothing is left (#32).
 
