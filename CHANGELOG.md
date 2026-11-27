@@ -3,6 +3,12 @@
 Versions are tagged `vX.Y.Z` on GitHub, each with a pre-release and its zip. Notes on versions
 before 1.6.4 are in `AGENTS.md` ("Working notes: state") and the GitHub releases.
 
+## Unreleased
+
+* **Dense layers:** with Crosscut 0.24.0 or newer, each step also puts a horizontal section through the
+  middle of the band (never over a section of your own; turning Show Dense Layers off gives Crosscut its
+  settings back) (#53).
+
 ## 1.6.10 (2026-11-26)
 
 * **Build Report:** Show Dense Layers marks the bands of dense layers (the orange dots) as faint orange

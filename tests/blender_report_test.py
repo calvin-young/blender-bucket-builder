@@ -220,6 +220,26 @@ def main():
     st.dense_band = 0
     check(bpy.ops.bucketbuilder.dense_band_step(direction=1) == {'FINISHED'} and st.show_dense
           and st.dense_band == (1 % len(bands)), 'stepping turns the highlight on and moves', (st.show_dense, st.dense_band))
+    # with Crosscut (a stand-in for its interface, 0.24.0): a section at the band's middle, given back after
+    import types
+    calls = []
+    cc = types.ModuleType('crosscut_standin')
+    cc.API_VERSION = 1
+    cc.set_section = lambda z, normal=(0, 0, 1), collection=None, owner='', force=False, scene=None: \
+        calls.append(('set', round(z, 3), owner, force)) or True
+    cc.clear_section = lambda owner, scene=None: calls.append(('clear', owner)) or True
+    bpy.app.driver_namespace['crosscut'] = cc
+    try:
+        bpy.ops.bucketbuilder.dense_band_step(direction=0)
+        z0, z1 = bands[st.dense_band]
+        st.show_dense = False
+        check(calls == [('set', round((z0 + z1) / 2, 3), 'bucket_builder', False), ('clear', 'bucket_builder')],
+              'a Crosscut section through the band, never forced, and given back', calls)
+        cc.set_section = lambda *a, **k: False          # (the user's own section is showing)
+        r = bpy.ops.bucketbuilder.dense_band_step(direction=0)
+        check(r == {'FINISHED'}, 'a refusal leaves the band framed all the same', r)
+    finally:
+        del bpy.app.driver_namespace['crosscut']
     for o in plates + [tall]:
         bpy.data.objects.remove(o)
     st.show_dense = False

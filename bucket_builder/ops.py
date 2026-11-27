@@ -1178,6 +1178,28 @@ def dense_bands_of(mon, st):
     return [(lo[2] + z0 / k, lo[2] + z1 / k) for z0, z1 in plot.dense_bands(res)]
 
 
+CROSSCUT_OWNER = "bucket_builder"
+
+
+def crosscut():
+    """Crosscut's section interface (0.24.0 and newer), or None."""
+    api = bpy.app.driver_namespace.get("crosscut")
+    try:
+        return api if api is not None and int(getattr(api, 'API_VERSION', 0)) >= 1 else None
+    except Exception:                                   # noqa: BLE001
+        return None
+
+
+def crosscut_clear(scene):
+    """Give back the section Bucket Builder put up (Crosscut restores the user's settings)."""
+    api = crosscut()
+    if api is not None:
+        try:
+            api.clear_section(CROSSCUT_OWNER, scene=scene)
+        except Exception:                               # noqa: BLE001
+            pass
+
+
 class BUCKETBUILDER_OT_dense_band_step(Operator):
     """Go to the previous or next band of dense layers and frame it from the side"""
     bl_idname = "bucketbuilder.dense_band_step"
@@ -1202,6 +1224,17 @@ class BUCKETBUILDER_OT_dense_band_step(Operator):
         if space is not None and space.region_3d is not None:
             # from the side, a little from above: the band reads as a slice of the build
             space.region_3d.view_rotation = mathutils.Euler((math.radians(80.0), 0.0, math.radians(30.0))).to_quaternion()
+        # with Crosscut, a horizontal section through the middle of the band: the packed cross-section
+        # (never over a section the user made; Crosscut refuses, and that is the answer)
+        api = crosscut()
+        if api is not None:
+            try:
+                ok = api.set_section((z0 + z1) * 0.5, normal=(0.0, 0.0, 1.0), owner=CROSSCUT_OWNER,
+                                     scene=context.scene)
+            except Exception:                           # noqa: BLE001  (the band is framed all the same)
+                ok = True
+            if not ok:
+                self.report({'INFO'}, "Crosscut is showing your own section: turn it off to see the band cut")
         monitor.tag_redraw_all()
         return {'FINISHED'}
 

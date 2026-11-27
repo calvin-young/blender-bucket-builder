@@ -182,6 +182,13 @@ def _poke_redraw(self, context):
     monitor.tag_redraw_all()
 
 
+def _dense_toggled(self, context):
+    if not self.show_dense:
+        from . import ops
+        ops.crosscut_clear(self.id_data)
+    _poke_redraw(self, context)
+
+
 def _poke_prefs(self, context):
     from . import monitor
     monitor.on_prefs_changed()
@@ -406,7 +413,7 @@ class BucketBuilderSettings(PropertyGroup):
         name="Show Dense Layers",
         description="Mark the bands of dense layers (the orange dots of the layer density) in the viewport, "
                     "and step through them",
-        default=False, update=_poke_redraw)
+        default=False, update=_dense_toggled)
     dense_band: IntProperty(name="Dense Band", default=0, min=0, options={'SKIP_SAVE'})
     check_mesh: BoolProperty(
         name="Check Part Meshes",

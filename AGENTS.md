@@ -587,6 +587,32 @@ bands (`plot.dense_bands`, `ops.dense_bands_of`, `overlay._draw_dense`, #53); th
 is asked for (set_section through `bpy.app.driver_namespace`), not built. #50 - #52 closed (built in
 1.6.4). Next: the open issues, by the owner's priorities.
 
+**Handover, 2026-11-26 night (the thread that made 1.6.4 - 1.6.10).** CHANGELOG.md has what each
+build holds: the owner's 11-23 / 11-24 lists (1.6.4); free parts start from their smallest box, and a
+final referee check of every packed layout (1.6.5); panel location #38 (1.6.6); Fix Issues names what is
+left #32 (partly), export warnings #31, printer names #15 (1.6.7); outline order #28, mesh checks #29
+(1.6.8); shells touching or overlapping within a part (1.6.9); dense bands #53 (1.6.10). #50 - #52 are
+closed (built in 1.6.4). Benchmark results on the owner's own builds are local only (`~/data/packbench/`).
+
+*Unreleased on main:* the Crosscut section for #53 (`ops.crosscut`, `ops.crosscut_clear`; Crosscut's
+interface is `bpy.app.driver_namespace["crosscut"]`, API_VERSION >= 1, `owner="bucket_builder"`, never
+`force`). Tested with a stand-in only (`tests/blender_report_test.py`); try it with Crosscut 0.24.0 in a
+window before releasing 1.6.11, then close #53.
+
+*Waiting on the owner:* mesh errors as a warning (now) or a failure; which bucket model to build
+(collections side by side recommended, DECISIONS "Several buckets in one file"); whether Netfabb trial
+results may be published (kept out of the repo until he says so himself); a hands-on test of 1.6.4 -
+1.6.10.
+
+*Queue:* release 1.6.11 (above); #32 the reason a part could not be freed (needs `pack/jiggle.py` to
+report one per part); a self-intersection check (#29 left it out); the local challenge build, aiming at
+what the hand pack reaches; packer speed on the owner's laptop; #24, #26; the copies dialog #54 and
+editable labels #39 when he picks.
+
+*Testing notes:* window tests need Xvfb (installed 2026-11-26); `gui_on_xvfb.sh` forces X11. Tests whose
+scenes are open on purpose set `check_mesh = False`. Packing runs that need a slow first layout set
+`BB_BOXES=0`.
+
 **Next (2026-11-11, the owner's notes):** issues #28 - #40: overlay
 drawing order, inside-out and non-manifold checks, hidden parts by
 default, fully-outside parts quiet until export, Jiggle feedback, one
