@@ -402,6 +402,12 @@ class BucketBuilderSettings(PropertyGroup):
     last_message: StringProperty(
         name="Last Result", description="What the last pack or fix did", default="",
         options={'SKIP_SAVE'})
+    check_mesh: BoolProperty(
+        name="Check Part Meshes",
+        description="Name the parts whose mesh is not a closed solid: open edges, edges shared by more than "
+                    "two faces, faces that disagree about which way is out, or a part inside out "
+                    "(also from a negative scale). A printer may not make such a part as you expect",
+        default=True, update=_poke)
     show_pq: BoolProperty(
         name="Print-Quality Notes",
         description="With Evaluate Density on, list the print-quality issues it finds (flat faces up, shallow "

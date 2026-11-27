@@ -8,6 +8,10 @@ before 1.6.4 are in `AGENTS.md` ("Working notes: state") and the GitHub releases
 * **Overlay:** the bucket's outline sits behind the parts (no faint line through them) and always wins
   over the floor grid and axes it used to flicker with (#28).
 
+* **Mesh check:** parts with open edges, non-manifold edges or inside out (a negative scale included)
+  are named in the Problems list and the verdict, and warned about at export; Collision Detection >
+  Check Part Meshes turns it off (#29).
+
 ## 1.6.7 (2026-11-26)
 
 * **Printers:** a name another printer already has is refused with a message; adding, editing, renaming

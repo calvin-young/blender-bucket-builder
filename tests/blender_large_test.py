@@ -153,6 +153,7 @@ def main():
     sc = bpy.context.scene
     st = sc.bucket_builder
     st.ignore_hidden = False          # (on by default since 2026-11-18; this test checks hidden parts)
+    st.check_mesh = False             # (open test meshes on purpose; the mesh check has its own test in blender_test)
     p = props.prefs()
     p.memory_gb = 0.0
     st.use_volume = False

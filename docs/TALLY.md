@@ -294,3 +294,14 @@ Later:
   (it warns otherwise).
 * **Not asked:** whether the panels should sit under one parent panel in Scene Properties.
 * **Later:** Align to Plane started from the Properties editor.
+
+## 2026-11-26 (#28, #29, #31, #32, #15)
+
+* **Asked (from the owner's issues):** the overlay's drawing order (#28); inside-out and non-manifold
+  parts (#29); quiet staged parts, loud export (#31); what Fix Issues leaves (#32); printer names (#15).
+* **Assumed:** mesh errors are a warning (amber), not a failure, because many models in daily use are
+  slightly open (the owner asked for "an error"); self-intersections are not checked (not cheap);
+  meshes up to 5000 triangles are checked on the spot, larger ones in a worker thread; Fix Issues names
+  at most three remaining problems in the result line.
+* **Not asked:** whether mesh errors should block export.
+* **Later:** self-intersection check; why Jiggle could not free a part (#32).

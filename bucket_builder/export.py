@@ -68,6 +68,8 @@ def problems(context):
             lines.append('%d collision%s' % (s['collisions'], 's' if s['collisions'] != 1 else ''))
         if s['clearance']:
             lines.append('%d pair%s closer than the clearance' % (s['clearance'], 's' if s['clearance'] != 1 else ''))
+        if s.get('mesh'):
+            lines.append('%d part%s with mesh errors (open, non-manifold or inside out)' % (s['mesh'], 's' if s['mesh'] != 1 else ''))
     return lines
 
 

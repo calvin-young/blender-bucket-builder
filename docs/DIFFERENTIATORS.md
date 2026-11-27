@@ -23,6 +23,9 @@ named here. A side-by-side comparison may follow later.
   of parts, instanced copies, inside Blender, on a laptop.
 * **What it cannot check, it says.** Instances, non-mesh objects and
   hidden parts are reported rather than silently skipped.
+* **Meshes that are not solids are named.** Open edges, non-manifold
+  edges and parts inside out (a negative scale included) are listed with
+  the other problems and warned about at export.
 * **In Blender.** The full modeling toolset next to the check: fix a part
   and see the build verdict change.
 
@@ -59,7 +62,8 @@ named here. A side-by-side comparison may follow later.
 * **Always a valid answer, getting better.** The packer keeps the best
   layout found so far and the parts move as it improves; it can be stopped
   at any time. Every layout is checked by the exact collision engine, and
-  a final pass moves parts to the exact gap on the meshes.
+  a final pass moves parts to the exact gap on the meshes; a last exact
+  check leaves out anything that would break a rule rather than hand it back.
 * **Effort to match the job**: quick for a day's mixed work, or "keep
   going until nothing better turns up" for a bucket that will be printed
   for weeks.

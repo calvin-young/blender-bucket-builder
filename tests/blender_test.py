@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 
+import bmesh
 import bpy
 import numpy as np
 
@@ -1066,6 +1067,37 @@ def main():
         bc.monitor.Monitor._load_geometry = real_load
     check(r != {'FINISHED'} or not reads, 'an export does not make the monitor read the parts again', (r, reads))
     check(mon.world.object_count == 3, 'and no part drops out of the check', mon.world.object_count)
+    # meshes that are not closed solids (#29): an open one, an inside-out one, a mirrored one, a good one
+    bpy.ops.mesh.primitive_cube_add(size=20, location=(60, 60, 30))
+    good = bpy.context.active_object
+    bpy.ops.mesh.primitive_cube_add(size=20, location=(120, 60, 30))
+    hole = bpy.context.active_object
+    bm = bmesh.new(); bm.from_mesh(hole.data); bm.faces.ensure_lookup_table()
+    bm.faces.remove(bm.faces[0]); bm.to_mesh(hole.data); bm.free()
+    bpy.ops.mesh.primitive_cube_add(size=20, location=(180, 60, 30))
+    flip = bpy.context.active_object
+    bm = bmesh.new(); bm.from_mesh(flip.data); bmesh.ops.reverse_faces(bm, faces=bm.faces); bm.to_mesh(flip.data); bm.free()
+    bpy.ops.mesh.primitive_cube_add(size=20, location=(240, 60, 30))
+    mirror = bpy.context.active_object
+    mirror.scale.x = -1.0
+    update()
+    mon = settle()
+    texts = {p['a']: p['mesh'] for p in mon.problems() if p['kind'] == 'MESH'}
+    check(good.name not in texts and 'open edge' in texts.get(hole.name, '') and texts.get(flip.name) == 'inside out'
+          and texts.get(mirror.name) == 'inside out', 'open, inside-out and mirrored meshes are named (#29)', texts)
+    check(mon.status()['mesh'] >= 3 and any('With Mesh Errors' in t for t, _ in bc.overlay.summary(mon.status())[1]),
+          'and the verdict says so', bc.overlay.summary(mon.status()))
+    check(any('mesh errors' in line for line in bc.export.problems(bpy.context)), 'and so does Export',
+          bc.export.problems(bpy.context))
+    st.check_mesh = False
+    update()
+    mon = settle()
+    check(mon.status()['mesh'] == 0, 'Check Part Meshes off: not named', mon.status()['mesh'])
+    st.check_mesh = True
+    for o in (good, hole, flip, mirror):
+        bpy.data.objects.remove(o)
+    update()
+    mon = settle()
     # the export button says what must not be overlooked
     a.location.x = 5.0
     update()

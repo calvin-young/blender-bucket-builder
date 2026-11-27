@@ -1133,6 +1133,11 @@ def summary(status, local=None):
         warnings.append((_count(ncl, "Clearance Warning"), 'warn'))
     if nw:
         warnings.append((_count(nw, "Part") + " Within Wall Gap", 'wall'))
+    nm = status.get('mesh', 0)
+    if nm:
+        # (open, non-manifold or inside-out meshes, #29: a warning for now, since many models in daily use
+        # are slightly open)
+        warnings.append((_count(nm, "Part") + " With Mesh Errors", 'warn'))
     prep = status['preparing']
     if prep and prep[1] <= 0:
         prep = None                       # (between two counts: nothing to count yet)
@@ -1159,7 +1164,7 @@ def summary(status, local=None):
         rows.append(("Checking", 'dim'))
     else:
         rows += warnings
-    found = bool(nout or nc or warnings)
+    found = bool(nout or nc or warnings)          # (warnings include mesh errors)
     gaps = unchecked_lines(status)
     n = status['objects']
     hidden = status.get('hidden', 0)
@@ -1242,7 +1247,7 @@ def summary(status, local=None):
         state = 'BUSY'
     elif not checked or (n == 0 and not gaps):
         state = 'OFF'
-    elif ncl or nw or gaps:
+    elif ncl or nw or nm or gaps:
         state = 'WARN'
     else:
         state = 'OK'
@@ -1428,7 +1433,7 @@ def _draw_badge(layout, p, shaders, ui, right, bottom, srgb=1.0):
 _MARK_COLLISION = ('COLLIDE', 'PARTIAL', 'OUTSIDE')
 _MARK_CLEARANCE = ('CLEAR', 'WALL')
 # kinds of problems in the order their markers are drawn (the worst on top)
-_MARK_ORDER = ('PQ', 'WALL', 'CLEAR', 'COLLIDE', 'OUTSIDE', 'PARTIAL')
+_MARK_ORDER = ('PQ', 'MESH', 'WALL', 'CLEAR', 'COLLIDE', 'OUTSIDE', 'PARTIAL')
 _MARK_INDEX = {kind: i for i, kind in enumerate(_MARK_ORDER)}
 
 
@@ -1495,7 +1500,7 @@ def _draw_markers(mon, st, p, shaders, ui, persp_matrix, width, height, only=Non
     py = (ndc[:, 1] * 0.5 + 0.5) * height
     tones = _palette(p)
     colors = {'COLLIDE': tones['fail'], 'CLEAR': tones['warn'], 'WALL': tones['wall'],
-              'PARTIAL': tones['out'], 'OUTSIDE': tones['out'], 'PQ': tones['quality']}
+              'PARTIAL': tones['out'], 'OUTSIDE': tones['out'], 'PQ': tones['quality'], 'MESH': tones['warn']}
     gray = (0.62, 0.62, 0.62, 0.9)
     ring = np.isin(kinds[shown], [_MARK_INDEX[k] for k in rings_on])
     # all rings in one batch, the worst kind last so that it lies on top

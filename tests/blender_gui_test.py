@@ -223,6 +223,7 @@ def step_enable():
     st = win().scene.bucket_builder
     assert not st.detect_collisions and not st.monitor_volume and monitor.get(win().scene) is None, \
         'a new scene must start with both switches off'
+    st.check_mesh = False              # (the scene's Suzanne is open on purpose; the mesh check is tested in blender_test)
     st.detect_collisions = True
     st.monitor_volume = True
     for region in view_area().regions:

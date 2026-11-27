@@ -83,12 +83,42 @@ SCAN_INSTANCES = 20000  # instances looked at per search
 NON_MESH = {'CURVE', 'SURFACE', 'FONT', 'META'}   # objects with faces that are not read
 # the order of the list of problems: the most serious kind first
 WALL_NAMES = ('the left wall (X)', 'the front wall (Y)', 'the floor', 'the right wall (X)', 'the back wall (Y)', 'the top')
-PROBLEM_RANK = {'PARTIAL': 0, 'OUTSIDE': 1, 'COLLIDE': 2, 'CLEAR': 3, 'WALL': 4, 'PQ': 5}
+PROBLEM_RANK = {'PARTIAL': 0, 'OUTSIDE': 1, 'COLLIDE': 2, 'CLEAR': 3, 'WALL': 4, 'MESH': 5, 'PQ': 6}
 BIG_SKIPS = ('too many triangles', 'not enough memory', 'error')
 
 
 TINY_MM = 0.5            # parts smaller than this across are named: likely imported in meters
 HUGE_MM = 1000.0         # ... and larger than this: likely 1000 times too big (the PPP template's numbers)
+HEALTH_SYNC_TRIS = 5000  # meshes checked for holes on the spot (about 3 ms); larger ones in a worker thread
+
+def mesh_health(co, tri):
+    """What is wrong with a mesh as a printable solid (#29): {'volume': signed, 'open': boundary edges,
+    'nonmanifold': edges used by more than two faces, 'flipped': edges whose faces disagree about which
+    way they face}. NumPy only; runs in a worker thread for large meshes."""
+    import types
+    from .pack import metrics
+    m = types.SimpleNamespace(verts=np.asarray(co, np.float64).reshape(-1, 3), tris=np.asarray(tri).reshape(-1, 3))
+    vol, _open = metrics.mesh_stats(m, workers=1)
+    t = metrics.topology(m)
+    return {'volume': float(vol), 'open': t['boundary_edges'], 'nonmanifold': t['nonmanifold_edges'],
+            'flipped': t['flipped_edges']}
+
+
+def health_text(h, det):
+    """The short description of a mesh's problems, or '' (det: the object's matrix, whose sign can turn
+    a part inside out)."""
+    if h is None:
+        return ''
+    said = []
+    if h['volume'] * det < 0:
+        said.append('inside out')
+    if h['open']:
+        said.append('%d open edge%s' % (h['open'], 's' if h['open'] != 1 else ''))
+    bad = h['nonmanifold'] + h['flipped']
+    if bad:
+        said.append('%d non-manifold edge%s' % (bad, 's' if bad != 1 else ''))
+    return ', '.join(said)
+
 
 class ObjState:
     __slots__ = ('uid', 'name', 'in_world', 'skipped', 'data_uid', 'shareable', 'ntri', 'sig',
@@ -356,6 +386,10 @@ class Monitor:
         self._active = (None, '', -1)
         self._follow = (None, '', None)  # (selected part, problem key then, its first row)
         self._scale_cache = (None, None)
+        self.health = {}                 # geometry key -> mesh_health(...) (#29)
+        self._health_jobs = {}           # geometry key -> future, for large meshes
+        self.check_mesh = True           # (the scene's check_mesh; set by tick)
+        self._mesh_cache = None
         self.show_pq = False             # (the scene's report_density and show_pq; set by tick)
         self._auto_mm = None
 
@@ -960,6 +994,11 @@ class Monitor:
                     os.ntri = int(tri.shape[0])
                     if os.shareable:
                         self.data_geom[os.data_uid] = key
+                    if key not in self.health and key not in self._health_jobs:
+                        if tri.shape[0] <= HEALTH_SYNC_TRIS:
+                            self.health[key] = mesh_health(co, tri)
+                        else:
+                            self._health_jobs[key] = _executor().submit(mesh_health, co, tri)
                     if not w.has_geom(key):
                         if tri.shape[0] <= SYNC_TRIS:
                             w.add_geom(key, co, tri)
@@ -1276,6 +1315,18 @@ class Monitor:
         if self.hot:
             for slot in [s for s, t in self.hot.items() if t < cutoff]:
                 del self.hot[slot]
+        check_mesh = bool(getattr(st, 'check_mesh', True))
+        done = [k for k, f in self._health_jobs.items() if f.done()]
+        for key in done:
+            try:
+                self.health[key] = self._health_jobs.pop(key).result()
+            except Exception:                           # noqa: BLE001  (a mesh that cannot be judged)
+                self.health[key] = None
+        if done or check_mesh != self.check_mesh:
+            self.check_mesh = check_mesh
+            self._mesh_cache = None
+            sync_rows(self)
+            changed = True
         show_pq = bool(st.report_density and getattr(st, 'show_pq', True))
         if show_pq != self.show_pq:
             self.show_pq = show_pq
@@ -1376,6 +1427,7 @@ class Monitor:
             'hidden_skipped': self.hidden_skipped,
             'hidden_inside': self.hidden_inside,
             'scale_off': self.scale_problem(),
+            'mesh': len(self.mesh_issues()),
             'tiny': len(self.scale_problem()[1]) if self.scale_problem() and self.scale_problem()[0] > 1 else 0,
             'huge': len(self.scale_problem()[1]) if self.scale_problem() and self.scale_problem()[0] < 1 else 0,
             'pq': len(self.pq_issues()),
@@ -1459,6 +1511,23 @@ class Monitor:
                 'slots': (slot,),
                 'ignored': muted.get(('W', slot), 0),
             })
+        # meshes that are not closed, consistent solids (#29): after the placement problems
+        for slot, text in self.mesh_issues():
+            lo, hi = w.O_LO[slot], w.O_HI[slot]
+            out.append({
+                'kind': 'MESH',
+                'a': self.name_of(slot), 'b': '',
+                'dist_mm': 0.0,
+                'center': (lo + hi) * 0.5,
+                'radius': float(np.linalg.norm(hi - lo)) * 0.5,
+                'approx': False,
+                'inside': 0,
+                'mesh': text,
+                'key': ('M', w.uid(slot)),
+                'names': (self.name_of(slot), ''),
+                'slots': (slot,),
+                'ignored': 0,
+            })
         # print-quality issues from the density evaluation (#51): notes, after every real problem;
         # they never fail the build
         for i, q in enumerate(self.pq_issues()):
@@ -1500,6 +1569,25 @@ class Monitor:
                 index = next((i for i, d in enumerate(problems) if d['id'] == key), -1)
         self._active = (problems, key, index)
         return index
+
+    def mesh_issues(self):
+        """[(slot, text)] of the checked parts whose mesh is open, non-manifold or inside out (#29),
+        with Check Part Meshes on. Cached per state of the world."""
+        if not self.check_mesh:
+            return []
+        w = self.world
+        key = (w.version, len(self.health), len(w._slot_of))
+        cached = getattr(self, '_mesh_cache', None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        out = []
+        for slot in sorted(w._slot_of.values()):
+            g = w._obj[slot][1]
+            text = health_text(self.health.get(g.key), float(np.linalg.det(w.O_L[slot])))
+            if text:
+                out.append((slot, text))
+        self._mesh_cache = (key, out)
+        return out
 
     def pq_issues(self):
         """The print-quality issues of the last density evaluation, or [] while it is off, stale

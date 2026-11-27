@@ -168,6 +168,8 @@ def describe(pr):
         return f"{pr['a']} / {pr['b']}: {approx}{pr['dist_mm']:.2f} mm apart"
     if pr['kind'] == 'WALL':
         return f"{pr['a']} is {pr['dist_mm']:.2f} mm from a side wall"
+    if pr['kind'] == 'MESH':
+        return f"{pr['a']}: the mesh is not a closed solid ({pr['mesh']})"
     if pr['kind'] == 'PQ':
         who = f"{pr['a']} and {pr['b']}" if pr['b'] else pr['a']
         return f"{who}: {pr['pq']} ({pr['rule']}, a print-quality note)"

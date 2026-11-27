@@ -28,9 +28,9 @@ _TONE_ICON = {'fail': ('cross', 'CANCEL'), 'out': ('box', 'SHADING_BBOX'), 'warn
 # colored icon on every row was too loud.  The color of a kind is a slim
 # tab at the left end of its row (see props._tab).
 _KIND_ICON = {'PARTIAL': 'SHADING_BBOX', 'OUTSIDE': 'SHADING_BBOX', 'COLLIDE': 'CANCEL',
-              'CLEAR': 'ERROR', 'WALL': 'OBJECT_HIDDEN', 'PQ': 'INFO'}
+              'CLEAR': 'ERROR', 'WALL': 'OBJECT_HIDDEN', 'MESH': 'MESH_DATA', 'PQ': 'INFO'}
 _KIND_TAB = {'PARTIAL': 'tab_outside', 'OUTSIDE': 'tab_outside', 'COLLIDE': 'tab_collision',
-             'CLEAR': 'tab_clearance', 'WALL': 'tab_wall', 'PQ': 'tab_quality'}
+             'CLEAR': 'tab_clearance', 'WALL': 'tab_wall', 'MESH': 'tab_clearance', 'PQ': 'tab_quality'}
 ISOLATE_ICON = 'VIEWZOOM'
 
 
@@ -144,6 +144,8 @@ def problem_text(pr):
         return f"{_mm(pr)}  {pr['a']}  |  wall"
     if pr['kind'] == 'PQ':
         return f"{pr['a']}  |  {pr['b']}  {pr['pq']}" if pr['b'] else f"{pr['a']}   {pr['pq']}"
+    if pr['kind'] == 'MESH':
+        return f"{pr['a']}   {pr['mesh']}"
     if pr['kind'] == 'PARTIAL':
         if pr.get('touch'):
             return f"{pr['a']}   touching {pr['touch']}"
@@ -230,8 +232,8 @@ class BUCKETBUILDER_UL_problems(UIList):
         local = getattr(context.space_data, 'local_view', None) is not None
         alone = st.isolate and local and index == mon.active_index(st)
         names = pr['names']
-        if pr['kind'] == 'PQ':
-            return                                  # (a note: nothing to ignore)
+        if pr['kind'] in ('PQ', 'MESH'):
+            return                                  # (about the part itself: nothing to ignore between parts)
         for idname, icon_name, down, lock in (
                 ("bucketbuilder.isolate_problem", ISOLATE_ICON, alone, None),
                 ("bucketbuilder.ignore_problem", 'HIDE_ON' if ignored else 'HIDE_OFF',
@@ -327,6 +329,7 @@ class BUCKETBUILDER_PT_collisions(_Base, Panel):
         body = layout.column()
         body.active = st.detect_collisions
         body.prop(st, "detect_enclosed")
+        layout.prop(st, "check_mesh")              # (works with either check: it reads the same parts)
 
 
 class BUCKETBUILDER_PT_parts(_Base, Panel):

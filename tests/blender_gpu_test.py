@@ -215,6 +215,7 @@ def main():
 
     sc = bpy.context.scene
     st = sc.bucket_builder
+    st.check_mesh = False              # (the scene's Suzanne is open on purpose: this test is about drawing)
     st.detect_collisions = True
     st.monitor_volume = True
     mon = settle()
