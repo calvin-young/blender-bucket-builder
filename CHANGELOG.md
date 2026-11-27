@@ -3,6 +3,11 @@
 Versions are tagged `vX.Y.Z` on GitHub, each with a pre-release and its zip. Notes on versions
 before 1.6.4 are in `AGENTS.md` ("Working notes: state") and the GitHub releases.
 
+## Unreleased
+
+* **Fix Issues:** when the live check has caught up, the last-result line says what is still wrong
+  ("Still to fix, selected: A x B (collision)") and selects those parts, or says nothing is left (#32).
+
 ## 1.6.6 (2026-11-26)
 
 * **Panels:** Preferences > Panel Location puts the panels in the 3D Viewport's sidebar (default) or the

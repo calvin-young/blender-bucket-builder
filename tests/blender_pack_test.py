@@ -148,6 +148,8 @@ def main():
     s = mon.status()
     check(s['collisions'] == 0 and s['clearance'] == 0 and s['partly_out'] == 0 and s['outside'] == 0
           and s['near_wall'] == 0, 'Jiggle mends it', s)
+    pk.report_left(bpy.context.scene.name, 'Jiggled', 0.0, wait=False)
+    check(st.last_message == 'Jiggled. Nothing left to fix.', 'it says nothing is left', st.last_message)
     moved = [float(np.linalg.norm(np.array(o.matrix_world)[:3, 3] - keep[o.name][:3, 3])) for o in objs]
     check(max(moved) < 15.0, 'with small moves only (largest %.1f mm, %d parts moved)'
           % (max(moved), sum(1 for m in moved if m > 1e-6)))
@@ -160,6 +162,14 @@ def main():
     print('  ', st.pack_last)
     check(r == {'FINISHED'} and s['collisions'] == 0 and s['clearance'] == 0 and s['partly_out'] == 0,
           'Fix Issues with Relax keeps every rule', (st.pack_last, s))
+    a.matrix_world.translation = near.matrix_world.translation.copy()
+    bpy.context.view_layer.update()
+    settle()
+    pk.report_left(bpy.context.scene.name, 'Jiggled', 0.0, wait=False)
+    check('Still to fix, selected: ' in st.last_message and a.name in st.last_message and 'collision' in st.last_message
+          and a.select_get() and near.select_get(), 'what is left is named and selected', st.last_message)
+    r = bpy.ops.bucketbuilder.pack(selected_only=False, fix='FIX')
+    settle()
 
     # packing a selection packs it around what is already in the volume
     keep = {o.name: np.array(o.matrix_world) for o in objs}

@@ -519,12 +519,53 @@ class BUCKETBUILDER_OT_pack(Operator):
         self.report({'WARNING'} if missing else {'INFO'}, msg)
         props.settings(context.scene).pack_last = msg
         props.settings(context.scene).last_message = msg[:200]
+        if self._mode != 'pack':
+            # say what is left once the live check has caught up (#32: the owner could not tell what a
+            # fix had left unresolved)
+            name, t_end = context.scene.name, time.time() + 60.0
+            bpy.app.timers.register(lambda: report_left(name, msg, t_end), first_interval=1.0)
         monitor.tag_redraw_all()
 
     def cancel(self, context):
         if self._job is not None:
             self._job.cancel = True
         self._end(context)
+
+
+_LEFT_WORDS = {'COLLIDE': 'collision', 'CLEAR': 'too close', 'PARTIAL': 'partly outside', 'OUTSIDE': 'outside',
+               'WALL': 'too close to a wall'}
+
+
+def report_left(scene_name, msg, t_end, wait=True):
+    """After Fix Issues: once the live check has settled, add what is still wrong to the last result
+    line and select those parts (nothing left: say so). A timer (returns the seconds to the next try)."""
+    scene = bpy.data.scenes.get(scene_name)
+    mon = monitor.get(scene) if scene is not None else None
+    if mon is None:
+        return None
+    s = mon.status()
+    if wait and (s.get('busy') or s.get('pending')) and time.time() < t_end:
+        return 0.5
+    rows = [p for p in mon.problems() if not p.get('ignored') and p['kind'] in _LEFT_WORDS]
+    if not rows:
+        text = msg + ". Nothing left to fix."
+    else:
+        said = ["%s x %s (%s)" % (p['names'][0], p['names'][1], _LEFT_WORDS[p['kind']]) if p['names'][1]
+                else "%s (%s)" % (p['names'][0], _LEFT_WORDS[p['kind']]) for p in rows[:3]]
+        more = " and %d more" % (len(rows) - 3) if len(rows) > 3 else ""
+        text = msg + ". Still to fix, selected: " + "; ".join(said) + more
+        names = {n for p in rows for n in p['names'] if n}
+        try:
+            vl = bpy.context.view_layer
+            for o in scene.objects:
+                o.select_set(o.name in names, view_layer=vl)
+        except Exception:                               # noqa: BLE001  (no view layer here: no selection)
+            pass
+    st = props.settings(scene)
+    st.pack_last = text
+    st.last_message = text[:200]
+    monitor.tag_redraw_all()
+    return None
 
 
 class BUCKETBUILDER_OT_pack_stop(Operator):
