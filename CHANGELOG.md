@@ -3,7 +3,7 @@
 Versions are tagged `vX.Y.Z` on GitHub, each with a pre-release and its zip. Notes on versions
 before 1.6.4 are in `AGENTS.md` ("Working notes: state") and the GitHub releases.
 
-## Unreleased
+## 1.6.8 (2026-11-26)
 
 * **Overlay:** the bucket's outline sits behind the parts (no faint line through them) and always wins
   over the floor grid and axes it used to flicker with (#28).
