@@ -298,7 +298,8 @@ class BucketBuilderSettings(PropertyGroup):
     pack_time: FloatProperty(
         name="Time", default=60.0, min=0.0, soft_max=600.0, precision=0, subtype='TIME_ABSOLUTE',
         description="How long the packer looks for better layouts after its first one, in seconds "
-                    "(it stops sooner when the build cannot get lower). 0: the first layout only")
+                    "(it stops sooner when the build cannot get lower). If parts are still left out, or "
+                    "the build is near the top, it takes up to this long once more. 0: the first layout only")
     pack_best_hours: FloatProperty(
         name="Time Limit", default=2.0, min=0.05, soft_max=48.0, precision=2,
         description="Effort Thorough: the longest the packer may run, in hours")

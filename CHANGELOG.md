@@ -3,6 +3,11 @@
 Versions are tagged `vX.Y.Z` on GitHub, each with a pre-release and its zip. Notes on versions
 before 1.6.4 are in `AGENTS.md` ("Working notes: state") and the GitHub releases.
 
+## Unreleased
+
+* **Packing:** the status line says when the packer takes extra time (parts still left out, or the build
+  near the top), and the Time setting's tooltip explains it.
+
 ## 1.6.5 (2026-11-26)
 
 * **Packing:** a part that may turn freely now starts from its smallest bounding box when its principal

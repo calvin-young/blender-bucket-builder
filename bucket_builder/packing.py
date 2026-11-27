@@ -345,6 +345,12 @@ class BUCKETBUILDER_OT_pack(Operator):
         else:
             JOB['eta'] = JOB['time_left']
         left = "" if JOB['eta'] is None else ", about %s left" % _duration(JOB['eta'])
+        set_ = self._settings.time_budget
+        if JOB['budget'] and set_ and JOB['budget'] > set_ * 1.01 and JOB['phase'] != 'greedy':
+            # (the job adds time once when parts are left out or the build nears the top: say so, or the
+            # bar seems to lie; the owner, 2026-11-24, on honest estimates)
+            left += " (extra time: %s)" % ("parts are left out" if JOB.get('placed', total) < total
+                                           else "the build is near the top")
         if JOB['stopping']:
             text = "Stopping..."
         elif JOB['phase'] == 'greedy':
